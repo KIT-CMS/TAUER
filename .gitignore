@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+
+# ROOT / analysis outputs
+*.root
+*.pickle
+
+# Output directories
+output/
+logs/
+plots/
+
+# Tarballs
+*.tar.gz
+*.tgz
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Conda
+.conda/
+miniforge/
+
+# Submodule build artifacts
+ntuple_processor/__pycache__/
+TauFakeFactors/datasets/__pycache__/
+
+# Training artifacts
+trainings/checkpoints/
+trainings/models/
+trainings/logs/
+
+# Stray run logs
+routine_output.log

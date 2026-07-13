@@ -1,0 +1,48 @@
+preselection:
+  et:
+    had_tau_decay_mode: (tau_decaymode_2 == 0) || (tau_decaymode_2 == 1) || (tau_decaymode_2== 10) || (tau_decaymode_2 == 11)
+    had_tau_id_vs_ele: id_tau_vsEle_Tight_2 > 0.5
+    had_tau_id_vs_mu: id_tau_vsMu_VLoose_Tight_2 > 0.5
+    had_tau_pt: pt_2 > 20
+    lep_pt: ((pt_1 > 32) && (trg_single_ele30 > 0.5))
+    jet_veto: (Jet_vetomap < 0.5)
+  mt:
+    had_tau_decay_mode: (tau_decaymode_2 == 0) || (tau_decaymode_2 == 1) || (tau_decaymode_2== 10) || (tau_decaymode_2 == 11)
+    had_tau_id_vs_ele: id_tau_vsEle_VVLoose_2 > 0.5
+    had_tau_id_vs_mu: id_tau_vsMu_Tight_VVLoose_2 > 0.5
+    had_tau_pt: pt_2 > 20
+    lep_pt: (pt_1 > 26 && trg_single_mu24 > 0.5)
+    jet_veto: (Jet_vetomap < 0.5)
+  tt:
+    had_tau_decay_mode_1: (tau_decaymode_1 == 0) || (tau_decaymode_1 == 1) || (tau_decaymode_1== 10) || (tau_decaymode_1 == 11)
+    had_tau_decay_mode_2: (tau_decaymode_2 == 0) || (tau_decaymode_2 == 1) || (tau_decaymode_2== 10) || (tau_decaymode_2 == 11)
+    had_tau_id_vs_ele: (id_tau_vsEle_VVLoose_1 > 0.5) && (id_tau_vsEle_VVLoose_2 >0.5)
+    had_tau_id_vs_mu: (id_tau_vsMu_VLoose_VVLoose_1 > 0.5) && (id_tau_vsMu_VLoose_VVLoose_2> 0.5)
+    jet_veto: (Jet_vetomap < 0.5)
+    era_overrides:
+      '2024':
+        had_tau_pt: (pt_1 > 35) && (pt_2 > 35) && (trg_double_tau30_mediumiso_pnet> 0.5)
+      '2025':
+        had_tau_pt: (pt_1 > 35) && (pt_2 > 35) && (trg_double_tau30_mediumiso_pnet> 0.5)
+    had_tau_pt: (pt_1 > 40) && (pt_2 > 40) && (trg_double_tau35_mediumiso_hps > 0.5)
+
+channel_selection:
+  # ── Cuts applied during shape production (NOT read by TFF) ───────────────────
+  # These are applied ON TOP of the preselection cuts defined above.
+  # os, lepton isolation, tau-vs-jet WP, and mt cut are not in TFF preselection.
+  # `{vs_jet_wp}` is a runtime placeholder filled by channel_selection.py.
+  common:
+    extraelec_veto: "(extraelec_veto < 0.5)"
+    extramuon_veto: "(extramuon_veto < 0.5)"
+    dilepton_veto: "(dilepton_veto < 0.5)"
+    os: "((q_1 * q_2) < 0)"
+  et:
+    ele_iso: "(iso_1 < 0.15)"
+    tau_iso: "(id_tau_vsJet_{vs_jet_wp}_2 > 0.5)"
+    mt_cut: "(mt_1 < 70)"
+  mt:
+    muon_iso: "(iso_1 < 0.15)"
+    tau_iso: "(id_tau_vsJet_{vs_jet_wp}_2 > 0.5)"
+    mt_cut: "(mt_1 < 70)"
+  tt:
+    tau_iso: "(id_tau_vsJet_{vs_jet_wp}_1 > 0.5) && (id_tau_vsJet_{vs_jet_wp}_2 > 0.5)"

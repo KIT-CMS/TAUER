@@ -1,0 +1,295 @@
+files:
+    ? root://cmsdcache-kit-disk.gridka.de:1094//store/user/sgiappic/CROWN/ntuples/htt_260516_2022-23/CROWNRun/2022preEE/Muon_Run2022C-22Sep2023-v1/mt/Muon_Run2022C-22Sep2023-v1_0.root
+    :   difference: !!set {}
+        friend_is_empty: false
+        friends: []
+        friends_difference: !!set {}
+        is_empty: false
+    ? root://cmsdcache-kit-disk.gridka.de:1094//store/user/sgiappic/CROWN/ntuples/htt_260516_2022-23/CROWNRun/2022preEE/Muon_Run2022C-22Sep2023-v1/mt/Muon_Run2022C-22Sep2023-v1_1.root
+    :   difference: !!set {}
+        friend_is_empty: false
+        friends: []
+        friends_difference: !!set {}
+        is_empty: false
+    ? root://cmsdcache-kit-disk.gridka.de:1094//store/user/sgiappic/CROWN/ntuples/htt_260516_2022-23/CROWNRun/2022preEE/Muon_Run2022C-22Sep2023-v1/mt/Muon_Run2022C-22Sep2023-v1_10.root
+    :   difference: !!set {}
+        friend_is_empty: false
+        friends: []
+        friends_difference: !!set {}
+        is_empty: false
+    ? root://cmsdcache-kit-disk.gridka.de:1094//store/user/sgiappic/CROWN/ntuples/htt_260516_2022-23/CROWNRun/2022preEE/Muon_Run2022C-22Sep2023-v1/mt/Muon_Run2022C-22Sep2023-v1_11.root
+    :   difference: !!set {}
+        friend_is_empty: false
+        friends: []
+        friends_difference: !!set {}
+        is_empty: false
+    ? root://cmsdcache-kit-disk.gridka.de:1094//store/user/sgiappic/CROWN/ntuples/htt_260516_2022-23/CROWNRun/2022preEE/Muon_Run2022C-22Sep2023-v1/mt/Muon_Run2022C-22Sep2023-v1_12.root
+    :   difference: !!set {}
+        friend_is_empty: false
+        friends: []
+        friends_difference: !!set {}
+        is_empty: false
+    ? root://cmsdcache-kit-disk.gridka.de:1094//store/user/sgiappic/CROWN/ntuples/htt_260516_2022-23/CROWNRun/2022preEE/Muon_Run2022C-22Sep2023-v1/mt/Muon_Run2022C-22Sep2023-v1_2.root
+    :   difference: !!set {}
+        friend_is_empty: false
+        friends: []
+        friends_difference: !!set {}
+        is_empty: false
+    ? root://cmsdcache-kit-disk.gridka.de:1094//store/user/sgiappic/CROWN/ntuples/htt_260516_2022-23/CROWNRun/2022preEE/Muon_Run2022C-22Sep2023-v1/mt/Muon_Run2022C-22Sep2023-v1_3.root
+    :   difference: !!set {}
+        friend_is_empty: false
+        friends: []
+        friends_difference: !!set {}
+        is_empty: false
+    ? root://cmsdcache-kit-disk.gridka.de:1094//store/user/sgiappic/CROWN/ntuples/htt_260516_2022-23/CROWNRun/2022preEE/Muon_Run2022C-22Sep2023-v1/mt/Muon_Run2022C-22Sep2023-v1_4.root
+    :   difference: !!set {}
+        friend_is_empty: false
+        friends: []
+        friends_difference: !!set {}
+        is_empty: false
+    ? root://cmsdcache-kit-disk.gridka.de:1094//store/user/sgiappic/CROWN/ntuples/htt_260516_2022-23/CROWNRun/2022preEE/Muon_Run2022C-22Sep2023-v1/mt/Muon_Run2022C-22Sep2023-v1_5.root
+    :   difference: !!set {}
+        friend_is_empty: false
+        friends: []
+        friends_difference: !!set {}
+        is_empty: false
+    ? root://cmsdcache-kit-disk.gridka.de:1094//store/user/sgiappic/CROWN/ntuples/htt_260516_2022-23/CROWNRun/2022preEE/Muon_Run2022C-22Sep2023-v1/mt/Muon_Run2022C-22Sep2023-v1_6.root
+    :   difference: !!set {}
+        friend_is_empty: false
+        friends: []
+        friends_difference: !!set {}
+        is_empty: false
+    ? root://cmsdcache-kit-disk.gridka.de:1094//store/user/sgiappic/CROWN/ntuples/htt_260516_2022-23/CROWNRun/2022preEE/Muon_Run2022C-22Sep2023-v1/mt/Muon_Run2022C-22Sep2023-v1_7.root
+    :   difference: !!set {}
+        friend_is_empty: false
+        friends: []
+        friends_difference: !!set {}
+        is_empty: false
+    ? root://cmsdcache-kit-disk.gridka.de:1094//store/user/sgiappic/CROWN/ntuples/htt_260516_2022-23/CROWNRun/2022preEE/Muon_Run2022C-22Sep2023-v1/mt/Muon_Run2022C-22Sep2023-v1_8.root
+    :   difference: !!set {}
+        friend_is_empty: false
+        friends: []
+        friends_difference: !!set {}
+        is_empty: false
+    ? root://cmsdcache-kit-disk.gridka.de:1094//store/user/sgiappic/CROWN/ntuples/htt_260516_2022-23/CROWNRun/2022preEE/Muon_Run2022C-22Sep2023-v1/mt/Muon_Run2022C-22Sep2023-v1_9.root
+    :   difference: !!set {}
+        friend_is_empty: false
+        friends: []
+        friends_difference: !!set {}
+        is_empty: false
+    ? root://cmsdcache-kit-disk.gridka.de:1094//store/user/sgiappic/CROWN/ntuples/htt_260516_2022-23/CROWNRun/2022preEE/Muon_Run2022D-22Sep2023-v1/mt/Muon_Run2022D-22Sep2023-v1_0.root
+    :   difference: !!set {}
+        friend_is_empty: false
+        friends: []
+        friends_difference: !!set {}
+        is_empty: false
+    ? root://cmsdcache-kit-disk.gridka.de:1094//store/user/sgiappic/CROWN/ntuples/htt_260516_2022-23/CROWNRun/2022preEE/Muon_Run2022D-22Sep2023-v1/mt/Muon_Run2022D-22Sep2023-v1_1.root
+    :   difference: !!set {}
+        friend_is_empty: false
+        friends: []
+        friends_difference: !!set {}
+        is_empty: false
+    ? root://cmsdcache-kit-disk.gridka.de:1094//store/user/sgiappic/CROWN/ntuples/htt_260516_2022-23/CROWNRun/2022preEE/Muon_Run2022D-22Sep2023-v1/mt/Muon_Run2022D-22Sep2023-v1_2.root
+    :   difference: !!set {}
+        friend_is_empty: false
+        friends: []
+        friends_difference: !!set {}
+        is_empty: false
+    ? root://cmsdcache-kit-disk.gridka.de:1094//store/user/sgiappic/CROWN/ntuples/htt_260516_2022-23/CROWNRun/2022preEE/Muon_Run2022D-22Sep2023-v1/mt/Muon_Run2022D-22Sep2023-v1_3.root
+    :   difference: !!set {}
+        friend_is_empty: false
+        friends: []
+        friends_difference: !!set {}
+        is_empty: false
+    ? root://cmsdcache-kit-disk.gridka.de:1094//store/user/sgiappic/CROWN/ntuples/htt_260516_2022-23/CROWNRun/2022preEE/Muon_Run2022D-22Sep2023-v1/mt/Muon_Run2022D-22Sep2023-v1_4.root
+    :   difference: !!set {}
+        friend_is_empty: false
+        friends: []
+        friends_difference: !!set {}
+        is_empty: false
+    ? root://cmsdcache-kit-disk.gridka.de:1094//store/user/sgiappic/CROWN/ntuples/htt_260516_2022-23/CROWNRun/2022preEE/Muon_Run2022D-22Sep2023-v1/mt/Muon_Run2022D-22Sep2023-v1_5.root
+    :   difference: !!set {}
+        friend_is_empty: false
+        friends: []
+        friends_difference: !!set {}
+        is_empty: false
+    ? root://cmsdcache-kit-disk.gridka.de:1094//store/user/sgiappic/CROWN/ntuples/htt_260516_2022-23/CROWNRun/2022preEE/Muon_Run2022D-22Sep2023-v1/mt/Muon_Run2022D-22Sep2023-v1_6.root
+    :   difference: !!set {}
+        friend_is_empty: false
+        friends: []
+        friends_difference: !!set {}
+        is_empty: false
+    ? root://cmsdcache-kit-disk.gridka.de:1094//store/user/sgiappic/CROWN/ntuples/htt_260516_2022-23/CROWNRun/2022preEE/Muon_Run2022D-22Sep2023-v1/mt/Muon_Run2022D-22Sep2023-v1_7.root
+    :   difference: !!set {}
+        friend_is_empty: false
+        friends: []
+        friends_difference: !!set {}
+        is_empty: false
+    ? root://cmsdcache-kit-disk.gridka.de:1094//store/user/sgiappic/CROWN/ntuples/htt_260516_2022-23/CROWNRun/2022preEE/Muon_Run2022D-22Sep2023-v1/mt/Muon_Run2022D-22Sep2023-v1_8.root
+    :   difference: !!set {}
+        friend_is_empty: false
+        friends: []
+        friends_difference: !!set {}
+        is_empty: false
+friends_varset: !!set {}
+quantities_per_vars: {}
+varset: !!set
+    Jet_ID: null
+    Jet_vetomap: null
+    PV_npvsGood: null
+    beta_1: null
+    beta_2: null
+    bjet_p4_1: null
+    bjet_p4_2: null
+    bphi_1: null
+    bphi_2: null
+    bpt_1: null
+    bpt_2: null
+    btag_value_1: null
+    btag_value_2: null
+    deltaEta_12j1: null
+    deltaEta_12j2: null
+    deltaEta_12jj: null
+    deltaEta_1j1: null
+    deltaEta_1j2: null
+    deltaEta_2j1: null
+    deltaEta_2j2: null
+    deltaEta_ditaupair: null
+    deltaEta_jj: null
+    deltaPhi_12j1: null
+    deltaPhi_12j2: null
+    deltaPhi_12jj: null
+    deltaPhi_1j1: null
+    deltaPhi_1j2: null
+    deltaPhi_2j1: null
+    deltaPhi_2j2: null
+    deltaPhi_ditaupair: null
+    deltaPhi_jj: null
+    deltaR_12j1: null
+    deltaR_12j2: null
+    deltaR_12jj: null
+    deltaR_1j1: null
+    deltaR_1j2: null
+    deltaR_2j1: null
+    deltaR_2j2: null
+    deltaR_ditaupair: null
+    deltaR_jj: null
+    dielectron_veto: null
+    dilepton_veto: null
+    dimuon_veto: null
+    dxy_1: null
+    dxy_2: null
+    dz_1: null
+    dz_2: null
+    eta_1: null
+    eta_2: null
+    eta_fastmtt: null
+    event: null
+    eventCut_mask: null
+    extraelec_veto: null
+    extramuon_veto: null
+    fCoordinates.fEta: null
+    fCoordinates.fM: null
+    fCoordinates.fPhi: null
+    fCoordinates.fPt: null
+    id_tau_vsEle_Tight_2: null
+    id_tau_vsEle_VVLoose_2: null
+    id_tau_vsJet_Loose_2: null
+    id_tau_vsJet_Medium_2: null
+    id_tau_vsJet_Tight_2: null
+    id_tau_vsJet_VLoose_2: null
+    id_tau_vsJet_VVLoose_2: null
+    id_tau_vsJet_VVVLoose_2: null
+    id_tau_vsMu_Loose_Tight_2: null
+    id_tau_vsMu_Loose_VVLoose_2: null
+    id_tau_vsMu_Medium_Tight_2: null
+    id_tau_vsMu_Medium_VVLoose_2: null
+    id_tau_vsMu_Tight_Tight_2: null
+    id_tau_vsMu_Tight_VVLoose_2: null
+    id_tau_vsMu_VLoose_Tight_2: null
+    id_tau_vsMu_VLoose_VVLoose_2: null
+    is_data: null
+    is_diboson: null
+    is_dyjets: null
+    is_embedding: null
+    is_ggh_htautau: null
+    is_global_1: null
+    is_ttbar: null
+    is_vbf_htautau: null
+    is_wjets: null
+    iso_1: null
+    iso_2: null
+    jet_hemisphere: null
+    jet_p4_1: null
+    jet_p4_2: null
+    jeta_1: null
+    jeta_2: null
+    jphi_1: null
+    jphi_2: null
+    jpt_1: null
+    jpt_2: null
+    jtag_value_1: null
+    jtag_value_2: null
+    lumi: null
+    mTdileptonMET: null
+    mTdileptonMET_pf: null
+    m_fastmtt: null
+    m_vis: null
+    mass_1: null
+    mass_2: null
+    met: null
+    metSumEt: null
+    met_mask: null
+    met_p4_jetcorrected: null
+    met_p4_leptoncorrected: null
+    met_p4_recoilcorrected: null
+    met_uncorrected: null
+    metcov00: null
+    metcov01: null
+    metcov10: null
+    metcov11: null
+    metphi: null
+    metphi_uncorrected: null
+    mjj: null
+    mt_1: null
+    mt_1_pf: null
+    mt_2: null
+    mt_2_pf: null
+    mt_tot: null
+    mt_tot_pf: null
+    nbtag: null
+    njets: null
+    nmuons: null
+    ntaus: null
+    p4_dijet: null
+    p4_dilepton: null
+    p4_fastmtt: null
+    pfmet_p4: null
+    pfmet_uncorrected: null
+    pfmetphi_uncorrected: null
+    phi_1: null
+    phi_2: null
+    phi_fastmtt: null
+    pt_1: null
+    pt_2: null
+    pt_dijet: null
+    pt_fastmtt: null
+    pt_tt: null
+    pt_tt_pf: null
+    pt_ttjj: null
+    pt_ttjj_pf: null
+    pt_vis: null
+    puppimet: null
+    puppimet_p4: null
+    puppimetphi: null
+    pzetamissvis: null
+    pzetamissvis_pf: null
+    q_1: null
+    q_2: null
+    rawmet_p4: null
+    run: null
+    tau_decaymode_1: null
+    tau_decaymode_2: null
+    taujet_pt_2: null
+    trg_single_mu24: null
+    trg_wgt_single_mu24: null

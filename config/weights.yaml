@@ -1,0 +1,40 @@
+mc_weights:
+  # ── Common weights applied to all channels and eras ──────────────────────────
+  # TFF keys: generator → xsec/genWeight; lumi → luminosity; empty string = skip
+  common:
+    Top_pt_reweighting: topPtReweightWeight
+    Z_pt_reweighting: zPtReweightWeight
+    generator: ""
+    lumi: ""
+    pileup: puweight
+
+  # ── Channel-specific weights ──────────────────────────────────────────────────
+  # Tau ID SFs are WP-dependent: they apply the preselection WP SF and fall back
+  # to 1 outside the passing region (so events that failed the WP cut still get
+  # weight=1 from that term — the actual WP cut is in event_selection).
+  et:
+    had_tau_id_vs_ele: "(gen_match_2==5) * ((id_tau_vsEle_Tight_2>0.5)*id_wgt_tau_vsEle_Tight_2 + (id_tau_vsEle_Tight_2<0.5)) + (gen_match_2!=5)"
+    had_tau_id_vs_mu: "(gen_match_2==5) * ((id_tau_vsMu_VLoose_Tight_2>0.5)*id_wgt_tau_vsMu_VLoose_Tight_2 + (id_tau_vsMu_VLoose_Tight_2<0.5)) + (gen_match_2!=5)"
+    lep_id: id_wgt_ele_wp90iso_1
+    lep_iso: 1
+    single_trigger: trg_wgt_single_ele30
+
+  mt:
+    had_tau_id_vs_ele: "(gen_match_2==5) * ((id_tau_vsEle_VVLoose_2>0.5)*id_wgt_tau_vsEle_VVLoose_2 + (id_tau_vsEle_VVLoose_2<0.5)) + (gen_match_2!=5)"
+    had_tau_id_vs_mu: "(gen_match_2==5) * ((id_tau_vsMu_Tight_VVLoose_2>0.5)*id_wgt_tau_vsMu_Tight_VVLoose_2 + (id_tau_vsMu_Tight_VVLoose_2<0.5)) + (gen_match_2!=5)"
+    lep_id: id_wgt_mu_1
+    lep_iso: iso_wgt_mu_1
+    single_trigger: trg_wgt_single_mu24
+
+  tt:
+    had_tau_id_vs_ele_1: "(gen_match_1==5) * ((id_tau_vsEle_VVLoose_1>0.5)*id_wgt_tau_vsEle_VVLoose_1 + (id_tau_vsEle_VVLoose_1<0.5)) + (gen_match_1!=5)"
+    had_tau_id_vs_ele_2: "(gen_match_2==5) * ((id_tau_vsEle_VVLoose_2>0.5)*id_wgt_tau_vsEle_VVLoose_2 + (id_tau_vsEle_VVLoose_2<0.5)) + (gen_match_2!=5)"
+    had_tau_id_vs_mu_1: "(gen_match_1==5) * ((id_tau_vsMu_VLoose_VVLoose_1>0.5)*id_wgt_tau_vsMu_VLoose_VVLoose_1 + (id_tau_vsMu_VLoose_VVLoose_1<0.5)) + (gen_match_1!=5)"
+    had_tau_id_vs_mu_2: "(gen_match_2==5) * ((id_tau_vsMu_VLoose_VVLoose_2>0.5)*id_wgt_tau_vsMu_VLoose_VVLoose_2 + (id_tau_vsMu_VLoose_VVLoose_2<0.5)) + (gen_match_2!=5)"
+    # Trigger weight: era-dependent (ditau35 up to 2023postBPix, ditau30_pnet from 2024)
+    double_trigger: "(trg_wgt_doubletau35_leg1 * trg_wgt_doubletau35_leg2)"
+    era_overrides:
+      '2024':
+        double_trigger: "(trg_wgt_doubletau30_leg1 * trg_wgt_doubletau30_leg2)"
+      '2025':
+        double_trigger: "(trg_wgt_doubletau30_leg1 * trg_wgt_doubletau30_leg2)"

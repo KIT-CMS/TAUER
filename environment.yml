@@ -1,0 +1,25 @@
+name: tauharvest
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - numpy
+  - scipy
+  - pandas
+  - matplotlib
+  - pyyaml
+  - tqdm
+  - uproot
+  - awkward
+  - coffea
+  - hist
+  - boost_histogram
+  - mplhep
+  - scikit-learn
+  - xgboost
+  - tensorflow
+  - keras
+  - pip:
+      - mplhep

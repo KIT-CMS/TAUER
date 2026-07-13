@@ -1,0 +1,26 @@
+name: tauharvest-plotting
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - numpy
+  - scipy
+  - pandas
+  - matplotlib
+  - pyyaml
+  - tqdm
+  - uproot
+  - awkward
+  - coffea
+  - hist
+  - boost-histogram
+  - mplhep
+  - scikit-learn
+  - xgboost
+  - tensorflow
+  - keras
+  - root
+  - pip
+  - pip:
+      - mplhep

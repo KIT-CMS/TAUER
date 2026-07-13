@@ -1,0 +1,6 @@
+[submodule "ntuple_processor"]
+	path = ntuple_processor
+	url = git@github.com:KIT-CMS/ntuple_processor.git
+[submodule "TauFakeFactors"]
+	path = TauFakeFactors
+	url = git@github.com:KIT-CMS/TauFakeFactors.git
