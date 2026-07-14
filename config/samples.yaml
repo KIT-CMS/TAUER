@@ -1,7 +1,20 @@
 # Integrated luminosity per era, in fb^-1. Single source of truth for the
 # lumi_weight() term in config/shapes/process_selection.py (converted to
-# pb^-1 there via *1000.0, matching crossSectionPerEventWeight's units).
+# pb^-1 there via *1000.0, matching crossSectionPerEventWeight's units), and
+# for the CMS lumi label in plotting/plot_shapes_control.py.
+#
+# Run2 entries (2016preVFP/postVFP, 2017, 2018) are UL-recommended values
+# carried over from smhtt_ul's Dumbledraw plotting script (DrawLumi() era
+# branch in plotting/plot_shapes_control.py there). Run2 shape *production*
+# is out of scope for this rework (config/shapes/*.py and config/samples.yaml
+# :backgrounds/:signals only cover Run3 — see RUN3_ERAS in config/analysis.py)
+# — these four values exist solely so the Run2-2018 validation ntuples can be
+# plotted with an era-correct CMS label (Phase 2b).
 luminosity:
+  2016preVFP: 19.5
+  2016postVFP: 16.8
+  '2017': 41.5
+  '2018': 59.8
   2022preEE: 8.086
   2022postEE: 26.679
   2023preBPix: 17.964

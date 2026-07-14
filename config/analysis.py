@@ -63,6 +63,18 @@ RUN3_ERAS = (
     "2025",
 )
 
+# Run2 UL eras. Only relevant to plotting (era-correct CMS labels, see
+# get_center_of_mass() below and the "luminosity" block in samples.yaml) —
+# shape production (config/shapes/*.py, samples.yaml:backgrounds/:signals)
+# does not cover Run2, so these are NOT accepted by load_yaml()/RUN3_ERAS
+# gated code paths.
+RUN2_ERAS = (
+    "2016preVFP",
+    "2016postVFP",
+    "2017",
+    "2018",
+)
+
 # TFF process name → ntuple_processor dataset key
 _TFF_TO_DATASET: dict[str, str] = {
     "DYjets":  "DY",
@@ -227,6 +239,21 @@ def get_luminosity(era: str) -> float:
     if lumi is None:
         raise ValueError(f"Given era {era!r} not defined in config/samples.yaml:luminosity.")
     return float(lumi)
+
+
+def get_center_of_mass(era: str) -> float:
+    """
+    LHC center-of-mass energy in TeV for the given era.
+
+    13.0 TeV for Run2 (era in RUN2_ERAS), 13.6 TeV for Run3 (era in
+    RUN3_ERAS) — matches smhtt_ul's Dumbledraw DrawLumi() era branch.
+    Used by plotting/plot_shapes_control.py for the CMS label.
+    """
+    if era in RUN2_ERAS:
+        return 13.0
+    if era in RUN3_ERAS:
+        return 13.6
+    raise ValueError(f"Given era {era!r} is not a known Run2 or Run3 era.")
 
 
 # ── MC weights ───────────────────────────────────────────────────────────────

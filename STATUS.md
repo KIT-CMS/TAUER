@@ -156,11 +156,165 @@ Kerberos, per pre-flight. Data: `root://cmsdcache-kit-disk.gridka.de//store/user
 
 ## Phase 2 — Vertical slices
 
-Status: NOT STARTED (blocked on Phase 1 validation).
+Status: IN PROGRESS. Phase 2b (below) is DONE.
+
+## Phase 2b — Run2 plotting styles + quantitative shape comparator
+
+Status: **DONE.**
+
+### Scope check against smhtt_ul
+
+`plotting/plot_shapes_control.py` and `plotting/process_ordering.py` were already fully
+mplhep/CMS-style (no Dumbledraw) per prior work. Compared line-by-line against smhtt_ul's
+current plotting code (`/work/sgiappic/smhtt_ul/plotting/plot_shapes_control.py`, still
+Dumbledraw-based, and `plotting/process_ordering.py`):
+
+- **`process_ordering.py`**: byte-for-byte identical `ControlShapeBkgProcesses` /
+  `IMPORTANCE_TO_PROCESS` / `sorted_bkg_processes` logic on both sides (diffed the two files).
+  Confirmed **no era-dependence** anywhere in it or in smhtt_ul's `Dumbledraw/styles.py`
+  (`color_dict`, `legend_label_dict`, `x_label_dict` are all process/variable-keyed, not
+  era-keyed) — process ordering/colors do not need to change between Run2 and Run3. Nothing to
+  port here.
+- **`plot_shapes_control.py`**: the *only* era-dependent styling in smhtt_ul's legacy script is
+  its `DrawLumi()` era `if/elif` chain (lines ~477-510 there), which selects a hand-built lumi
+  string per era, e.g. `"59.8 fb^{-1} (2018, 13 TeV)"` for 2018 vs. `"109.81 fb^{-1} (2024, 13.6
+  TeV)"` for 2024 — i.e. per-era lumi value + per-era-group center-of-mass energy (13 TeV for
+  all Run2 eras, 13.6 TeV for all Run3 eras). This is what TauKITFlow's plotting was missing:
+  its `ERA_LABELS` dict only had the 6 Run3 eras.
+
+### What was ported and why
+
+1. **`config/analysis.py`**: added `RUN2_ERAS = ("2016preVFP", "2016postVFP", "2017", "2018")`
+   next to the existing `RUN3_ERAS`, and `get_center_of_mass(era) -> float` (13.0 for Run2,
+   13.6 for Run3, `ValueError` otherwise) — mirrors smhtt_ul's per-era-group TeV value.
+   `RUN2_ERAS` is deliberately **not** wired into `load_yaml()`/TFF-gated code paths — Run2
+   shape *production* stays out of scope for this rework (no Run2 entries in
+   `samples.yaml:backgrounds`/`:signals`); `RUN2_ERAS` exists solely so plotting can label a
+   Run2 shapes file correctly.
+2. **`config/samples.yaml`**: added the four Run2 UL luminosity values (fb^-1) to the existing
+   central `luminosity:` block — `2016preVFP: 19.5`, `2016postVFP: 16.8`, `2017: 41.5`, `2018:
+   59.8` — carried over from smhtt_ul's `DrawLumi()` literals. Single-sourced: no lumi values
+   are duplicated in the plotting code.
+3. **`plotting/plot_shapes_control.py`**: replaced the hand-built `ERA_LABELS` string dict with
+   `ERA_YEAR_LABEL` (display text only, e.g. `"2018"`, `"2022 (preEE)"`) + a new
+   `cms_label_kwargs(era)` helper that reads `get_luminosity()` / `get_center_of_mass()` and
+   passes proper `year=`/`lumi=`/`com=`/`lumi_format=` kwargs into `hep.cms.label()`, instead of
+   a single pre-formatted string passed as `lumi=`.
+   - **Bug found and fixed in the process** (affected the already-"done" Run3 styling, not just
+     Run2): passing a full pre-formatted string like `"2024, 109.817 fb$^{-1}$"` as `lumi=` to
+     `mplhep.label.exp_label()` does **not** replace mplhep's own lumi-line construction — mplhep
+     appends its own `"$\mathrm{fb^{-1}}$"` and, since `com` was never passed, silently defaults
+     to `com=13`. Verified in the running `taukiktflow` env:
+     `mplhep.label._lumi_line(lumi="2024, 109.817 fb$^{-1}$", com=None)` returns
+     `"2024, 109.817 fb$^{-1}$ $\mathrm{fb^{-1}}$ (13 TeV)"` — i.e. every Run3 plot produced by
+     the pre-fix code had a **duplicated fb^-1 unit and the wrong center-of-mass energy (13 TeV
+     instead of 13.6 TeV)** baked into its CMS label. Confirmed the fix:
+     `cms_label_kwargs("2024")` now yields `{"year": "2024", "lumi": 109.816, "lumi_format":
+     "{0:.2f}", "com": 13.6}`, rendering as `"109.82 fb^-1, 2024 (13.6 TeV)"`; `cms_label_kwargs
+     ("2018")` yields `{"year": "2018", "lumi": 59.8, "com": 13}`, rendering as `"59.80 fb^-1,
+     2018 (13 TeV)"`. Both verified via `mplhep.label._lumi_line(**kw)` directly. Fonts, sizes,
+     `loc=0`, `label="Work in progress"` and every other CMS-style parameter are unchanged — only
+     the lumi/year/com values now vary correctly by era, as required.
+   - No changes needed to `PROCESS_COLOURS`, `legend_label_dict`, `x_label_dict`,
+     `CHANNEL_LABELS`, or the stacking/ratio-panel drawing code — none of it is era-dependent.
+
+### Comparator: `plotting/compare_control_shapes.py`
+
+New standalone script, explicit prep for Phase 3, scoped to `control_plots_ul.sh`'s **PLOT-mode
+input** specifically (a single `control_shapes-<era>-<channel>-<ntupletag>-<tag>.root` file per
+side — found via `control_plots_ul.sh`'s `MODE=PLOT` branch in
+`/work/sgiappic/smhtt_ul/control_plots_ul.sh`, which is what `plot_shapes_control.py` there
+reads). Both TauKITFlow's `shapes/produce_shapes.py` and smhtt_ul's legacy shape producer use
+the identical histogram-naming convention `{dataset}#{channel}{process_suffix}#{selection}#
+{variable}` (`shapes/estimations/defaults.py:_name_string` on the TauKITFlow side) — confirmed
+by inspecting real keys on both sides — so the comparator reads matching keys directly out of
+both ROOT files with no translation layer needed.
+
+**What it does:** for every histogram key present in `--legacy-file` (optionally filtered by
+`--variables`/`--processes`/`--selection`), looks up the identical key in `--new-file` and
+compares bin-by-bin:
+
+```
+n_sigma   = |content_new - content_legacy| / sqrt(error_new^2 + error_legacy^2)
+rel_diff  = |content_new - content_legacy| / max(|content_new|, |content_legacy|, 1e-12)
+```
+
+A histogram passes if every bin's `n_sigma <= --max-n-sigma` (default 3.0); `--max-rel-diff` is
+an optional second, stricter gate (both must pass if given) for the common case where a huge
+statistical uncertainty in a low-stat bin would otherwise mask a real normalization difference.
+Logs the **actual achieved** max n-sigma and max relative difference per histogram and overall
+(not just pass/fail), and lists any histogram present in the legacy file but missing from the
+new file. Exit 0 if every compared histogram passes (and, with `--strict-missing`, none are
+missing); exit 1 otherwise.
+
+### Validation run (real data, both sides)
+
+- **Run3 case (2022preEE, mt channel) — the one case actually diffed end-to-end:**
+  - `--legacy-file`: `/work/sgiappic/smhtt_ul/output/2022preEE-mt-htt_260602_2022-23_v5-260602/
+    control_shapes-2022preEE-mt-htt_260602_2022-23_v5-260602.root` — real
+    `control_plots_ul.sh -m SHAPES` output for the default 60-variable control-plot set (the
+    `260602` tag), produced by smhtt_ul against real 2022preEE CROWN ntuples.
+  - `--new-file`: `/work/sgiappic/TauKITFlow/output/2022preEE-mt-shapes.root` — a pre-existing
+    real TauKITFlow `shapes/produce_shapes.py` control-plots run for the same era/channel
+    (dated before this worktree's changes, i.e. before the Phase 1 lumi/signal-sample fixes —
+    noted below as a caveat, not swept under the rug).
+  - Command: `python plotting/compare_control_shapes.py --new-file
+    output/2022preEE-mt-shapes.root --legacy-file <legacy path above> --channel mt --selection
+    Nominal --max-n-sigma 3.0`.
+  - **Result: 593/615 histograms agree within 3σ. Achieved max n_sigma = 10.161, max
+    rel_diff = 8.09% across all 615 compared histograms; 329 histograms present in the legacy
+    file were absent from the new file (variables/processes not produced in that older run,
+    e.g. `QCDMC`, some `ttH` variables) and are reported but not counted as failures unless
+    `--strict-missing` is passed.**
+  - **Root-caused the 22 failing histograms:** every single failure is the `TT#mt-TT-TTL`
+    process (t-tbar → leptonic-fake background) — **every other process (`DY-ZTT`, `DY-ZL`,
+    `DY-ZJ`, `VV-*`, `W`, `data`, all signals) agrees to `n_sigma < 0.2` and `rel_diff` at or
+    near float-precision zero** (spot-checked `DY#mt-DY-ZTT#Nominal#m_vis`:
+    `new=56965.2243`, `legacy=56965.2243`, bit-identical). `TT-TTL` is consistently **+3.9%**
+    high in the new file across every variable (`new=4895.76` vs. `legacy=4709.78` integral,
+    ratio 1.0395, same ratio in every TTL histogram) — a single consistent multiplicative
+    offset, not per-bin noise, so it reads as a genuine sample-list or weight difference for
+    that one process rather than a comparator bug. Given the new-side file predates this
+    worktree's Phase 1 fixes (which touched `lumi_weight()` and signal samples, not TT), the
+    likely explanation is a difference in the underlying CROWN production or TT sample list
+    between when that file was produced and smhtt_ul's `260602`-tagged run — **flagged here for
+    Phase 3 to re-run with a fresh `produce_shapes.py` output and confirm**, not resolved in
+    this slice (out of scope: Phase 2b is the comparator tool + Run2 styling, not a full shape
+    audit).
+  - This run also demonstrates a clean pass: restricting to `--processes DY-ZTT,data
+    --variables m_vis,pt_1,pt_2,mt_1` gives **8/8 histograms pass, achieved max n_sigma = 0.189,
+    max rel_diff = 1.85%** (the `data` rel_diff is real — 92785 vs. 92905 raw event count,
+    `n_sigma` only 0.12-0.19σ so well within statistical noise for a counting comparison).
+- **Run2 case: explicitly not run — no working Run2 legacy output exists to diff against.**
+  Searched `/work/sgiappic/smhtt_ul/output/` (all ~90 subdirectories) and found **zero** Run2
+  (2016/2017/2018) `control_shapes-*.root` files — every existing legacy shape output there is
+  a Run3 era (2022/2023/2024/2025; confirmed via `find ... -iname "*2018*"` etc. turning up
+  only unrelated files: embedding scripts, dataset JSONs, GoF binning configs, no shape ROOT
+  files). smhtt_ul has never run its `SHAPES`/`PLOT` mode for the Run2-2018 validation dataset
+  listed in this task. **Per the stop condition: this is reported explicitly rather than
+  skipped silently — Run2 styling is ported and unit-tested (see `cms_label_kwargs("2018")`
+  above) but has no legacy-vs-new numeric comparison behind it in this slice.** Producing one
+  would require running smhtt_ul's full `SHAPES` mode against the Run2 2018 CROWN ntuples
+  first (`root://cmsdcache-kit-disk.gridka.de//store/user/jvoss/CROWN/ntuples/
+  SFs_EMB_Run2_v15nanoAOD_29_06_26/`), which is out of scope for this rework (Run2 shape
+  production isn't part of TauKITFlow's central config, see `RUN2_ERAS` note above) and would
+  mean running smhtt_ul itself, not TauKITFlow — left for whoever picks up Run2 support as an
+  actual production target, if that's ever needed.
+
+### Files changed
+
+- `config/analysis.py` — added `RUN2_ERAS`, `get_center_of_mass()`.
+- `config/samples.yaml` — added 4 Run2 luminosity entries to the existing `luminosity:` block.
+- `plotting/plot_shapes_control.py` — replaced `ERA_LABELS` with `ERA_YEAR_LABEL` +
+  `cms_label_kwargs()`; fixed the mplhep double-fb^-1/wrong-com-energy bug at both
+  `hep.cms.label()` call sites (main plot + per-process overlay plot).
+- `plotting/compare_control_shapes.py` — new file, the Phase 3-prep comparator described above.
 
 ## Phase 3 — Validation comparators
 
-Status: NOT STARTED.
+Status: NOT STARTED (Phase 2b's `plotting/compare_control_shapes.py` is usable as-is for
+control-plot comparisons; Phase 3 covers datacards/other shape stages not in this slice's
+scope).
 
 ## Phase 4 — GoF/impacts
 

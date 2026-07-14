@@ -15,6 +15,7 @@ import numpy as np
 import ROOT
 import yaml
 
+from config.analysis import RUN2_ERAS, RUN3_ERAS, get_center_of_mass, get_luminosity
 from config.logging_setup_configs import setup_logging
 from plotting.process_ordering import ControlShapeBkgProcesses
 
@@ -83,14 +84,47 @@ x_label_dict = {
     "mt_1": "Transverse mass m_{T} [GeV]",
 }
 
-ERA_LABELS = {
-    "2022preEE":    r"2022 (pre-EE), 8.086 fb$^{-1}$",
-    "2022postEE":   r"2022 (post-EE), 26.675 fb$^{-1}$",
-    "2023preBPix":  r"2023 (pre-B$\mathit{Pix}$), 17.964 fb$^{-1}$",
-    "2023postBPix": r"2023 (post-B$\mathit{Pix}$), 9.677 fb$^{-1}$",
-    "2024":         r"2024, 109.817 fb$^{-1}$",
-    "2025":         r"2025, 109.898 fb$^{-1}$",
+# Display text for the "year" part of the CMS lumi label. Covers both Run2
+# (ported from smhtt_ul's Dumbledraw DrawLumi() era branch, plotting/
+# plot_shapes_control.py there) and Run3. The numeric lumi (fb^-1) and
+# center-of-mass energy (TeV) come from config.analysis.get_luminosity() /
+# get_center_of_mass() — single-sourced from config/samples.yaml, not
+# duplicated here.
+ERA_YEAR_LABEL = {
+    "2016preVFP":   "2016 (preVFP)",
+    "2016postVFP":  "2016 (postVFP)",
+    "2017":         "2017",
+    "2018":         "2018",
+    "2022preEE":    "2022 (preEE)",
+    "2022postEE":   "2022 (postEE)",
+    "2023preBPix":  "2023 (preBPix)",
+    "2023postBPix": "2023 (postBPix)",
+    "2024":         "2024",
+    "2025":         "2025",
 }
+
+
+def cms_label_kwargs(era: str) -> dict:
+    """
+    year/lumi/com kwargs for hep.cms.label(), era-correct for both Run2 and
+    Run3 (13 TeV vs. 13.6 TeV, and the right integrated luminosity for each
+    era). Letting mplhep's exp_label() build the "N fb^-1 (year, com TeV)"
+    string itself (via these three kwargs, rather than a hand-built string
+    passed as `lumi=`) is also a bugfix: passing a pre-formatted string as
+    `lumi=` made mplhep append its own "fb^-1 (13 TeV)" suffix on top of the
+    already-formatted string, and silently used its default 13 TeV even for
+    Run3 eras.
+    """
+    if era not in RUN2_ERAS and era not in RUN3_ERAS:
+        logger.warning(f"Era {era!r} not in RUN2_ERAS/RUN3_ERAS; using it verbatim in the CMS label.")
+        return {"year": era}
+    com = get_center_of_mass(era)
+    return {
+        "year": ERA_YEAR_LABEL.get(era, era),
+        "lumi": get_luminosity(era),
+        "lumi_format": "{0:.2f}",
+        "com": int(com) if com == int(com) else com,
+    }
 
 CHANNEL_LABELS = {
     "et": r"$e\tau_h$",
@@ -263,9 +297,9 @@ def plot_control(
         ax=ax_top,
         label="Work in progress",
         data=bool(data_hist),
-        lumi=ERA_LABELS.get(era, era),
         loc=0,
         fontsize=14,
+        **cms_label_kwargs(era),
     )
     ax_top.text(
         0.02, 0.96,
@@ -353,9 +387,9 @@ def plot_control(
             ax=ax_top_ol,
             label="Work in progress",
             data=bool(data_hist),
-            lumi=ERA_LABELS.get(era, era),
             loc=0,
             fontsize=14,
+            **cms_label_kwargs(era),
         )
         ax_top_ol.text(
             0.02, 0.96,
