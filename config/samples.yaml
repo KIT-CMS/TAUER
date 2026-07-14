@@ -1,3 +1,14 @@
+# Integrated luminosity per era, in fb^-1. Single source of truth for the
+# lumi_weight() term in config/shapes/process_selection.py (converted to
+# pb^-1 there via *1000.0, matching crossSectionPerEventWeight's units).
+luminosity:
+  2022preEE: 8.086
+  2022postEE: 26.679
+  2023preBPix: 17.964
+  2023postBPix: 9.677
+  '2024': 109.816
+  '2025': 109.898
+
 backgrounds:
   2022preEE:
     DYjets:

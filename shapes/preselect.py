@@ -41,22 +41,13 @@ ROOT.gROOT.SetBatch(True)
 
 from config.analysis import (
     SIGNAL_SAMPLES as signal_files,
+    get_luminosity,
     get_mc_weights,
     get_preselection_cuts,
 )
 from config.logging_setup_configs import setup_logging
 
 logger = setup_logging(logger=logging.getLogger(__name__))
-
-# Luminosities in pb^-1
-_LUMI_PB = {
-    "2022preEE":    8086.0,
-    "2022postEE":  26679.0,
-    "2023preBPix": 17964.0,
-    "2023postBPix": 9677.0,
-    "2024":       109816.0,
-    "2025":       109898.0,
-}
 
 _TOP_PT_PROCESSES = {"ttbar", "ST"}
 _Z_PT_PROCESSES   = {"DYjets"}
@@ -73,7 +64,7 @@ def _build_weight_expr(mc_weights: dict, process: str, era: str) -> str:
     Mirrors TFF mc_weights but replaces TFF-internal generator/lumi keys with
     CROWN xsec-friend columns so it works outside of TFF's helper library.
     """
-    lumi = _LUMI_PB.get(era, 1.0)
+    lumi = get_luminosity(era) * 1000.0  # config/samples.yaml stores fb^-1; presel_weight needs pb^-1
     parts = []
     for key, expr in mc_weights.items():
         if key == "generator":

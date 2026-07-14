@@ -8,7 +8,8 @@ All data lives in three YAML files next to this module:
 
 This module reads those files and provides a Python API used by:
   config/shapes/tff_adapter.py  (backward-compat shim)
-  config/shapes/signal_files.py (backward-compat shim)
+  config/shapes/signal_files.py (backward-compat shim, re-exports SIGNAL_SAMPLES)
+  config/shapes/process_selection.py (reads get_luminosity())
   shapes/produce_shapes.py
   shapes/preselect.py
   trainings/create_training_dataset.py
@@ -16,7 +17,18 @@ This module reads those files and provides a Python API used by:
   config/generate_tff_configs.py
 
 TauFakeFactors and uncertainty-aware-training are NOT modified.
-config/shapes/variations.py is NOT modified.
+
+config/shapes/process_selection.py and config/shapes/variations.py stay as Python
+modules, not YAML: they encode executable, era/channel-conditional weight- and
+cut-string construction (chainable Selection composition, STXS stitching-weight
+calculation, dataclasses) that would lose correctness and readability if flattened
+to static data. That is a deliberate design choice, not an unfinished migration.
+What *is* centralised here: every literal data table that used to live duplicated
+inside those files — signal sample names (SIGNAL_SAMPLES, ex-signal_files.py),
+per-era luminosity (get_luminosity(), ex-hardcoded in process_selection.lumi_weight),
+mc_weights, preselection cuts, variables/binning — all single-sourced from the YAMLs
+next to this module. process_selection.py/variations.py consume that data; they do
+not redefine it.
 """
 
 import logging
@@ -205,6 +217,16 @@ def get_preselection_cuts(era: str, channel: str) -> dict[str, str]:
     if era in era_overrides:
         result.update(era_overrides[era])
     return result
+
+
+# ── Luminosity ───────────────────────────────────────────────────────────────
+
+def get_luminosity(era: str) -> float:
+    """Integrated luminosity for the given era, in fb^-1 (from config/samples.yaml)."""
+    lumi = _load_samples()["luminosity"].get(era)
+    if lumi is None:
+        raise ValueError(f"Given era {era!r} not defined in config/samples.yaml:luminosity.")
+    return float(lumi)
 
 
 # ── MC weights ───────────────────────────────────────────────────────────────

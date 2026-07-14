@@ -62,26 +62,9 @@ def triggerweight(channel, era, vs_jet_wp, vs_ele_wp, **kwargs):
 
 
 def lumi_weight(era, **kwargs):
-    if era == "2022preEE":
-        lumi = "8.086"
-    elif era == "2022postEE":
-        lumi = "26.679"
-    elif era == "2023preBPix":
-        lumi = "17.964"
-    elif era == "2023postBPix":
-        lumi = "9.677"
-    # elif era == "2024":
-    #      lumi = "3.625" #Muon 0 only
-    # elif era == "2024":
-    #      lumi = "26.52" #CDE
-    # elif era == "2024":
-    #     lumi = "82.43" #FGHI
-    elif era == "2024":
-       lumi = "109.816" 
-    elif era == "2025":
-        lumi = "109.898" 
-    else:
-        raise ValueError("Given era {} not defined.".format(era))
+    from config.analysis import get_luminosity
+
+    lumi = get_luminosity(era)
     return ("{} * 1000.0".format(lumi), "lumi")
 
 
