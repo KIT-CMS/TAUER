@@ -17,7 +17,9 @@ CORES=${5:-1}
 
 pushd "$FITDIR"
 
-INPUT_DIR="output/datacards/${ERA}-${CHANNEL}-${VARIABLE}-gof/"
+# make_datacards.py (invoked by produce_gof_datacard.sh) writes into
+# {output-folder}/{channel}/{era}/*.txt -- descend into that same leaf here.
+INPUT_DIR="output/datacards/${ERA}-${CHANNEL}-${VARIABLE}-gof/${CHANNEL}/${ERA}/"
 
 combineTool.py -M T2W -o "ws.root" \
     -P HiggsAnalysis.CombinedLimit.PhysicsModel:multiSignalModel \
