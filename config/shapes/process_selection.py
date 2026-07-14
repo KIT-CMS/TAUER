@@ -119,7 +119,13 @@ def MC_base_process_selection(channel, era, vs_jet_wp, vs_ele_wp, preselected=Fa
         tauidweight = None
         vsmu_weight = (f"id_wgt_tau_vsMu_Tight_{vs_ele_wp}_2", "vsmuweight")
         vsele_weight = (f"id_wgt_tau_vsEle_{vs_ele_wp}_2", "vseleweight")
-        trgweight = ("(pt_1>26)*(trg_wgt_single_mu24)", "trgweight")
+        if era == "2018":
+            # 2018 CROWN branches ship the OR-of-both-single-muon-triggers
+            # weight precomputed (trg_wgt_single_mu24ormu27); no extra pt cut
+            # needed. Confirmed present in the Phase 2a validation ntuples.
+            trgweight = ("(trg_wgt_single_mu24ormu27)", "trgweight")
+        else:
+            trgweight = ("(pt_1>26)*(trg_wgt_single_mu24)", "trgweight")
     elif channel == "tt":
         isoweight = None
         idweight = None
@@ -168,7 +174,15 @@ def MC_base_process_selection(channel, era, vs_jet_wp, vs_ele_wp, preselected=Fa
             lumi_weight(era),
             prefiring_weight(era),
         ]
-    MC_base_process_weights.append(("btag_weight", "btagWeight"))
+    if channel not in ("mm", "mt"):
+        # btag weight is not part of the mt/mm base selection (no b-tag
+        # requirement there; it's applied at category level via an nbtag
+        # cut instead). Matches smhtt_ul's convention. Previously appended
+        # unconditionally for all channels here — silently correct only by
+        # coincidence for eras whose CROWN production happens to ship a
+        # `btag_weight` branch; the 2018 validation production used for
+        # Phase 2a does not ship one, which surfaced this bug.
+        MC_base_process_weights.append(("btag_weight", "btagWeight"))
     return Selection(
         name="MC base",
         weights=[weight for weight in MC_base_process_weights if weight is not None],
@@ -409,21 +423,44 @@ def __get_ZTT_cut(channel, **kwargs):
         return "(gen_match_1==3 && gen_match_2==4)"
 
 
-def ZTT_embedded_process_selection(channel, era, apply_wps, vs_jet_wp, **kwargs):
-    ztt_embedded_weights = []
+def ZTT_embedded_process_selection(channel, era, apply_wps, vs_jet_wp, vs_ele_wp=None, **kwargs):
+    # Generator-level embedding weight + muon/tau selection-efficiency weight
+    # every embedded sample ships regardless of channel/era. Previously
+    # missing here (replaced by a placeholder "(0.25)" scale term) — real gap
+    # found while extending to 2018/embedding: without these, embedded
+    # background normalization is wrong for every channel, not just mt.
+    # Confirmed present in the Phase 2a 2018 TauEmbedding-MuTauFinalState
+    # validation ntuples (emb_genweight, emb_idsel_wgt_1, emb_idsel_wgt_2,
+    # emb_triggersel_wgt).
+    ztt_embedded_weights = [
+        ("emb_genweight", "emb_genweight"),
+        ("emb_idsel_wgt_1*emb_idsel_wgt_2*emb_triggersel_wgt", "emb_selection_weight"),
+    ]
     if "mt" in channel:
-        ztt_embedded_weights.extend(
-            [
-                ("gen_match_1==4 && gen_match_2==5", "emb_veto"),
-                ("(0.25)", "scale"),
-                ("(trg_wgt_single_mu24)", "trgweight"),
-            ]
-        )
+        if era == "2018":
+            ztt_embedded_weights.extend(
+                [
+                    ("gen_match_1==4 && gen_match_2==5", "emb_veto"),
+                    ("iso_wgt_mu_1", "isoweight"),
+                    ("id_wgt_mu_1", "idweight"),
+                    ("(trg_wgt_single_mu24ormu27)", "trgweight"),
+                ]
+            )
+        else:
+            ztt_embedded_weights.extend(
+                [
+                    ("gen_match_1==4 && gen_match_2==5", "emb_veto"),
+                    ("(trg_wgt_single_mu24)", "trgweight"),
+                ]
+            )
+        if apply_wps:
+            ztt_embedded_weights.append(
+                (f"((gen_match_2==5)*id_wgt_tau_vsJet_{vs_jet_wp}_2 + (gen_match_2!=5))", "taubyIsoIdWeight")
+            )
     elif "et" in channel:
         ztt_embedded_weights.extend(
             [
                 ("gen_match_1==3 && gen_match_2==5", "emb_veto"),
-                ("(0.25)", "scale"),
                 ("(trg_wgt_single_ele30)", "trgweight"),
             ]
         )

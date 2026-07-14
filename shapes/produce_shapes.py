@@ -13,6 +13,7 @@ import pickle
 from functools import partial
 from itertools import combinations
 
+import numpy as np
 import yaml
 
 import config.shapes.process_selection as selection
@@ -22,6 +23,7 @@ import config.ntuple_processor_config_helper as ntuple_processor_config_helper
 from config.helper_collection import PreserveROOTPathsAsStrings
 from config.logging_setup_configs import setup_logging
 from config.shapes.category_selection import categorization as default_categorization
+from config.shapes.taues_measurement_binning import categorization as taues_categorization
 from config.shapes.channel_selection import channel_selection
 from config.shapes.control_binning import control_binning as default_control_binning
 from config.analysis import build_files_dict
@@ -152,6 +154,12 @@ def parse_arguments():
         "--no-dnn-categorization", action="store_true",
         help="Produce shapes for variables in config/variables.yaml without DNN categorization (use when DNN friend trees are not available).",
     )
+    parser.add_argument(
+        "--special-analysis", default=None, choices=[None, "TauES"],
+        help="Produce shapes for a special analysis instead of the default categorization. "
+             "'TauES' books additional per-shift embedded ('emb<shift>') datasets for the "
+             "tau energy-scale fit (mt channel only, -2.5%% to +2.5%% in 0.1%% steps).",
+    )
     return parser.parse_args()
 
 
@@ -171,21 +179,33 @@ def load_variables_from_config(channel):
     return _filtered
 
 def add_processes(add_fn, datasets, select_fn, channel):
-    add_fn(name="data", dataset=datasets["data"], selections=select_fn())
-    add_fn(name="ztt",  dataset=datasets["DY"],   selections=select_fn(*selection.DY.TT))
-    add_fn(name="zl",   dataset=datasets["DY"],   selections=select_fn(*selection.DY.L))
-    add_fn(name="zj",   dataset=datasets["DY"],   selections=select_fn(*selection.DY.J))
-    add_fn(name="ttt",  dataset=datasets["TT"],   selections=select_fn(*selection.TT.T))
-    add_fn(name="ttl",  dataset=datasets["TT"],   selections=select_fn(*selection.TT.L))
-    add_fn(name="ttj",  dataset=datasets["TT"],   selections=select_fn(*selection.TT.J))
-    add_fn(name="vvt",  dataset=datasets["VV"],   selections=select_fn(*selection.VV.T))
-    add_fn(name="vvl",  dataset=datasets["VV"],   selections=select_fn(*selection.VV.L))
-    add_fn(name="vvj",  dataset=datasets["VV"],   selections=select_fn(*selection.VV.J))
-    add_fn(name="w",    dataset=datasets["W"],    selections=select_fn(selection.W))
-    add_fn(name="qqh",  dataset=datasets["qqH"],  selections=select_fn(selection.qqH125))
-    add_fn(name="ggh",  dataset=datasets["ggH"],  selections=select_fn(selection.ggH125))
-    add_fn(name="tth",  dataset=datasets["ttH"],  selections=select_fn(selection.ttH))
-    add_fn(name="vh",   dataset=datasets["VH"],   selections=select_fn(selection.VH))
+    # Guard on dataset-key presence: eras that don't configure every process
+    # group in config/samples.yaml (e.g. 2018, which currently only has
+    # backgrounds + EMB for mt, no signals) simply skip that process instead
+    # of KeyError-ing. Run3 eras are unaffected — every key below is always
+    # present in their samples.yaml entries.
+    def _add(name, key, selections_fn):
+        dataset = datasets.get(key)
+        if not dataset:
+            return
+        add_fn(name=name, dataset=dataset, selections=selections_fn())
+
+    _add("data", "data", select_fn)
+    _add("ztt",  "DY",   lambda: select_fn(*selection.DY.TT))
+    _add("zl",   "DY",   lambda: select_fn(*selection.DY.L))
+    _add("zj",   "DY",   lambda: select_fn(*selection.DY.J))
+    _add("ttt",  "TT",   lambda: select_fn(*selection.TT.T))
+    _add("ttl",  "TT",   lambda: select_fn(*selection.TT.L))
+    _add("ttj",  "TT",   lambda: select_fn(*selection.TT.J))
+    _add("vvt",  "VV",   lambda: select_fn(*selection.VV.T))
+    _add("vvl",  "VV",   lambda: select_fn(*selection.VV.L))
+    _add("vvj",  "VV",   lambda: select_fn(*selection.VV.J))
+    _add("w",    "W",    lambda: select_fn(selection.W))
+    _add("emb",  "EMB",  lambda: select_fn(selection.ZTT_embedded))
+    _add("qqh",  "qqH",  lambda: select_fn(selection.qqH125))
+    _add("ggh",  "ggH",  lambda: select_fn(selection.ggH125))
+    _add("tth",  "ttH",  lambda: select_fn(selection.ttH))
+    _add("vh",   "VH",   lambda: select_fn(selection.VH))
 
 
 def get_select_function(channel_selection_obj, selection_kwargs, selection_memo):
@@ -199,9 +219,9 @@ def get_select_function(channel_selection_obj, selection_kwargs, selection_memo)
     return _function
 
 
-def get_analysis_units(channel, era, datasets, categorization, apply_tauid, vs_jet_wp, vs_ele_wp, selection_option="CR", preselected=False):
+def get_analysis_units(channel, era, datasets, categorization, apply_tauid, vs_jet_wp, vs_ele_wp, selection_option="CR", preselected=False, special=None):
     _sel_kwargs = dict(
-        channel=channel, era=era, special=None,
+        channel=channel, era=era, special=special,
         vs_jet_wp=vs_jet_wp, vs_ele_wp=vs_ele_wp,
         selection_option=selection_option, apply_wps=apply_tauid,
         preselected=preselected,
@@ -337,6 +357,59 @@ def main(args):
             nominals[args.era]["units"][channel] = get_control_units(
                 **common_kwargs, variables=_vars,
             )
+        elif args.special_analysis == "TauES":
+            if channel != "mt":
+                raise ValueError(
+                    "--special-analysis TauES is only implemented for the mt channel "
+                    f"(Phase 2a scope); got channel={channel!r}."
+                )
+            nominals[args.era]["units"][channel] = get_analysis_units(
+                **common_kwargs, categorization=taues_categorization, special="TauES",
+            )
+            # Book additional per-shift embedded ("emb<shift>") datasets, reusing
+            # the already-ported shape_utils.add_tauES_datasets/book_tauES_histograms
+            # machinery (verified to match the real __EMBtauESshift_<x> friend-branch
+            # suffix convention shipped by the Phase 2a 2018 embedded validation ntuples).
+            #
+            # Range/step corrected here: -2.5%..+2.5% in 0.1% steps (the original
+            # guess, copied from smhtt_ul's dead/unused `tauESvariations` list in
+            # shapes/do_estimations.py) does NOT match what's actually shipped.
+            # Direct inspection of a real 2018 TauEmbedding-MuTauFinalState ntuple
+            # (`pt_2__EMBtauESshift_<x>` branches) shows 100 shift points spanning
+            # -12.0% to +8.0% in 0.2% steps, with 0.0% (nominal, unshifted branch)
+            # excluded. Using the wrong range would silently skip real shift points
+            # (shape_utils.add_tauES_datasets only logs a critical and continues
+            # when `shiftname not in quantities_per_vars`, it doesn't raise) and
+            # book variations for shift names that don't exist as branches at all.
+            additional_emb_procS = set()
+            _es_shifts = [
+                round(x, 1)
+                for x in np.arange(-12.0, 8.0 + 0.2, 0.2)
+                if round(x, 1) != 0.0
+            ]
+            shape_utils.add_tauES_datasets(
+                era=args.era, channel=channel,
+                friend_directories=friend_directories, files=files,
+                directory=ntuple_directory, nominals=nominals,
+                tauESvariations=_es_shifts,
+                selections=[
+                    channel_selection(
+                        channel=channel, era=args.era, special="TauES",
+                        vs_jet_wp=args.vs_jet_wp, vs_ele_wp=args.vs_ele_wp,
+                        selection_option=args.selection_option,
+                    ),
+                    selection.ZTT_embedded(
+                        channel=channel, era=args.era,
+                        apply_wps=args.apply_tauid, vs_jet_wp=args.vs_jet_wp,
+                        vs_ele_wp=args.vs_ele_wp,
+                    ),
+                ],
+                categorization=taues_categorization,
+                additional_emb_procS=additional_emb_procS,
+                validation_tag=args.validation_tag,
+                xrootd=args.xrootd,
+            )
+            nominals[args.era].setdefault("tauES_procS", {})[channel] = additional_emb_procS
         else:
             nominals[args.era]["units"][channel] = get_analysis_units(
                 **common_kwargs, categorization=default_categorization,
@@ -375,6 +448,20 @@ def main(args):
         )
 
     for channel in args.channels:
+        if args.special_analysis == "TauES":
+            # TauES fit inputs: nominal background/embedded shapes in the
+            # tauES categorization, plus one embedded template per tau-ES
+            # shift (booked via book_tauES_histograms below). The regular
+            # systematic-variation stack below is not relevant to this mode.
+            _book(embS | dataS | trueTauBkgS | leptonFakesS | jetFakesDS[channel], [variations.same_sign])
+            shape_utils.book_tauES_histograms(
+                manager=unit_manager,
+                additional_emb_procS=nominals[args.era]["tauES_procS"][channel],
+                datasets=nominals[args.era]["units"][channel],
+                variations=[variations.same_sign],
+                enable_check=args.enable_booking_check,
+            )
+            continue
         _book(signalsS, [])
         if channel in {"mt", "et", "tt"}:
             _book(embS | dataS | trueTauBkgS | leptonFakesS | jetFakesDS[channel], [variations.same_sign])

@@ -193,7 +193,17 @@ def main(args):
     eleES_names = []
     if args.special == "TauES":
         # we have to extend the _dataset_map and the _process_map to include the TauES variations
-        tauESvariations = [-2.5 + 0.1 * i for i in range(0, 52)]
+        #
+        # Range/step: -12.0% to +8.0% in 0.2% steps (0.0% excluded — that's the
+        # nominal, unshifted branch), NOT the previously-guessed -2.5%..+2.5%
+        # in 0.1% steps. Confirmed by direct inspection of a real 2018
+        # TauEmbedding-MuTauFinalState validation ntuple's
+        # `pt_2__EMBtauESshift_<x>` friend branches (Phase 2a; see STATUS.md).
+        # Must stay in sync with shapes/produce_shapes.py's `_es_shifts` (same
+        # source data, same naming convention).
+        tauESvariations = [
+            round(-12.0 + 0.2 * i, 1) for i in range(0, 101) if round(-12.0 + 0.2 * i, 1) != 0.0
+        ]
         for variation in tauESvariations:
             name = str(round(variation, 2)).replace("-", "minus").replace(".", "p")
             processname = f"emb{name}"
@@ -299,8 +309,18 @@ def main(args):
         for channel in emb_categories:
             for category in emb_categories[channel]:
                 logger.info("Do estimation for category %s", category)
-                if args.special == "EleES":
-                    for embsignal in eleES_names:
+                if args.special in ("EleES", "TauES"):
+                    # Both special-analysis modes book one embedded "process" per
+                    # energy-scale shift point (emb<shift>, e.g. "emb2p4" or
+                    # "embminus1p6" — see shapes/produce_shapes.py's --special-analysis
+                    # TauES wiring and shape_utils.add_tauES_datasets). Previously only
+                    # EleES was handled here; TauES fell through to the `else` branch
+                    # below with embname="EMB", silently ignoring every shift point
+                    # (tauES_names was computed above but never consumed — dead code,
+                    # found while extending Phase 2a; the correct fix is to treat it
+                    # exactly like EleES, not to leave it unused).
+                    shift_names = eleES_names if args.special == "EleES" else tauES_names
+                    for embsignal in shift_names:
                         print(embsignal)
                         var = emb_categories[channel][category][0]
                         estimated_hist = emb_ttbar_contamination_estimation(

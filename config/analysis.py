@@ -66,14 +66,23 @@ RUN3_ERAS = (
 # Run2 UL eras. Only relevant to plotting (era-correct CMS labels, see
 # get_center_of_mass() below and the "luminosity" block in samples.yaml) —
 # shape production (config/shapes/*.py, samples.yaml:backgrounds/:signals)
-# does not cover Run2, so these are NOT accepted by load_yaml()/RUN3_ERAS
-# gated code paths.
+# does not cover Run2 in general, so these are NOT accepted by
+# load_yaml()/RUN3_ERAS gated code paths.
 RUN2_ERAS = (
     "2016preVFP",
     "2016postVFP",
     "2017",
     "2018",
 )
+
+# Phase 2a: of the Run2 eras above, only 2018 (mt/mm channels) has real
+# shape-production support, scoped to the validation dataset available at
+# rework time (jvoss's SFs_EMB_Run2_v15nanoAOD_29_06_26 CROWN production).
+# 2016/2017 are plotting-label-only (see RUN2_ERAS) — no production support,
+# no validation data.
+RUN2_PRODUCTION_ERAS = ("2018",)
+
+SUPPORTED_ERAS = RUN3_ERAS + RUN2_PRODUCTION_ERAS
 
 # TFF process name → ntuple_processor dataset key
 _TFF_TO_DATASET: dict[str, str] = {
@@ -83,6 +92,7 @@ _TFF_TO_DATASET: dict[str, str] = {
     "ST":      "VV",   # single-top merged into VV
     "Wjets":   "W",
     "data":    "data",
+    "EMB":     "EMB",  # embedded (data-derived) ZTT background
 }
 
 # ── YAML loaders (cached) ─────────────────────────────────────────────────────
@@ -111,8 +121,8 @@ def _load_weights() -> dict:
 
 def load_yaml(era: str, channel: str) -> dict:
     """Load the TauFakeFactors preselection YAML for the given era and channel."""
-    if era not in RUN3_ERAS:
-        raise ValueError(f"Era '{era}' not in supported eras: {RUN3_ERAS}")
+    if era not in SUPPORTED_ERAS:
+        raise ValueError(f"Era '{era}' not in supported eras: {SUPPORTED_ERAS}")
     path = TFF_CONFIG_ROOT / era / f"preselection_{channel}.yaml"
     if not path.exists():
         raise FileNotFoundError(
@@ -194,9 +204,11 @@ def get_background_samples(era: str, channel: str) -> dict[str, list[str]]:
         if ds_key is None:
             logger.debug(f"Skipping unknown TFF process '{tff_proc}'")
             continue
-        if tff_proc == "data":
+        if tff_proc in ("data", "EMB"):
+            # Both are channel-dependent sample lists (per-run-period data,
+            # per-final-state embedding), keyed the same way in samples.yaml.
             ch_samples = info.get("by_channel", {}).get(channel, [])
-            result.setdefault("data", []).extend(ch_samples)
+            result.setdefault(ds_key, []).extend(ch_samples)
         else:
             result.setdefault(ds_key, []).extend(info.get("samples", []))
     return result
