@@ -156,7 +156,10 @@ Kerberos, per pre-flight. Data: `root://cmsdcache-kit-disk.gridka.de//store/user
 
 ## Phase 2 — Vertical slices
 
-Status: IN PROGRESS. Phase 2a, Phase 2b, Phase 2c, and Phase 2d (below) are DONE.
+Status: **DONE.** Phase 2a, Phase 2b, Phase 2c, and Phase 2d (below) are all done and
+merged into master. Phase 3 is unblocked (Blocker #1 below, the only thing that would
+have blocked it, was resolved by Phase 2a; Blockers #2/#3 only affect the
+`stxs_stage0_run3` DNN category path, not `gof`/`stxs_stage0`).
 
 ## Phase 2b — Run2 plotting styles + quantitative shape comparator
 
