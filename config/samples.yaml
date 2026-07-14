@@ -8,8 +8,81 @@ luminosity:
   2023postBPix: 9.677
   '2024': 109.816
   '2025': 109.898
+  '2018': 59.83
 
 backgrounds:
+  '2018':
+    # Sample names confirmed to exist via `xrdfs ls` against the real Phase 2a
+    # validation production (jvoss's SFs_EMB_Run2_v15nanoAOD_29_06_26, mt+mm
+    # channels only). This is a reduced, SF-measurement-focused CROWN
+    # production, not the full 2018 analysis production, so only mt background
+    # groups are populated here (et/tt/em are not present in this dataset and
+    # are left unconfigured for 2018 — see STATUS.md Phase 2a).
+    DYjets:
+      samples:
+      - DYJetsToLL_M-10to50_TuneCP5_13TeV-amcatnloFXFX-pythia8_RunIISummer20UL18NanoAODv15-150X
+      - DYJetsToLL_M-50_TuneCP5_13TeV-amcatnloFXFX-pythia8_RunIISummer20UL18NanoAODv15-150X
+      tau_gen_modes:
+      - J
+      - T
+      - L
+    ST:
+      samples:
+      - ST_s-channel_4f_hadronicDecays_TuneCP5_13TeV-amcatnlo-pythia8_RunIISummer20UL18NanoAODv15-150X
+      - ST_s-channel_4f_leptonDecays_TuneCP5_13TeV-amcatnlo-pythia8_RunIISummer20UL18NanoAODv15-150X
+      - ST_t-channel_antitop_4f_InclusiveDecays_TuneCP5_13TeV-powheg-madspin-pythia8_RunIISummer20UL18NanoAODv15-150X
+      - ST_t-channel_antitop_5f_InclusiveDecays_TuneCP5_13TeV-powheg-pythia8_RunIISummer20UL18NanoAODv15-150X
+      - ST_t-channel_top_4f_InclusiveDecays_TuneCP5_13TeV-powheg-madspin-pythia8_RunIISummer20UL18NanoAODv15-150X
+      - ST_t-channel_top_5f_InclusiveDecays_TuneCP5_13TeV-powheg-pythia8_RunIISummer20UL18NanoAODv15-150X
+      - ST_tW_antitop_5f_inclusiveDecays_TuneCP5_13TeV-powheg-pythia8_RunIISummer20UL18NanoAODv15-150X
+      - ST_tW_top_5f_inclusiveDecays_TuneCP5_13TeV-powheg-pythia8_RunIISummer20UL18NanoAODv15-150X
+      tau_gen_modes:
+      - J
+      - T
+      - L
+    Wjets:
+      samples:
+      - WJetsToLNu_TuneCP5_13TeV-madgraphMLM-pythia8_RunIISummer20UL18NanoAODv15-150X
+      tau_gen_modes:
+      - all
+    data:
+      by_channel:
+        mt:
+        - SingleMuon_Run2018A-UL2018
+        - SingleMuon_Run2018B-UL2018
+        - SingleMuon_Run2018C-UL2018
+        - SingleMuon_Run2018D-UL2018
+      tau_gen_modes:
+      - all
+    diboson:
+      samples:
+      - WW_TuneCP5_13TeV-pythia8_RunIISummer20UL18NanoAODv15-150X
+      - WZ_TuneCP5_13TeV-pythia8_RunIISummer20UL18NanoAODv15-150X
+      - ZZ_TuneCP5_13TeV-pythia8_RunIISummer20UL18NanoAODv15-150X
+      tau_gen_modes:
+      - J
+      - T
+      - L
+    ttbar:
+      samples:
+      - TTTo2L2Nu_TuneCP5_13TeV-powheg-pythia8_RunIISummer20UL18NanoAODv15-150X
+      - TTToHadronic_TuneCP5_13TeV-powheg-pythia8_RunIISummer20UL18NanoAODv15-150X
+      - TTToSemiLeptonic_TuneCP5_13TeV-powheg-pythia8_RunIISummer20UL18NanoAODv15-150X
+      tau_gen_modes:
+      - J
+      - T
+      - L
+    EMB:
+      # Embedded (data-derived) ZTT background. Final-state embedding sample,
+      # not the intermediate MuonEmbedding_Run2018* selection-stage output.
+      by_channel:
+        mt:
+        - TauEmbedding-MuTauFinalState_Run2018A-UL2018
+        - TauEmbedding-MuTauFinalState_Run2018B-UL2018
+        - TauEmbedding-MuTauFinalState_Run2018C-UL2018
+        - TauEmbedding-MuTauFinalState_Run2018D-UL2018
+      tau_gen_modes:
+      - all
   2022preEE:
     DYjets:
       samples:

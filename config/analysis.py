@@ -63,6 +63,13 @@ RUN3_ERAS = (
     "2025",
 )
 
+# Phase 2a: 2018 only (mt/mm channels), scoped to the real validation dataset
+# available at rework time (jvoss's SFs_EMB_Run2_v15nanoAOD_29_06_26 CROWN
+# production). 2016/2017 are not added — no validation data for them yet.
+RUN2_ERAS = ("2018",)
+
+SUPPORTED_ERAS = RUN3_ERAS + RUN2_ERAS
+
 # TFF process name → ntuple_processor dataset key
 _TFF_TO_DATASET: dict[str, str] = {
     "DYjets":  "DY",
@@ -71,6 +78,7 @@ _TFF_TO_DATASET: dict[str, str] = {
     "ST":      "VV",   # single-top merged into VV
     "Wjets":   "W",
     "data":    "data",
+    "EMB":     "EMB",  # embedded (data-derived) ZTT background
 }
 
 # ── YAML loaders (cached) ─────────────────────────────────────────────────────
@@ -99,8 +107,8 @@ def _load_weights() -> dict:
 
 def load_yaml(era: str, channel: str) -> dict:
     """Load the TauFakeFactors preselection YAML for the given era and channel."""
-    if era not in RUN3_ERAS:
-        raise ValueError(f"Era '{era}' not in supported eras: {RUN3_ERAS}")
+    if era not in SUPPORTED_ERAS:
+        raise ValueError(f"Era '{era}' not in supported eras: {SUPPORTED_ERAS}")
     path = TFF_CONFIG_ROOT / era / f"preselection_{channel}.yaml"
     if not path.exists():
         raise FileNotFoundError(
@@ -182,9 +190,11 @@ def get_background_samples(era: str, channel: str) -> dict[str, list[str]]:
         if ds_key is None:
             logger.debug(f"Skipping unknown TFF process '{tff_proc}'")
             continue
-        if tff_proc == "data":
+        if tff_proc in ("data", "EMB"):
+            # Both are channel-dependent sample lists (per-run-period data,
+            # per-final-state embedding), keyed the same way in samples.yaml.
             ch_samples = info.get("by_channel", {}).get(channel, [])
-            result.setdefault("data", []).extend(ch_samples)
+            result.setdefault(ds_key, []).extend(ch_samples)
         else:
             result.setdefault(ds_key, []).extend(info.get("samples", []))
     return result

@@ -14,6 +14,7 @@ from config.analysis import (
     TFF_ROOT,
     TFF_CONFIG_ROOT,
     RUN3_ERAS,
+    SUPPORTED_ERAS,
     _TFF_TO_DATASET,
     load_yaml as _load_tff_yaml,
     get_background_samples as get_background_sample_names,
@@ -41,8 +42,8 @@ __all__ = [
 
 def _load_tff_yaml(era: str, channel: str) -> dict:
     """Load TauFakeFactors preselection YAML for the given era and channel."""
-    if era not in RUN3_ERAS:
-        raise ValueError(f"Era '{era}' is not a supported Run3 era. Supported: {RUN3_ERAS}")
+    if era not in SUPPORTED_ERAS:
+        raise ValueError(f"Era '{era}' is not a supported era. Supported: {SUPPORTED_ERAS}")
     path = TFF_CONFIG_ROOT / era / f"preselection_{channel}.yaml"
     if not path.exists():
         raise FileNotFoundError(
