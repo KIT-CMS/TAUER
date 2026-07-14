@@ -213,6 +213,20 @@ def get_samples(
     return result
 
 
+# ── Channel access ──────────────────────────────────────────────────────────
+
+def get_channels() -> list[str]:
+    """
+    All channels known to the central config, sourced from config/cuts.yaml's
+    top-level `preselection:` keys (et, mt, tt, em, ...).
+
+    Single source of truth for "which channels exist" — callers (e.g. the
+    condor/ submission tooling) must use this instead of hardcoding a parallel
+    channel list.
+    """
+    return list(_load_cuts()["preselection"].keys())
+
+
 # ── Preselection cuts access ──────────────────────────────────────────────────
 
 def get_preselection_cuts(era: str, channel: str) -> dict[str, str]:
