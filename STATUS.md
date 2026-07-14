@@ -993,23 +993,24 @@ Status: NOT STARTED.
 Note: none of the below block Phase 2a specifically — see "Not done / explicitly out
 of scope" under Phase 2a for items deliberately deferred in that slice.
 
-1. **Real 2024 shape production crashes on a missing `Jet_vetomap` branch.**
-   `shapes/produce_shapes.py --era 2024 --xrootd --directory
+1. **RESOLVED by Phase 2a.** Was: real 2024 shape production crashed on a missing
+   `Jet_vetomap` branch (`shapes/produce_shapes.py --era 2024 --xrootd --directory
    /store/user/sgiappic/CROWN/ntuples/htt_260602_2024-25_v5/CROWNRun
-   --gof-inputs ...` fails with `RDataFrame: error: use of undeclared
-   identifier 'Jet_vetomap'` during JIT compilation of the (global,
-   era/channel-independent) `jet_veto` cut defined in `config/cuts.yaml` /
-   `config/shapes/channel_selection.py`. This affects every process
-   selection, not just the one tried (`ggh`) — the cut is applied unconditionally.
-   Two plausible causes, not distinguished here (out of this slice's scope):
-   either this specific CROWN production (`htt_260602_2024-25_v5`) genuinely
-   doesn't write a `Jet_vetomap` branch (naming/producer-config mismatch on
-   the CROWN side), or `config/cuts.yaml`'s branch name doesn't match what
-   this production calls it. Whoever owns shape-production config should
-   check `xrdfs` + `TTree::Print()` on one real 2024 file for the actual
-   branch name. This blocked full physics-content validation of Phase 2d
-   (worked around with a synthetic shape file, documented above) and will
-   block Phase 3's real bin-by-bin comparator until fixed.
+   --gof-inputs ...` failed with `RDataFrame: error: use of undeclared
+   identifier 'Jet_vetomap'`). Root cause (found independently while extending to
+   2018, see Phase 2a): `config/shapes/channel_selection.py` hardcoded the cut as
+   `(Jet_vetomap < 0.5)` (capital J), but the real CROWN branch is lowercase
+   `jet_vetomap` in both Run3 and 2018 output — a pre-existing bug, not a
+   production/config mismatch as originally suspected. Fixed at
+   `config/shapes/channel_selection.py:104` (`cuts["jet_vetomap"] =
+   "(jet_vetomap < 0.5)"`), applies to every era/channel unconditionally.
+   `config/cuts.yaml`'s `jet_veto:` entries (still show capital-J `Jet_vetomap`
+   in the YAML) are now dead/superseded by this code-level override — worth
+   fixing the YAML too for consistency, but not functionally blocking since
+   `channel_selection.py` always overwrites it. Original notes, kept for
+   context: this blocked full physics-content validation of Phase 2d
+   (worked around with a synthetic shape file, documented above) and would have
+   blocked Phase 3's real bin-by-bin comparator until fixed — no longer the case.
 2. **`convert_to_synced_shapes.py` referenced but never found.** SMRun2Legacy's
    original `categories.py` comment ("Category names match
    convert_to_synced_shapes.py output") implies a per-category shape-file-
