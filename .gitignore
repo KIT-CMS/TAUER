@@ -53,6 +53,8 @@ trainings/logs/
 
 # Stray run logs
 routine_output.log
+# shapes/convert_to_synced_shapes.py (Phase 3) hardcodes this relative log path
+convert_to_synced_shapes.log
 
 # ntuple_processor's validation cache (generated, per-run)
 validation_database/

@@ -983,9 +983,229 @@ Data: `root://cmsdcache-kit-disk.gridka.de//store/user/jvoss/CROWN/ntuples/SFs_E
 
 ## Phase 3 — Validation comparators
 
-Status: NOT STARTED. Phase 2b's `plotting/compare_control_shapes.py` is usable as-is for
-control-plot comparisons; the datacard side is additionally blocked on real (non-synthetic)
-shape files — see "## Blockers".
+Status: **DONE.** Produced a real (non-synthetic) 2024/mt shape file against the live CROWN
+production, re-ran Phase 2b's control-shape comparator against it, root-caused what turned out
+to be a *much bigger* effect than the +3.9% TT-TTL discrepancy Phase 2b flagged (a 2x
+luminosity discrepancy on the legacy reference file's own side — see below), and built a second
+comparator (`combine_datacards/compare_datacards.py`) for the datacard/nuisance side, run against
+a real Combine datacard built from that same shape file by both TauKITFlow's relocated
+`make_datacards.py` and the actual legacy SMRun2Legacy `run3_htt` script.
+
+### Pre-flight
+
+Grid proxy: valid, ~169h remaining at session start (`voms-proxy-info`), sufficient for this
+session's real xrootd runs. `taukiktflow` conda env used throughout for shape production;
+CMSSW_15_0_2 (`utils/setup_cmssw.sh`) for the datacard side, as in Phase 2d — the two are never
+mixed in one process, per the established house rule.
+
+**Worktree submodule gap found and worked around (not a code bug):** this session runs inside a
+git worktree (`.claude/worktrees/agent-...`); `git worktree` does not populate submodule content,
+so `TauFakeFactors/` and `ntuple_processor/` were empty directories here even though they're
+fully checked out in the main `/work/sgiappic/TauKITFlow` working copy. Every import
+(`ntuple_processor.utils`, `CustomLogging`, and — the one that actually blocked a real run —
+`config/shapes/tff_adapter.py`'s TFF preselection-YAML lookup, which needs the real
+`TauFakeFactors/configs/smhtt_ul/2024/preselection_mt.yaml`) failed until these two directories
+were symlinked to the main repo's populated checkouts for the duration of this session's runs,
+then **restored to empty directories before committing** (confirmed via `git status --short`
+that only this session's real Phase 3 files are staged — no submodule-pointer changes). Whoever
+next works in a fresh worktree will hit the same thing; not a Phase 3 code change, just a
+documented one-time environment fix.
+
+### Goal 1: real 2024/mt shape production + control-shape comparison
+
+Ran `shapes/produce_shapes.py --era 2024 --channels mt --vs-jet-wp Medium --vs-ele-wp VVLoose
+--apply-tauid --control-plots --control-plot-set <57 vars> --xrootd --directory
+/store/user/sgiappic/CROWN/ntuples/htt_260602_2024-25_v5/CROWNRun --mt-friend-directory
+.../CROWNFriends/xsec/ --skip-systematic-variations --no-dnn-categorization --num-processes 12
+--num-threads 8` against the live 2024 CROWN production, followed by
+`shapes/do_estimations.py --era 2024 --do-qcd`. **Completed successfully (rc=0)**, producing a
+real 1.70 MB shape ROOT file with 16 processes (`data`, `DY-ZTT/ZL/ZJ`, `TT-TTT/TTL/TTJ`,
+`VV-VVT/VVL/VVJ`, `W`, `QCDMC`, `ggH125`, `qqH125`, `ttH125`, `VH125`) x 57 variables. (The full
+`control_plots_ul.sh` `DEFAULT_VARIABLES_LIST` has 59 variables; TauKITFlow's
+`config/shapes/control_binning.py` for `mt` doesn't define `puppimet`/`puppimetphi` — it uses
+`met`/`metphi` instead — so those 2 were dropped from the request rather than silently failing;
+reported as "missing from --new-file" by the comparator, not a bug.)
+
+**Comparator run:** `plotting/compare_control_shapes.py --new-file <new 2024/mt shapes>
+--legacy-file /work/sgiappic/smhtt_ul/output/2024-mt-htt_260602_2024-25_v5-260602/
+control_shapes-2024-mt-htt_260602_2024-25_v5-260602.root --channel mt --selection Nominal
+--max-n-sigma 3.0` (this is the real `control_plots_ul.sh -m SHAPES` output for 2024/mt, produced
+Jun 8 2026 against the live 2024 CROWN production — not synthetic).
+
+- **Raw result: 109/912 histograms pass within 3σ. Achieved max n_sigma=489.140, max
+  rel_diff=181.24% across 912 histograms; 32 histograms (2 missing variables x 16 processes,
+  exactly `puppimet`/`puppimetphi`) reported missing from the new file, as expected from the
+  variable-name difference above.**
+- **Root cause of the low raw pass rate — NOT the same bug as Phase 2b's TT-TTL finding, and NOT
+  a TauKITFlow bug: every single MC/simulated process (all 15 non-`data` processes) integrates to
+  almost exactly 50.1-50.3% of the legacy value; `data` (which carries no luminosity weight)
+  matches bit-for-bit** (`data#mt#Nominal#m_vis`: new=legacy=1,473,179.000 exactly). A uniform
+  ~2x factor across every MC process but not data is the signature of a luminosity-weight
+  difference, not a physics/selection difference. Confirmed directly:
+  `config.analysis.get_luminosity("2024")` (TauKITFlow, central config, unchanged since Phase 1)
+  returns **109.816** fb⁻¹, while `/work/sgiappic/smhtt_ul/config/shapes/process_selection.py`'s
+  own `lumi_weight()` — in its **current, live** checkout — hardcodes
+  `lumi = "218.9" #lumi = "109.81"` for era `"2024"` (and, matching pattern,
+  `lumi = "219.78" #lumi = "109.89"` for `"2025"`) — i.e. **smhtt_ul's own live reference
+  checkout currently uses almost exactly double the correct 2024 luminosity, with the correct
+  value left commented out immediately alongside it.** `git log --follow -p` on that file shows
+  this doubling (`219.7"/"219.7" -> "218.9"`, `2025` similarly) was introduced in a
+  `875b545`/`e3eed54`-range "updates" commit on **2026-06-02**, and the legacy reference shape
+  file used for this comparison (`control_shapes-2024-mt-...-260602.root`) has an mtime of
+  **2026-06-08 16:10** — i.e. it was produced *after* that doubling landed, so the bug is baked
+  into the specific legacy reference file being compared against, not a stale artifact from
+  before it. Phase 1's original lumi-weight validation (byte-identical `"109.816 * 1000.0"`
+  before/after centralisation) was correct at the time and remains correct — it was checked
+  against an *earlier* version of smhtt_ul's own file, before this doubling was introduced there
+  independently of this rework. **This is a real, dated, git-log-confirmed bug in the live
+  smhtt_ul reference checkout, not in TauKITFlow.**
+- **Residual agreement after manually correcting for the confirmed 2x legacy-side factor**
+  (`new_integral * (218.9/109.816)` vs `legacy_integral`, spot-checked on `m_vis` for every
+  process): DY-ZTT 0.9998, DY-ZL 0.9999, DY-ZJ 0.9964, W 0.9995, VV-VVT 1.0013, VV-VVL 1.0012,
+  ggH 0.9996, qqH 0.9998, VH 0.9962, ttH 1.0025 — **all within ~0.4%**. Two processes show a
+  larger residual worth flagging for whoever next chases process-level discrepancies (out of
+  scope to resolve further in this time-boxed slice): **TT-TTT 0.9834 (1.66% low) and TT-TTL
+  0.9837 (1.63% low)** (same direction and similar magnitude to each other, opposite sign and
+  substantially smaller magnitude than Phase 2b's +3.9% TT-TTL finding on 2022preEE — this is a
+  different era/production, so it is *not* a re-observation of the same effect, but the fact that
+  TT specifically shows the only non-negligible non-lumi residual in both eras is worth someone's
+  attention), and **VV-VVJ 0.7338 (26.6% low)**, a low-statistics process where a single MC
+  sample's presence/absence would swing the ratio this much — not chased further here (would need
+  a per-sample dataset diff against the legacy TT/VV sample lists, next slice's job if pursued).
+- **Conclusion for the Phase 2b-flagged TT-TTL discrepancy specifically:** not literally
+  reproduced or refuted — Phase 2b's comparison was 2022preEE, this one is 2024, a different
+  era/production entirely, so it isn't the same measurement re-run. What this slice does show is
+  that at 2024/mt, once the (real, independently-confirmed) legacy-side lumi bug is accounted
+  for, TT-TTT/TTL sit at a much smaller ~1.6% residual, same direction — consistent with *some*
+  small, real, TT-specific difference existing at multiple eras, but far too small to have been
+  the dominant discrepancy at either era once lumi is controlled for.
+
+### Goal 2: datacard-level comparison against a real (non-synthetic) shape file
+
+**`shapes/convert_to_synced_shapes.py` relocated into TauKITFlow** (new file,
+`shapes/convert_to_synced_shapes.py`) — this is the flat-histogram-key -> `$BIN/$PROCESS`
+TDirectory converter that bridges `produce_shapes.py`'s control/gof output to the input format
+`combine_datacards/make_datacards.py`'s `ExtractShapes(...)` calls expect. **This corrects Phase
+2d's "## Blockers" #2** ("`convert_to_synced_shapes.py` referenced but never found" — Phase 2d's
+filesystem search missed it): it exists at
+`/work/sgiappic/smhtt_ul/shapes/convert_to_synced_shapes.py` and is pure ROOT + stdlib, no
+external deps, so it's copied here verbatim with a docstring explaining the correction and
+pointing at its real source. Blocker #2 in "## Blockers" below is updated to RESOLVED.
+
+Pipeline run, using the `gof` categorization path (fully functional per Phase 2d; the DNN
+`stxs_stage0_run3` path remains blocked on Blockers #3, unrelated to this slice):
+
+1. `python shapes/convert_to_synced_shapes.py -e 2024 -i <2024/mt shapes from Goal 1> -o
+   <syncdir> --gof --mc --variable-selection m_vis -n 4` — converted the real 2024/mt shape file
+   (Goal 1's output, not synthetic) into a `mt_m_vis/{ZTT,ZL,ZJ,TTT,TTL,TTJ,VVT,VVL,VVJ,W,
+   ggH_htt125,qqH_htt125,ttH_htt125,VH_htt125,data_obs}` TDirectory structure. Confirmed by
+   listing the output file's keys directly.
+2. Ran **both** `combine_datacards/make_datacards.py` (TauKITFlow, this repo) and the actual
+   legacy `${CMSSW_BASE}/src/CombineHarvester/SMRun2Legacy/scripts/make_datacards.py` (`run3_htt`
+   branch — the real relocation source, not a reimplementation) against the **identical** synced
+   input file, with matching arguments (`--era 2024 --channels mt --categories gof
+   --gof-category-name mt_m_vis --stxs-signals stxs_stage0 --real-data False --embedding False
+   --jetfakes False --bbb True --systematics True --rebinning-strategy none`; legacy's CLI lacks
+   `--ggh-wg1`/`--qqh-wg1`/`--convert-shapes-to-lnN`, TauKITFlow-only additions, so those were
+   only passed on the new side, set to `False` to match legacy's absence of that knob as closely
+   as CLI compatibility allows). Both produced a real `htt_mt_m_vis_2024.txt` datacard +
+   `common/htt_input_2024.root` shape file, combined via `combineCards.py` (the genuine external
+   Combine binary), with **zero errors on either side.**
+3. **`combine_datacards/compare_datacards.py`** — new file, a minimal Combine-datacard text
+   parser (rate block + nuisance rows) plus a yield/nuisance-set comparator, the datacard-level
+   counterpart to `compare_control_shapes.py`. Compares every `(bin, process)` rate
+   (`rel_diff = |new-legacy| / max(|new|,|legacy|,eps)`) and reports the shared/new-only/
+   legacy-only nuisance-name sets (a nuisance-set difference is *expected* here, per Phase 2d's
+   deliberate systematics-naming reconciliation, so it's reported not failed by default;
+   `--strict-nuisances` opts into failing on any set difference).
+   - **Result: 12/12 (bin, process) yields agree at rel_diff = 0.000e+00 (bit-identical)** —
+     `ZTT`, `ZL`, `ZJ`, `TTT`, `TTL`, `TTJ`, `VVT`, `VVL`, `VVJ`, `W`, `ggH_htt`, `qqH_htt` all
+     match exactly, as does the `data_obs` observation (700,415.6928 both sides). This is the
+     expected result for two codebases fed the identical synced input file and confirms the
+     relocation (Phase 2d) preserved yield-construction logic exactly, now checked against a real
+     shape file rather than the hand-built synthetic one Phase 2d used.
+   - **Nuisances: 13 total on the new side, 11 shared with legacy, 2 new-only
+     (`QCDScale_ggH`, `QCDScale_qqH`), 0 legacy-only.** All 13 are `lnN` — no `shape`-type
+     nuisance survived on either side, which is correct and expected: this shape file was
+     produced with `--skip-systematic-variations` (Goal 1), so no Up/Down-shifted histograms
+     exist for any systematic to attach to, and `filter_zero_yield_systs`/
+     `load_systematic_shapes` (ported unchanged from SMRun2Legacy, see Phase 2d) correctly and
+     silently dropped every shape-type systematic on both sides. The 2 new-only nuisances trace
+     directly to a CLI-surface difference, not a real physics difference: legacy's `run3_htt`
+     `make_datacards.py` has no `--ggh-wg1`/`--qqh-wg1` flags at all (TauKITFlow-only additions),
+     so it always runs its own unconditional default for ggH/qqH theory-scale naming, which
+     happens not to include `QCDScale_ggH`/`QCDScale_qqH` under its naming scheme — not a
+     reconciliation gap, just a consequence of the two CLIs not being fully arg-compatible for
+     that one knob.
+4. **Separately, to characterise the *code-level* systematics-naming reconciliation (Phase 2d)
+   in full, independent of which shapes happen to exist in one particular ROOT file:** built an
+   identical mt/2024/`gof` `CombineHarvester` skeleton (same categories/backgrounds/signals) and
+   called `add_systematics()` directly from both codebases (`combine_datacards/systematics.py`
+   vs. legacy `CombineHarvester.SMRun2Legacy.systematics`), dumping the full nuisance-name set
+   each produces *before* any shape-file filtering. **TauKITFlow: 97 nuisances. Legacy: 92
+   nuisances. 47 shared, 50 TauKITFlow-only, 45 legacy-only.** The 47 shared are exactly the
+   administrative/theory lnN priors with no shape counterpart (`BR_htt_*`, `LHE_*`, `PS_scale_*`,
+   `QCDScale_ggH/qqH`, `ggH_scale_*`/`qqh_scale_*` theory-scale bins, `CMS_htt_*Xsec`, `CMS_PileUp`,
+   `CMS_prefiring`, `lumi_13.6TeV_*`, `CMS_eff_m`, `CMS_scale_j_FlavorQCD`/`RelativeBal`). The
+   non-shared 95 names are exactly the reconciliation Phase 2d documented, confirmed here with an
+   actual diff rather than just a code-reading claim:
+     - **JEC**: TauKITFlow's full 27-source split (`CMS_scale_j_AbsoluteMPFBias`,
+       `..._RelativeJEREC1/2/HF`, `..._SinglePionECAL/HCAL`, etc., 25 TKF-only names) vs. legacy's
+       regional grouping (`CMS_scale_j_Absolute[_Run2024]`, `_BBEC1[_Run2024]`, `_EC2[_Run2024]`,
+       `_HF[_Run2024]`, `_RelativeSample_Run2024`, `CMS_res_j_Run2024` — 10 legacy-only names).
+     - **Tau-ID efficiency (lt channels)**: TauKITFlow's pT-bin split (`CMS_eff_t_30-35_2024`
+       ... `CMS_eff_t_1000-Inf_2024`, 5 names) vs. legacy's decay-mode x pT split
+       (`CMS_eff_t_1prong0pizero_20to40_Run2024` ... `_3prong1pizero_40toInf_Run2024`, 8 names).
+     - **Tau ES**: TauKITFlow's 4 coarse DM groups (`CMS_scale_t_1prong[1pizero]_2024`,
+       `_3prong[1pizero]_2024`) vs. legacy's DM x pT split (8 names, same pattern as tau-ID).
+     - **b-tagging**: TauKITFlow's `btagging_2024` 9-source scheme (`CMS_btag_2024`,
+       `_fsr/_hdamp/_isr/_jer/_jes/_mass/_stat/_tune_2024`) vs. legacy's 8-source scheme
+       (`CMS_btag_b_HF`, `_b_HFstats1/2_Run2024`, `_c_CFerr1/2`, `_j_LF`, `_j_LFstats1/2_Run2024`)
+       — as Phase 2d noted, neither scheme is actually wired into real shape production yet
+       (`shapes/produce_shapes.py` books no b-tag systematic histograms on either side), so this
+       is a pure naming-convention difference with zero yield impact today on either side.
+     - **Era-string convention**: every name containing an era literal differs only in format —
+       TauKITFlow emits bare `_2024` (`config/shapes/variations.py`'s literal, resolved by
+       `combine_datacards/systematics.py`'s `_resolve()`), legacy emits `_Run2024` (its own
+       `$ERA`-substitution convention) — cosmetic, not a scheme difference, but explains why e.g.
+       `CMS_ZLShape_mt_2024` (TKF) and `CMS_ZLShape_mt_Run2024` (legacy) don't dedupe as "shared"
+       even though they're the same systematic.
+   None of this is new information relative to Phase 2d's documented reconciliation reasoning —
+   what's new here is the actual number (97 vs 92, 47 shared) instead of a code-reading claim.
+
+### Files changed / added
+
+- `shapes/convert_to_synced_shapes.py` — new (relocated from
+  `/work/sgiappic/smhtt_ul/shapes/convert_to_synced_shapes.py`, verbatim + a docstring correcting
+  Phase 2d's Blocker #2). Bridges `produce_shapes.py` output to
+  `combine_datacards/make_datacards.py`'s expected `$BIN/$PROCESS` input format.
+- `combine_datacards/compare_datacards.py` — new. Datacard-level yield/nuisance-set comparator,
+  the Combine-datacard counterpart to `plotting/compare_control_shapes.py`.
+- `.gitignore` — added `convert_to_synced_shapes.log` (the relocated script hardcodes this
+  relative log path, same treatment as the existing `routine_output.log` entry).
+
+### Not done / explicitly out of scope for this slice
+
+- **VV-VVJ's 26.6% residual and TT-TTT/TTL's ~1.6% residual** (Goal 1, after lumi correction) —
+  flagged with real numbers above, not chased to a root cause. Would need a per-sample dataset
+  listing diff between TauKITFlow's and smhtt_ul's current TT/VV sample lists for 2024, which is
+  a distinct investigation from what this slice's time-box covered.
+- **DNN (`stxs_stage0_run3`) categorization datacard comparison** — still blocked on Blockers
+  #3 (`DNN_CLASS_MAPPING`) exactly as in Phase 2d; this slice's datacard comparison used `gof`
+  instead, which is unaffected by that gap and was explicitly Phase 2d's own validated path.
+  `--embedding True`/`--jetfakes True` datacard variants (which would exercise the
+  reconciled embedding/jetFakes-specific systematics in `combine_datacards/systematics.py`) were
+  also not run — the real 2024/mt shape file produced in this slice used
+  `--process-selection` defaults that don't include `emb`, so an embedding-based datacard would
+  need a separate shape-production run; out of scope for this time-boxed slice given the `gof`
+  path already gives a clean, real, non-synthetic yield+nuisance comparison.
+- **Systematic-variation shapes** (Goal 1's shape production used
+  `--skip-systematic-variations`, matching `control_plots_ul.sh -m SHAPES`'s own flag) — so the
+  datacard comparison in Goal 2 has no `shape`-type nuisances to compare on either side (both
+  correctly show zero, as documented above). A full systematic-variations run (dropping that
+  flag) would be needed to compare actual shape-uncertainty templates bin-by-bin; that's a
+  materially longer production (every JES/tau-ES/tau-ID variation booked and filled) left for a
+  future slice if pursued.
 
 ## Phase 4 — GoF/impacts
 
@@ -1014,16 +1234,19 @@ of scope" under Phase 2a for items deliberately deferred in that slice.
    context: this blocked full physics-content validation of Phase 2d
    (worked around with a synthetic shape file, documented above) and would have
    blocked Phase 3's real bin-by-bin comparator until fixed — no longer the case.
-2. **`convert_to_synced_shapes.py` referenced but never found.** SMRun2Legacy's
-   original `categories.py` comment ("Category names match
-   convert_to_synced_shapes.py output") implies a per-category shape-file-
-   splitting step between shape production and `stxs_stage0_run3` datacard
-   production. Grepped the whole filesystem (`find / -iname
-   "convert_to_synced_shapes*"`) — does not exist anywhere accessible,
-   including in the SMRun2Legacy checkout itself (would have lived in the now-
-   merged-into-TauKITFlow smhtt_ul). Blocks `--categories stxs_stage0_run3`
-   end-to-end use until either found (if it exists in a smhtt_ul checkout not
-   examined here) or written fresh.
+2. **RESOLVED by Phase 3.** Was: "`convert_to_synced_shapes.py` referenced but
+   never found." SMRun2Legacy's original `categories.py` comment ("Category
+   names match convert_to_synced_shapes.py output") implies a per-category
+   shape-file-splitting step between shape production and `stxs_stage0_run3`
+   datacard production; Phase 2d's filesystem search did not find it. It does
+   in fact exist, at `/work/sgiappic/smhtt_ul/shapes/convert_to_synced_shapes.py`
+   (Phase 2d's search evidently missed it despite smhtt_ul being on the search
+   path) — pure ROOT + stdlib, no external deps. Phase 3 relocated it verbatim
+   to `shapes/convert_to_synced_shapes.py` and used it for real (`--gof --mc`)
+   to bridge a real 2024/mt shape file into a Combine datacard — see Phase 3's
+   "Goal 2" section. The `stxs_stage0_run3` (DNN) categorization path still
+   additionally needs Blocker #3 (`DNN_CLASS_MAPPING`) closed before it can use
+   this converter end-to-end; the `gof` path (what Phase 3 validated) does not.
 3. **`config/shapes/category_selection.py` lacks `DNN_CLASS_MAPPING`** (see
    Phase 2d above) — blocks `--categories stxs_stage0_run3` specifically;
    `gof`/`stxs_stage0` are unaffected.
