@@ -156,7 +156,7 @@ Kerberos, per pre-flight. Data: `root://cmsdcache-kit-disk.gridka.de//store/user
 
 ## Phase 2 — Vertical slices
 
-Status: IN PROGRESS. Phase 2b and Phase 2c (below) are DONE.
+Status: IN PROGRESS. Phase 2b, Phase 2c, and Phase 2d (below) are DONE.
 
 ## Phase 2b — Run2 plotting styles + quantitative shape comparator
 
@@ -480,11 +480,247 @@ interactively by the user when convenient.
 `shapes/produce_shapes.py` (`--directory` help text), `.gitignore`
 (`condor/run/` — generated per-invocation wrapper/submit/log/config files).
 
+## Phase 2d — Absorb SMRun2Legacy's analysis-specific code into TauKITFlow
+
+Status: **DONE** (with one documented follow-up gap and one documented upstream
+blocker unrelated to this slice — see below). Relocated code builds, imports,
+and produces a real Combine datacard; validated the mechanics end-to-end.
+
+### What was found at `/ceph/sgiappic/CMSSW_15_0_2/src/CombineHarvester/SMRun2Legacy`
+
+The instructions expected to find/compare `master` and `sm_dev` branches. What's
+actually checked out locally is a third branch, **`run3_htt`**, which is
+substantially ahead of both — its HEAD commit (`cc17961`, authored by the repo
+owner, dated the same day as this session) already:
+- **Deleted `bin/MorphingSMRun2Legacy.cpp`** (729 lines, the old compiled CMSSW
+  binary entry point) outright.
+- Rewrote `scripts/make_datacards.py` (376 lines) into a pure-Python
+  CombineHarvester-bindings-driven orchestration script (no C++ binary
+  involved at all).
+- Adapted `python/{categories,processes,tools}.py` for Run3 (DNN categories,
+  non-embedding background lists, era-generic lumi/naming).
+
+Confirmed (`git log --all -S"MorphingCatVariables"`, and diffing
+`bin/BuildFile.xml` across `origin/master`/`origin/sm_dev`/`run3_htt`) that a
+binary called **`MorphingCatVariables`** — which is what TauKITFlow's
+pre-existing `datacards/produce_datacard.sh` / `produce_gof_datacard.sh`
+called — **never existed anywhere in SMRun2Legacy's history on any branch**.
+That was a stale/incorrect reference in TauKITFlow's prior scaffolding, not
+something that used to work and broke; it's been rewired (see below).
+
+Also confirmed by inspection that `src/HttSystematics_SMRun2.cc` +
+`interface/HttSystematics_SMRun2.h` (the C++ `AddSMRun2Systematics` function)
+are **not called from anywhere** in the current `run3_htt` pipeline —
+`python/systematics.py`'s `add_systematics()` is a full, independent
+reimplementation that calls `cb.cp()...AddSyst()` directly via
+CombineHarvester's Python bindings, not the C++ function. The C++ became dead
+code the moment `bin/MorphingSMRun2Legacy.cpp` (its only caller) was deleted.
+
+### What was relocated, and the naming decision
+
+New top-level directory: **`combine_datacards/`** (sibling to the pre-existing
+`datacards/`, which keeps the `.sh` orchestration scripts). Not named after
+the legacy repo, per the "pick a purpose-describing name" instruction —
+`combine_datacards` describes what it is (TauKITFlow's own Combine-datacard-
+construction logic) without implying it's a straight copy of SMRun2Legacy.
+`datacards/` was left as the shell-script layer that invokes it, matching
+what was already there.
+
+Relocated (all pure Python, importing `CombineHarvester.CombineTools` as an
+external dependency reached via `utils/setup_cmssw.sh`'s `cmsenv`):
+- `combine_datacards/categories.py` ← `python/categories.py`
+- `combine_datacards/processes.py` ← `python/processes.py`
+- `combine_datacards/tools.py` ← `python/tools.py`
+- `combine_datacards/systematics.py` ← `python/systematics.py` (renamed —
+  see next section)
+- `combine_datacards/make_datacards.py` ← `scripts/make_datacards.py`
+
+**Not relocated, on purpose:** `src/HttSystematics_SMRun2.cc`,
+`interface/HttSystematics_SMRun2.h`, `src/BinomialBinByBin.cc`,
+`interface/BinomialBinByBin.h`. These are confirmed-dead C++ (see above) —
+dragging along unused C++ that would need its own CMSSW package/BuildFile
+just for provenance contradicts "dismantle, don't wrap." The systematics logic
+they used to implement lives on, actively, in `combine_datacards/systematics.py`
+(the Python reimplementation SMRun2Legacy's own `run3_htt` branch had already
+switched to). Net effect: **this slice needed no new C++ build at all** — the
+"C++ stays C++" exception in the instructions doesn't end up applying here,
+because there's no live C++ left in the analysis-specific layer to keep. If a
+future need for compiled CombineHarvester-side code arises, these two files are
+recoverable from SMRun2Legacy's git history (`run3_htt` branch, before commit
+`cc17961`) — not lost, just not carried forward speculatively.
+
+Also relocated a small **shape-production config gap fix**, `config/shapes/gof_binning.py`
+— a genuinely missing module (`shapes/produce_shapes.py --gof-inputs` imports
+`config.shapes.gof_binning.load_gof_binning`, which didn't exist at all) that
+blocked *any* GoF shape production, not just this slice's validation. It's a
+thin, honestly-labeled stub delegating to the existing `config/shapes/control_binning.py`
+(same binning used for control plots) — see the module's own docstring. Whoever
+owns GoF-specific binning tuning should replace it; nothing downstream assumes
+a particular granularity.
+
+### Systematics-naming reconciliation with `config/shapes/variations.py`
+
+This was the bulk of the work in `combine_datacards/systematics.py`. Full
+reasoning is in that file's module docstring (kept there since it's the code
+readers will actually be looking at); summary:
+
+- `config/shapes/variations.py` (Phase 1's authoritative naming) names the
+  Up/Down-shifted histograms that `shapes/produce_shapes.py` +
+  `shapes/do_estimations.py` write into shape ROOT files, using bare literal
+  placeholders `Era`/`Channel` (no `$` sigil) — there's no downstream
+  "convert_to_synced_shapes"-style step in TauKITFlow yet that substitutes
+  those with real values, so `combine_datacards/systematics.py` does it
+  itself (`_resolve()`) before calling `AddSyst`, rather than relying on
+  CombineHarvester's own `$ERA`/`$CHANNEL` wildcard sigils the way
+  SMRun2Legacy's original code did (those wildcards would produce names that
+  never match a real histogram in TauKITFlow's shape files).
+- Where variations.py splits/groups a systematic source **differently** than
+  SMRun2Legacy did, `combine_datacards/systematics.py` follows variations.py,
+  not SMRun2Legacy — concretely:
+  - **Jet energy scale**: full 27-source split (`jet_es` list in variations.py),
+    not SMRun2Legacy's older regional-JEC grouping. `regional_jec` kept as a
+    CLI-compat no-op.
+  - **Tau-ID efficiency, lt channels**: split by tau-pT bin (30-35, 35-40,
+    40-500, 500-1000, 1000-Inf), not by decay-mode+pT the way
+    `split_tau_id_and_es_by_pt` did in SMRun2Legacy. That flag is kept as a
+    CLI-compat no-op too — variations.py doesn't support the pT split for ES.
+  - **Tau-ID efficiency, tt channel**: CMS decay-mode codes (`dm0`/`dm1`/`dm10`/`dm11`),
+    not SMRun2Legacy's decay-mode label strings — mapped via `DM_LABEL_TO_CODE`.
+  - **Tau ES**: variations.py's 4 coarse groups (3prong, 3prong1pizero, 1prong,
+    1prong1pizero), no pT split — mapped via `DM_LABEL_TO_TAUES_GROUP`.
+  - **jetFakes shape uncertainties**: TauKITFlow's `shapes/do_estimations.py`
+    only wires up one combined `CMS_ff_total_sub_syst_Channel_Era` (grepped —
+    confirmed, not SMRun2Legacy's much larger per-source QCD/Wjets/ttbar list).
+    Used what's actually produced; the granular list is kept commented in
+    `systematics.py` for when `do_estimations.py` grows more FF sources.
+  - **b-tagging**: neither of variations.py's two defined schemes (`btagging`,
+    the legacy 8-source Run2 split, and `btagging_2024`, a newer Run3-named
+    scheme) is actually wired into `shapes/produce_shapes.py`'s booking calls
+    yet (grepped — zero references either way), so no shape histograms for
+    either exist in real shape files today. Added the era-appropriate name
+    set anyway (`btagging_2024`-style for era >= 2022, else the legacy set) —
+    this is safe because of the next point.
+- Purely administrative lnN systematics with no ntuple-level shift (lumi,
+  cross-section priors, THU/QCDScale theory uncertainties) have no
+  variations.py counterpart by construction and keep SMRun2Legacy's naming
+  (Era/Channel-resolved via the same `_resolve()` helper for consistency).
+- **Safety net, not my invention**: any systematic added that has no matching
+  histogram in the shape ROOT file is dropped automatically, with a logged
+  warning, by `tools.load_systematic_shapes` / `tools.filter_zero_yield_systs`
+  (ported unchanged from SMRun2Legacy). This means listing a systematic here
+  is safe even before its shape-production side is fully wired up — confirmed
+  in the validation run below (THU/LHE/PS/ggH_scale/qqh_scale systematics were
+  all correctly dropped since the synthetic shape file didn't provide them).
+
+**Known gap, not silently papered over**: `combine_datacards/categories.py`'s
+`stxs_stage0_run3` (DNN) categorization path needs a `DNN_CLASS_MAPPING` dict
+(per-category `index`/`is_signal`) from `config/shapes/category_selection.py`
+that doesn't exist there yet (that file only has a single-channel `category_mapping`
+without an `is_signal` flag — see its own contents). `categories.py` raises a
+clear `NotImplementedError` pointing here if that path is used before the gap
+is closed. The `gof` and `stxs_stage0` categorization paths do not depend on
+this and are fully functional — that's what was validated below.
+
+### Build/run validation
+
+Environment: CMSSW_15_0_2 at `/ceph/sgiappic/CMSSW_15_0_2` (`SCRAM_ARCH=el9_amd64_gcc12`),
+set up via `utils/setup_cmssw.sh` (rewired — see below). Confirmed
+`import CombineHarvester.CombineTools.ch` succeeds under CMSSW's own Python
+after `cmsenv` (this must NOT be mixed with the `taukiktflow` conda env used
+for shape production — they're separate Python/ROOT builds; `utils/setup_cmssw.sh`
+and the shape-production tooling are meant to run in separate shell sessions,
+same as before this slice).
+
+1. **Real shape production attempted first, hit a real but out-of-scope
+   blocker** (recorded under "## Blockers" below): `shapes/produce_shapes.py
+   --era 2024 --channels mt --gof-inputs --process-selection ggh --xrootd`
+   against the live 2024 dataset crashed with `RDataFrame: error: use of
+   undeclared identifier 'Jet_vetomap'` — the global `jet_veto` cut in
+   `config/cuts.yaml`/`config/shapes/channel_selection.py` references a branch
+   this particular CROWN ntuple production (`htt_260602_2024-25_v5`) doesn't
+   have. This is a shape-production/CROWN-output-schema mismatch, not a
+   datacard-code issue, and out of Phase 2d's scope to fix.
+2. **To still demonstrate the relocated code genuinely builds and runs**
+   (per the validation requirement), built a structurally-faithful synthetic
+   shape ROOT file by hand (`TDirectory "gof"`, one `TH1` per process matching
+   exactly what `combine_datacards.processes.get_backgrounds("mt", embedding=True,
+   jetfakes=True)` + `get_signals("stxs_stage0")` return, plus Up/Down shape
+   histograms for a representative subset of `add_systematics`'s output:
+   `CMS_scale_t_1prong_2024`, `CMS_eff_t_30-35_2024`, `CMS_scale_j_Total`,
+   `CMS_PileUp`, `CMS_ff_total_sub_syst_mt_2024`) — this exercises the exact
+   same `ExtractShapes`/`AddSystematics`/`filter_zero_yield_systs`/
+   `convert_shapes_to_lnN`/`SetAutoMCStats`/`CardWriter` code path a real
+   shape file would, just without real 2024 physics content. Ran:
+   `python3 combine_datacards/make_datacards.py --era=2024 --channels=mt
+   --categories=gof --gof-category-name=gof --real-data=false ...` against it.
+3. **Result: a real, valid Combine datacard was written**
+   (`htt_gof_2024.txt` + `common/htt_input_2024.root`, then combined via
+   `combineCards.py` into `combined.txt`) with:
+   - **1 bin** (`htt_gof_2024`)
+   - **7 processes** (`imax 1`, `jmax 6`): backgrounds `ZL, TTL, VVL, EMB,
+     jetFakes` (exactly `combine_datacards.processes.get_backgrounds`'s
+     output for mt/embedding=True/jetfakes=True) + signals `ggH_htt, qqH_htt`
+   - **16 nuisance parameters survived** out of ~150 considered (5 `shape` +
+     11 `lnN`) — the ones without matching histograms in the synthetic file
+     (THU_ggH/THU_qqH, LHE_alphaS/pdf/scale, PS_scale, ggH_scale_*, qqh_scale_*)
+     were correctly dropped by `filter_zero_yield_systs`/`load_systematic_shapes`,
+     confirmed via the run's own log output (`WARNING ... Removing systematic
+     ... with missing shape`), not silently missing.
+   - `combineCards.py` (a genuine external Combine binary, found via `PATH`
+     from `cmsenv`) successfully combined the per-era card.
+4. This confirms: `combine_datacards/` imports cleanly, `CombineHarvester.CombineTools`
+   is correctly reached as an external dependency (no vendoring), category/
+   process/systematics construction match Phase 1's config exactly where
+   reconciled, and the full CombineHarvester pipeline (Extract → filter →
+   Asimov → rebin → lnN-conversion → autoMCStats → CardWriter → combineCards)
+   runs to completion producing syntactically and semantically valid Combine
+   output.
+
+**Not yet done** (explicitly Phase 3's job per the task instructions): bin-by-bin
+numeric diffing of produced datacard yields against legacy SMRun2Legacy output.
+That requires real (not synthetic) shape files, which requires the
+`Jet_vetomap` blocker (or an alternative ntuple production without that gap)
+to be resolved first.
+
+### `datacards/*.sh` rewiring
+
+- `utils/setup_cmssw.sh`: was pointing at a relative `CMSSW_10_2_28/src` that
+  doesn't exist anywhere on disk (stale Run2-era path, wrong `SCRAM_ARCH`
+  too — `slc7_amd64_gcc700`). Rewired to `/ceph/sgiappic/CMSSW_15_0_2` /
+  `el9_amd64_gcc12` (both overridable via `CMSSW_BASE_DIR`/`CMSSW_RELEASE`/
+  `SCRAM_ARCH` env vars), and now also exports `FITDIR` (previously used by
+  `produce_datacard.sh`/`produce_workspace.sh` but never set anywhere).
+- `datacards/produce_datacard.sh`, `produce_gof_datacard.sh`: rewired from the
+  nonexistent `MorphingCatVariables` binary to
+  `python3 combine_datacards/make_datacards.py`. Output layout changed to
+  `output_${ANALYSIS}/{channel}/{era}/*.txt` (channel outer, era inner) to
+  match `make_datacards.py`'s own internal loop nesting.
+- `datacards/produce_workspace.sh`, `produce_gof_workspace.sh`: unchanged in
+  what they call (`combineTool.py`, a genuine external Combine binary) — only
+  their `INPUT_DIRS`/`INPUT_DIR` glob patterns were updated to match the
+  channel/era nesting above.
+- `--categories stxs_stage0_run3` (Run3 DNN) end-to-end use of
+  `produce_datacard.sh` additionally needs the `DNN_CLASS_MAPPING` gap (above)
+  closed, and a `convert_to_synced_shapes.py`-style step (referenced only in a
+  comment in the original SMRun2Legacy `categories.py`, never found anywhere
+  on disk — see "## Blockers") to produce its per-category input files. Until
+  then, `produce_datacard.sh` is validated for non-DNN categorizations
+  (`gof`, `stxs_stage0`, ...) only.
+
+### Files changed / added
+
+- `combine_datacards/__init__.py`, `categories.py`, `processes.py`, `tools.py`,
+  `systematics.py`, `make_datacards.py` — new (relocated + reconciled).
+- `config/shapes/gof_binning.py` — new (stub, unblocks `--gof-inputs`).
+- `datacards/produce_datacard.sh`, `produce_gof_datacard.sh`,
+  `produce_workspace.sh`, `produce_gof_workspace.sh` — rewired.
+- `utils/setup_cmssw.sh` — fixed stale CMSSW path/arch, added `FITDIR`.
+
 ## Phase 3 — Validation comparators
 
-Status: NOT STARTED (Phase 2b's `plotting/compare_control_shapes.py` is usable as-is for
-control-plot comparisons; Phase 3 covers datacards/other shape stages not in this slice's
-scope).
+Status: NOT STARTED. Phase 2b's `plotting/compare_control_shapes.py` is usable as-is for
+control-plot comparisons; the datacard side is additionally blocked on real (non-synthetic)
+shape files — see "## Blockers".
 
 ## Phase 4 — GoF/impacts
 
@@ -492,4 +728,33 @@ Status: NOT STARTED.
 
 ## Blockers
 
-None currently.
+1. **Real 2024 shape production crashes on a missing `Jet_vetomap` branch.**
+   `shapes/produce_shapes.py --era 2024 --xrootd --directory
+   /store/user/sgiappic/CROWN/ntuples/htt_260602_2024-25_v5/CROWNRun
+   --gof-inputs ...` fails with `RDataFrame: error: use of undeclared
+   identifier 'Jet_vetomap'` during JIT compilation of the (global,
+   era/channel-independent) `jet_veto` cut defined in `config/cuts.yaml` /
+   `config/shapes/channel_selection.py`. This affects every process
+   selection, not just the one tried (`ggh`) — the cut is applied unconditionally.
+   Two plausible causes, not distinguished here (out of this slice's scope):
+   either this specific CROWN production (`htt_260602_2024-25_v5`) genuinely
+   doesn't write a `Jet_vetomap` branch (naming/producer-config mismatch on
+   the CROWN side), or `config/cuts.yaml`'s branch name doesn't match what
+   this production calls it. Whoever owns shape-production config should
+   check `xrdfs` + `TTree::Print()` on one real 2024 file for the actual
+   branch name. This blocked full physics-content validation of Phase 2d
+   (worked around with a synthetic shape file, documented above) and will
+   block Phase 3's real bin-by-bin comparator until fixed.
+2. **`convert_to_synced_shapes.py` referenced but never found.** SMRun2Legacy's
+   original `categories.py` comment ("Category names match
+   convert_to_synced_shapes.py output") implies a per-category shape-file-
+   splitting step between shape production and `stxs_stage0_run3` datacard
+   production. Grepped the whole filesystem (`find / -iname
+   "convert_to_synced_shapes*"`) — does not exist anywhere accessible,
+   including in the SMRun2Legacy checkout itself (would have lived in the now-
+   merged-into-TauKITFlow smhtt_ul). Blocks `--categories stxs_stage0_run3`
+   end-to-end use until either found (if it exists in a smhtt_ul checkout not
+   examined here) or written fresh.
+3. **`config/shapes/category_selection.py` lacks `DNN_CLASS_MAPPING`** (see
+   Phase 2d above) — blocks `--categories stxs_stage0_run3` specifically;
+   `gof`/`stxs_stage0` are unaffected.

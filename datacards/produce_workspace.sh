@@ -14,7 +14,10 @@ source utils/setup_cmssw.sh
 
 pushd "$FITDIR"
 
-INPUT_DIRS="output_${ANALYSIS}/{$(IFS="," ; echo ${ERA_ARR[*]})}/{et,mt,tt,em,cmb}"
+# combine_datacards/make_datacards.py (Phase 2d) writes
+# output_${ANALYSIS}/{channel}/{era}/*.txt (channel outer, era inner) --
+# see datacards/produce_datacard.sh.
+INPUT_DIRS="output_${ANALYSIS}/{et,mt,tt,em,cmb}/{$(IFS="," ; echo ${ERA_ARR[*]})}"
 
 combineTool.py -M T2W -o "ws.root" \
     -P HiggsAnalysis.CombinedLimit.PhysicsModel:multiSignalModel \
