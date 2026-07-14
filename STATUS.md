@@ -269,7 +269,15 @@ is backed by a confirmed-present branch in the real 2018 ntuples).
    used by `load_yaml`'s era-validation guard (TauFakeFactors already ships a
    `configs/smhtt_ul/2018` preselection set, so no new TFF config was needed) and by
    `channel_selection`'s era guard.
-8. **`shapes/estimations/*.py` (QCD/FF/embedding-ttbar estimation logic itself)
+8. **`jet_vetomap` cut used the wrong branch-name capitalization
+   (`config/shapes/channel_selection.py`).** Hardcoded as `(Jet_vetomap < 0.5)`
+   (capital J); direct branch listings of both the 2018 validation ntuples and
+   the existing Run3 2024 production show the real branch is lowercase
+   `jet_vetomap` in both — `Jet_vetomap` doesn't exist in either era's CROWN
+   output and would raise an RDataFrame unknown-column error at runtime for
+   anyone who actually evaluates this cut. Pre-existing Run3 bug, found while
+   extending to 2018, fixed for both eras.
+9. **`shapes/estimations/*.py` (QCD/FF/embedding-ttbar estimation logic itself)
    required no changes.** `qcd.py`/`fakefactors.py`/`do_estimations.py` were already
    parametrised over `is_embedding` generically and already contained
    era-conditional QCD extrapolation factors for 2016/2017/2018 (`do_estimations.py`'s
@@ -347,12 +355,15 @@ Data: `root://cmsdcache-kit-disk.gridka.de//store/user/jvoss/CROWN/ntuples/SFs_E
      necessary — the per-shift branch-substitution logic itself was already
      validated directly and more cheaply (item 4 above) against the same real
      data it would consume.
-   - A parallel `--collect-config-only` run across all 2018 mt processes (`data,
-     ztt, zl, zj, ttt, ttl, ttj, vvt, vvl, vvj, w, emb`) was also started for a
-     Phase-1-style full per-file `xrdfs` validation record, but is slow (as in Phase
-     1) and was still in progress when this phase was wrapped up — not needed as
-     additional evidence given items 1-5 above already demonstrate correctness with
-     concrete numbers on real data.
+   - The parallel `--collect-config-only` run across all 2018 mt processes (`data,
+     ztt, zl, zj, ttt, ttl, ttj, vvt, vvl, vvj, w, emb`, `--no-dnn-categorization`
+     since this validation production has no DNN friend trees) **completed**: it
+     resolved and wrote booking config for all 6 dataset groups (`DY`, `TT`, `VV`,
+     `W`, `data`, `EMB`), with real per-process resolved-file-path counts from the
+     generated YAML: `DY` 81, `TT` 390, `VV` 137 (ST+diboson merged), `W` 12,
+     `data` 236, `EMB` 81 — i.e. embedding resolves the same order of file
+     coverage as the other backgrounds, not an empty/degenerate dataset. Output at
+     `2018__mt__2018_mt_config2.yaml` (scratch path, not committed).
 6. **Re-confirmed Run3/2024 unaffected.** `config.analysis.SUPPORTED_ERAS` still
    contains all 6 Run3 eras unchanged; `MC_base_process_selection`/`ZTT_embedded` for
    non-2018 eras take the unchanged `else` branch (verified by inspection — no
@@ -377,10 +388,13 @@ Data: `root://cmsdcache-kit-disk.gridka.de//store/user/jvoss/CROWN/ntuples/SFs_E
   separate, larger piece of work not attempted here.
 - **2016/2017**: no validation data available; `config.analysis.RUN2_ERAS` is
   deliberately `("2018",)` only, not all of Run2.
-- The `--collect-config-only` full-validation run (item 5 above, last bullet) did
-  not finish within this session's time box; if picked up again, its output would
-  live at `/tmp/.../2018_mt_config.yaml` (scratch path, not committed) — rerun it
-  from a clean shell if a full per-file validation record is wanted before Phase 3.
+- The full 100-point `--special-analysis TauES --collect-config-only` validation
+  (item 5 above) was time-boxed after confirming the first shift point validates
+  cleanly — re-running the rest is straightforward but not needed as evidence
+  given item 4's direct per-shift branch check already confirms the mechanism
+  end-to-end. The plain (non-TauES) `--collect-config-only` run across all 2018
+  mt background/embedding processes, by contrast, did complete (see item 5,
+  final bullet).
 
 ### Files changed / added
 
@@ -391,7 +405,8 @@ Data: `root://cmsdcache-kit-disk.gridka.de//store/user/jvoss/CROWN/ntuples/SFs_E
 - `config/shapes/process_selection.py` — 2018 trigger-weight branch, conditional
   `btag_weight`, real `ZTT_embedded_process_selection` weights.
 - `config/shapes/channel_selection.py` — `SUPPORTED_ERAS` era guard, `_apply_wp_params`
-  vsMu regex fix (both Run3 and 2018 TFF-YAML forms).
+  vsMu regex fix (both Run3 and 2018 TFF-YAML forms), `jet_vetomap` branch-name
+  capitalization fix (Run3 and 2018 both).
 - `config/shapes/tff_adapter.py` — `SUPPORTED_ERAS` era guard.
 - `config/shapes/taues_measurement_binning.py` — new file, ported from smhtt_ul
   `tauID_SFs_dev`, mt-only, `tau_decaymode_2` branch-name fix.
