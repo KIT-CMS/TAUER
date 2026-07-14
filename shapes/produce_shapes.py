@@ -51,7 +51,13 @@ def parse_arguments():
         help="Apply tau ID scale factors."
     )
     parser.add_argument(
-        "--directory", required=True, type=str, help="Directory with CROWN ntuple outputs."
+        "--directory", required=True, type=str,
+        help="Directory with CROWN ntuple outputs. With --xrootd, this must be the "
+             "bare xrootd store path (e.g. /store/user/<user>/CROWN/ntuples/<tag>/CROWNRun/), "
+             "NOT a full root://host/... URL -- ntuple_processor/booking.py's xrootd branch "
+             "prepends the xrootd host itself, so a full URL here double-prefixes it and "
+             "every dirlist() call silently fails with 'TypeError: NoneType object is not "
+             "iterable'. See utils/setup_ul_samples.sh's $NTUPLES for the exact convention.",
     )
     parser.add_argument("--et-friend-directory", type=str, default=[], nargs="+")
     parser.add_argument("--mt-friend-directory", type=str, default=[], nargs="+")

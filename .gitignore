@@ -56,3 +56,6 @@ routine_output.log
 
 # ntuple_processor's validation cache (generated, per-run)
 validation_database/
+
+# condor/ submission tooling's generated per-run wrapper/submit/log/config files
+condor/run/

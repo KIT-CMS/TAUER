@@ -156,7 +156,177 @@ Kerberos, per pre-flight. Data: `root://cmsdcache-kit-disk.gridka.de//store/user
 
 ## Phase 2 — Vertical slices
 
-Status: NOT STARTED (blocked on Phase 1 validation).
+Status: IN PROGRESS.
+
+### Phase 2c — HTCondor submission for shapes/plotting/training
+
+Status: **DONE.**
+
+**What was built:** a new top-level `condor/` package — pure-Python job-spec
+generation + `condor_submit` invocation, no new orchestration dependency:
+
+- `condor/common.py` — shared machinery: `JobSpec`/`SubmissionPlan`
+  dataclasses, bash env-bootstrap wrapper generation
+  (`write_wrapper_script`), classad/submit-file generation
+  (`build_submit_text`/`write_submit_file`, KingMaker-style single
+  `queue job_name, arguments from (...)` block per batch so one
+  `condor_submit` call fans out into N jobs), and `submit()` which shells out
+  to `condor_submit` (optionally `-dry-run`).
+- `condor/submit_shapes.py` — one job per (era, channel) by default, or one
+  job per (era, channel, process) with `--split-by-process`, wrapping
+  `shapes/produce_shapes.py`. Builds the CROWN store path itself so
+  `--directory` is always the bare xrootd path (see the Phase 1 footgun note
+  below — also fixed at the source).
+- `condor/submit_plotting.py` — one job per (era, channel), wrapping
+  `plotting/plot_shapes_control.py`; optional `--split-variables N` for
+  finer-grained variable-chunked jobs.
+- `condor/submit_training.py` — one job per (era, channel) for
+  `trainings/create_training_dataset.py` (the dataset-prep step, see law
+  decision below); slices a user-supplied nested `config[channel][era][...]`
+  master YAML into one filtered config per job (no changes needed to
+  `create_training_dataset.py` itself).
+
+All three CLIs default their `--eras`/`--channels` lists to
+`config.analysis.RUN3_ERAS` / the new `config.analysis.get_channels()` (added
+in this slice — `config/analysis.py`, reads `config/cuts.yaml`'s
+`preselection:` keys) — no parallel hardcoded channel/era list was added.
+
+**`--directory`/`--xrootd` footgun (Phase 1 note) — fixed at the source:**
+`shapes/produce_shapes.py --directory`'s help text now documents the bare-path
+requirement in-place (previously just "Directory with CROWN ntuple outputs.").
+`condor/submit_shapes.py` also can't hit it: it constructs the store path
+itself from `--ntupletag`/`--user`/era, the same way
+`utils/setup_ul_samples.sh` does, so a condor job config is never handed a
+full `root://...` URL by accident.
+
+**law integration decision (recorded here per the task instructions, since it
+wasn't obvious): standalone Python condor submitter, not a new
+`law.contrib.htcondor.HTCondorWorkflow` task graph.** Full reasoning is in
+`condor/common.py`'s module docstring; summary:
+- `law` is used exactly once in this repo today, in
+  `trainings/uncertainty-aware-training/` (`_law_workflow_ff.py`,
+  `_law_CENNT_workflow.py`, `law.cfg`) — and only for a *local* task graph
+  (`law.Task` subclasses calling `subprocess.run(...)` directly). There is no
+  existing `law.contrib.htcondor` usage anywhere in TauKITFlow to integrate
+  with or extend.
+- KingMaker (`/work/sgiappic/KingMaker`) *does* use
+  `law.contrib.htcondor.HTCondorWorkflow` for CROWN ntuple production, but
+  that's built around `universe = container` jobs against a specific
+  cvmfs-unpacked docker image and law's own job-wrapper/bootstrap plumbing —
+  a much heavier and differently-shaped tool than what shapes/plotting/training
+  need (they run in the existing `taukiktflow` conda env against a CVMFS LCG
+  view, same as `run.sh` invokes them interactively today).
+- The instructions explicitly say to keep the `law` dependency as-is rather
+  than grow it. Standing up a new `HTCondorWorkflow` task graph (with its own
+  `law.cfg` wiring, luigi scheduler, bootstrap scripts) for "one job per
+  (era, channel[, ...])" fan-out is disproportionate to what's needed and
+  would be exactly the kind of dependency growth the instructions rule out.
+- Conclusion: `condor/` is a standalone Python tool — classad text generation
+  + `subprocess.run(["condor_submit", ...])` — using the stdlib + PyYAML only
+  (already a dependency). `trainings/uncertainty-aware-training/`'s law setup
+  is untouched.
+
+**`trainings/` scope note:** the actual NN training loop lives under
+`trainings/uncertainty-aware-training/` and already has its own
+law-orchestrated (local) workflow — left untouched, not duplicated. What had
+*no* submission mechanism at all, and is what `condor/submit_training.py`
+covers, is the top-level `trainings/create_training_dataset.py`
+dataset-preparation step (ROOT shapes → feather folds per channel/era/process),
+which is genuinely condor-shaped (CPU/IO bound, parallelisable per
+channel/era) and had zero submission tooling before this slice.
+
+**Dead code check (`run.sh`, `utils/`):** grepped both for any existing condor
+submission logic to retire — found none. `run.sh` only ever runs
+shapes/plotting/training locally (`nice -n 19 python ...`); `utils/` contains
+only `setup_cmssw.sh`/`setup_root.sh`/`setup_ul_samples.sh` (environment
+setup, still used by `condor/common.py`'s generated wrapper and reused
+verbatim rather than duplicated). Nothing to remove.
+
+**Validation performed (KIT-ETP condor pool, `portal1.etp.kit.edu` schedd):**
+1. **Environment probe (real submission, cluster 4557819):** a trivial real
+   `condor_submit` job confirmed `/work/sgiappic` and `/cvmfs` are mounted on
+   execute nodes (ran on `ms02.etp.kit.edu`, `ls /work/sgiappic/TauKITFlow/...`
+   succeeded) — this is why `condor/common.py` uses
+   `should_transfer_files = NO` and runs the wrapper in place, rather than
+   KingMaker's container-universe file-transfer approach.
+2. **Argument-passing correctness (real submission, cluster 4557820):**
+   a two-job batch using the exact `queue job_name, arguments from (...)`
+   syntax `condor/common.py` generates (job1: `--era 2024 --channels mt
+   --vs-jet-wp Medium`, job2: `--era 2022preEE --channels et,tt --vs-jet-wp
+   Tight`) was both dry-run validated (`condor_submit -dry-run`, correct
+   `Arguments=` classads) and really submitted; queued as jobs
+   `4557820.0`/`4557820.1`. The KIT-ETP pool was heavily loaded (1200+ idle
+   jobs cluster-wide at submission time) and the two jobs were still idle
+   after ~10 minutes of polling, so this cluster was `condor_rm`'d once the
+   syntax was independently confirmed via (3) below rather than left queued
+   unattended; the dry-run classad correctness plus the earlier probe job's
+   fast real completion is the evidence relied on for "this syntax actually
+   runs on this pool."
+3. **End-to-end wrapper execution (real, local — not via condor, but running
+   the actual generated `wrapper.sh` + target script, not a simulation):**
+   ran the generated wrappers for all three stages directly
+   (`bash condor/run/<stage>/<tag>/wrapper.sh --help`) in a clean shell
+   (`env -i`, no pre-activated conda/LCG) to catch environment bugs a
+   `condor_submit -dry-run` can't see. **Bug found and fixed:** the first
+   wrapper version did `source utils/setup_root.sh` (CVMFS LCG view,
+   mirroring `run.sh`'s own SHAPES/PLOT/etc. modes) *then* `conda activate
+   taukiktflow` — this combination reliably crashes
+   (`Fatal Python error: init_fs_encoding ... No module named 'encodings'`)
+   because sourcing the LCG view sets `PYTHONHOME` to the LCG interpreter,
+   and `conda activate` then puts conda's python first on `PATH` without
+   clearing `PYTHONHOME`, so the interpreter and its home directory mismatch
+   at startup. Fix: the wrapper no longer sources `utils/setup_root.sh` at
+   all — `conda activate taukiktflow` alone is sufficient (the `taukiktflow`
+   env is self-contained with ROOT + XRootD bindings, per the Phase 1
+   validation note, which already ran `shapes/produce_shapes.py` successfully
+   under conda-only activation). Confirmed fixed: `shapes/produce_shapes.py
+   --help`, `plotting/plot_shapes_control.py --help`, and
+   `trainings/create_training_dataset.py --help` all now run cleanly through
+   their generated wrappers end-to-end (ROOT imports and all). **Note for
+   whoever next touches `run.sh`:** it has the same
+   `source utils/setup_root.sh` → `conda activate` ordering in its
+   `check_env`/mode-dispatch path and likely hits the same PYTHONHOME crash
+   if actually exercised that way; out of scope to fix here (`run.sh` isn't
+   part of this slice's deliverable), flagged for awareness only.
+4. **CLI fan-out correctness (all three submit_*.py, dry-run mode):**
+   - `submit_shapes.py --eras 2024,2025 --channels et,mt,tt` → 6 jobs, one
+     per (era, channel), correct `--directory`/friend-directory/`--vs-ele-wp`
+     (et→Tight, others→VVLoose, matching `run.sh`) construction per job.
+   - `submit_shapes.py --process-selection ztt,zl --split-by-process` → 2
+     jobs for one (era, channel), each with its own `--process-selection`
+     and distinct `--output-file`.
+   - `submit_plotting.py --eras 2024 --channels et,mt` → 2 jobs, one per
+     (era, channel), correct per-(era,channel) `--input`/`--output` paths.
+   - `submit_training.py` with a 3-entry (channel, era) master config and
+     `--eras 2024,2025 --channels mt,et,tt` → exactly 3 jobs (only the
+     (channel, era) pairs present in the master config), each with its own
+     sliced config YAML written under the run directory.
+   - Each of the above was run through `condor_submit -dry-run <file>`
+     (real `condor_submit` binary, not simulated) and produced valid classads
+     with no parse errors.
+   - **Bug found and fixed during this validation:** `submit_training.py`'s
+     master-config slicing initially returned 0 jobs for an era key written
+     as an unquoted YAML integer (`2024:` parses to `int(2024)`, not
+     `"2024"`) vs. the `--eras` string list — fixed by matching era keys as
+     strings (`slice_config` now falls back to `str(k) == str(era)`).
+5. **`--directory` bare-path fix:** verified the updated help text in
+   `shapes/produce_shapes.py` and confirmed `condor/submit_shapes.py` never
+   constructs a `root://...`-prefixed `--directory` value (it always builds
+   the bare `/store/user/...` path itself).
+
+Not validated (out of scope for a non-interactive session, noted per the task
+instructions): an actual multi-hour real `shapes`/`training` job completing
+against live xrootd data on the batch farm. The dry-run classad validation +
+the two small real submissions (environment probe, argument-passing probe)
+are the evidence available from here; a full real run should be launched
+interactively by the user when convenient.
+
+**Files added:** `condor/__init__.py`, `condor/common.py`,
+`condor/submit_shapes.py`, `condor/submit_plotting.py`,
+`condor/submit_training.py`.
+**Files changed:** `config/analysis.py` (added `get_channels()`),
+`shapes/produce_shapes.py` (`--directory` help text), `.gitignore`
+(`condor/run/` — generated per-invocation wrapper/submit/log/config files).
 
 ## Phase 3 — Validation comparators
 
