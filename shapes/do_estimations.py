@@ -12,6 +12,7 @@ from shapes.estimations.fakefactors import fake_factor_estimation
 from shapes.estimations.qcd import qcd_estimation, abcd_estimation
 from shapes.estimations.ttbar_emb import emb_ttbar_contamination_estimation
 from config.logging_setup_configs import setup_logging, LogContext
+import tau_es.energy_scales as tau_es_energy_scales
 
 
 def parse_args():
@@ -199,15 +200,11 @@ def main(args):
         # in 0.1% steps. Confirmed by direct inspection of a real 2018
         # TauEmbedding-MuTauFinalState validation ntuple's
         # `pt_2__EMBtauESshift_<x>` friend branches (Phase 2a; see STATUS.md).
-        # Must stay in sync with shapes/produce_shapes.py's `_es_shifts` (same
-        # source data, same naming convention).
-        tauESvariations = [
-            round(-12.0 + 0.2 * i, 1) for i in range(0, 101) if round(-12.0 + 0.2 * i, 1) != 0.0
-        ]
-        for variation in tauESvariations:
-            name = str(round(variation, 2)).replace("-", "minus").replace(".", "p")
-            processname = f"emb{name}"
-            tauES_names.append(processname)
+        # Phase 6b: single-sourced from tau_es/energy_scales.py (was an inline
+        # duplicate of shapes/produce_shapes.py's identical list; see that
+        # module's docstring for the full record). Verified identical output
+        # to the pre-refactor inline comprehension + per-shift name-mangling.
+        tauES_names = list(tau_es_energy_scales.PROCNAMES)
     elif args.special == "EleES":
         # we have to extend the _dataset_map and the _process_map to include the TauES variations
         eleESvariations = [-1.5 + 0.05 * i for i in range(0, 51)]

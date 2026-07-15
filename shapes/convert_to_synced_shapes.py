@@ -18,12 +18,25 @@
 # get_signals() expect, and writes one "{channel}_{variable}" TDirectory per
 # discriminant variable. The DNN (stxs_stage0_run3) per-category split still
 # additionally needs the DNN_CLASS_MAPPING gap closed (Blockers #3), unchanged.
+#
+# Phase 6b (see STATUS.md "## Phase 6b"): `tau_es_map` below used to be a
+# hardcoded dict spanning only -4.0%..+4.0% in 0.1% steps (81 entries) -- a
+# THIRD independent copy of the tauES shift-point convention that Phase 2a
+# had already found wrong and fixed in shapes/produce_shapes.py and
+# shapes/do_estimations.py (real convention: -12.0%..+8.0% in 0.2% steps, 100
+# points), but left unfixed here. Since produce_shapes.py only ever produces
+# shift points on the corrected grid, this stale map would KeyError the first
+# time --special TauES hit any shift point outside +-4.0% (most of the real
+# 100-point grid). Fixed by generating the map from tau_es/energy_scales.py's
+# canonical shift list instead of a fourth hand-copied dict.
 import os
 import argparse
 import logging
 import multiprocessing
 
 import ROOT
+
+from tau_es.energy_scales import build_tau_es_map
 
 logger = logging.getLogger("")
 
@@ -43,90 +56,8 @@ _process_map = {
     "QCD": "QCD",
 }
 
-tau_es_map = {
-
-    "embminus4p0": "-4.0",
-    "embminus3p9": "-3.9",
-    "embminus3p8": "-3.8",
-    "embminus3p7": "-3.7",
-    "embminus3p6": "-3.6",
-    "embminus3p5": "-3.5",
-    "embminus3p4": "-3.4",
-    "embminus3p3": "-3.3",
-    "embminus3p2": "-3.2",
-    "embminus3p1": "-3.1",
-    "embminus3p0": "-3.0",
-    "embminus2p9": "-2.9",
-    "embminus2p8": "-2.8",
-    "embminus2p7": "-2.7",
-    "embminus2p6": "-2.6",
-    "embminus2p5": "-2.5",
-    "embminus2p4": "-2.4",
-    "embminus2p3": "-2.3",
-    "embminus2p2": "-2.2",
-    "embminus2p1": "-2.1",
-    "embminus2p0": "-2.0",
-    "embminus1p9": "-1.9",
-    "embminus1p8": "-1.8",
-    "embminus1p7": "-1.7",
-    "embminus1p6": "-1.6",
-    "embminus1p5": "-1.5",
-    "embminus1p4": "-1.4",
-    "embminus1p3": "-1.3",
-    "embminus1p2": "-1.2",
-    "embminus1p1": "-1.1",
-    "embminus1p0": "-1.0",
-    "embminus0p9": "-0.9",
-    "embminus0p8": "-0.8",
-    "embminus0p7": "-0.7",
-    "embminus0p6": "-0.6",
-    "embminus0p5": "-0.5",
-    "embminus0p4": "-0.4",
-    "embminus0p3": "-0.3",
-    "embminus0p2": "-0.2",
-    "embminus0p1": "-0.1",
-    "emb0p0": "0.00",
-    "emb0p1": "0.1",
-    "emb0p2": "0.2",
-    "emb0p3": "0.3",
-    "emb0p4": "0.4",
-    "emb0p5": "0.5",
-    "emb0p6": "0.6",
-    "emb0p7": "0.7",
-    "emb0p8": "0.8",
-    "emb0p9": "0.9",
-    "emb1p0": "1.0",
-    "emb1p1": "1.1",
-    "emb1p2": "1.2",
-    "emb1p3": "1.3",
-    "emb1p4": "1.4",
-    "emb1p5": "1.5",
-    "emb1p6": "1.6",
-    "emb1p7": "1.7",
-    "emb1p8": "1.8",
-    "emb1p9": "1.9",
-    "emb2p0": "2.0",
-    "emb2p1": "2.1",
-    "emb2p2": "2.2",
-    "emb2p3": "2.3",
-    "emb2p4": "2.4",
-    "emb2p5": "2.5",
-    "emb2p6": "2.6",
-    "emb2p7": "2.7",
-    "emb2p8": "2.8",
-    "emb2p9": "2.9",
-    "emb3p0": "3.0",
-    "emb3p1": "3.1",
-    "emb3p2": "3.2",
-    "emb3p3": "3.3",
-    "emb3p4": "3.4",
-    "emb3p5": "3.5",
-    "emb3p6": "3.6",
-    "emb3p7": "3.7",
-    "emb3p8": "3.8",
-    "emb3p9": "3.9",
-    "emb4p0": "4.0",
-}
+# Generated, not hand-copied -- see the Phase 6b note above.
+tau_es_map = build_tau_es_map()
 
 
 def parse_args():

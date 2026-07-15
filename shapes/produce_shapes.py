@@ -24,6 +24,7 @@ from common.helper_collection import PreserveROOTPathsAsStrings
 from config.logging_setup_configs import setup_logging
 from shapes.selection.category_selection import categorization as default_categorization
 from config.shapes.taues_measurement_binning import categorization as taues_categorization
+import tau_es.energy_scales as tau_es_energy_scales
 from shapes.selection.channel_selection import channel_selection
 from config.shapes.control_binning import control_binning as default_control_binning
 from config.analysis import build_files_dict
@@ -158,7 +159,9 @@ def parse_arguments():
         "--special-analysis", default=None, choices=[None, "TauES"],
         help="Produce shapes for a special analysis instead of the default categorization. "
              "'TauES' books additional per-shift embedded ('emb<shift>') datasets for the "
-             "tau energy-scale fit (mt channel only, -2.5%% to +2.5%% in 0.1%% steps).",
+             "tau energy-scale fit (mt channel only, -12%% to +8%% in 0.2%% steps -- see "
+             "tau_es/energy_scales.py; this help text previously said -2.5%%..+2.5%% in 0.1%% "
+             "steps, which was a stale guess fixed in Phase 2a but never corrected here).",
     )
     return parser.parse_args()
 
@@ -382,11 +385,11 @@ def main(args):
             # when `shiftname not in quantities_per_vars`, it doesn't raise) and
             # book variations for shift names that don't exist as branches at all.
             additional_emb_procS = set()
-            _es_shifts = [
-                round(x, 1)
-                for x in np.arange(-12.0, 8.0 + 0.2, 0.2)
-                if round(x, 1) != 0.0
-            ]
+            # Phase 6b: single-sourced from tau_es/energy_scales.py (was an
+            # inline duplicate of shapes/do_estimations.py's identical list;
+            # see that module's docstring for the full record). Verified
+            # identical output to the pre-refactor inline comprehension.
+            _es_shifts = tau_es_energy_scales.shift_values()
             shape_utils.add_tauES_datasets(
                 era=args.era, channel=channel,
                 friend_directories=friend_directories, files=files,
