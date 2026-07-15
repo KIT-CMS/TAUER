@@ -20,7 +20,7 @@ import re
 
 from ntuple_processor.utils import Selection, WarnDict
 from config.logging_setup_configs import setup_logging
-from config.analysis import SUPPORTED_ERAS
+from config.analysis import SUPPORTED_ERAS, get_channel_selection_cuts, get_preselection_cuts
 from config.shapes.tff_adapter import get_tff_event_selection
 
 logger = setup_logging(logger=logging.getLogger(__name__))
@@ -91,17 +91,34 @@ def channel_selection(
     if era not in SUPPORTED_ERAS:
         raise ValueError(f"Era '{era}' is not a supported era. Supported: {SUPPORTED_ERAS}")
 
+    # Phase 5.2: these used to be hardcoded literals here, verbatim-duplicating
+    # (without ever reading) config/cuts.yaml's `channel_selection:` block --
+    # confirmed dead YAML by grep before this fix (see STATUS.md Phase 5.2).
+    # Single-sourced now: config.analysis.get_channel_selection_cuts() reads
+    # config/cuts.yaml directly, so editing the YAML is enough -- no shadow
+    # copy to keep in sync here anymore.
+    _cs_cuts = get_channel_selection_cuts(channel)
     cuts = WarnDict()
-    cuts["extraelec_veto"] = "(extraelec_veto < 0.5)"
-    cuts["extramuon_veto"] = "(extramuon_veto < 0.5)"
-    cuts["dilepton_veto"] = "(dilepton_veto < 0.5)"
-    cuts["os"] = "((q_1 * q_2) < 0)"
+    cuts["extraelec_veto"] = _cs_cuts["extraelec_veto"]
+    cuts["extramuon_veto"] = _cs_cuts["extramuon_veto"]
+    cuts["dilepton_veto"] = _cs_cuts["dilepton_veto"]
+    cuts["os"] = _cs_cuts["os"]
+    # jet_veto is single-sourced from config/cuts.yaml's `preselection:` block
+    # (config.analysis.get_preselection_cuts()) -- the same value
+    # shapes/preselect.py already applies to signal samples via that function.
     # Branch is lowercase in CROWN output for both Run3 (verified against the
     # 2024 validation ntuples) and 2018 (verified against the Phase 2a
-    # validation ntuples) — "Jet_vetomap" (capital J) does not exist in
+    # validation ntuples) -- "Jet_vetomap" (capital J) does not exist in
     # either and would raise an unknown-column error at RDataFrame runtime.
-    # Pre-existing bug found while extending to 2018, fixed here for both.
-    cuts["jet_vetomap"] = "(jet_vetomap < 0.5)"
+    # config/cuts.yaml's preselection.*.jet_veto entries were already fixed to
+    # the correct lowercase branch name (see STATUS.md Blocker #1); this used
+    # to carry its own separate hardcoded copy of the same fix, now removed.
+    # "em" has no jet_veto entry in cuts.yaml's preselection: block (only
+    # et/mt/tt are defined there), so the historical default is kept as a
+    # fallback for that channel only.
+    cuts["jet_vetomap"] = get_preselection_cuts(era, channel).get(
+        "jet_veto", "(jet_vetomap < 0.5)"
+    )
     # Phase 5.1 (2026-07-15) root-cause + fix: these two global cuts exist,
     # active (uncommented), in smhtt_ul's live reference channel_selection()
     # (config/shapes/channel_selection.py, applied unconditionally for every
@@ -149,16 +166,17 @@ def channel_selection(
                 cuts["trg_selection"] = " && ".join(f"({p.strip()})" for p in _trg)
             if "DR;ff" in selection_option:
                 modify_for_ff_DR(obj=cuts, region=selection_option.split(";")[-1], channel=channel)
-            # vsJet tau isolation — not in TFF preselection, parameterised here
+            # vsJet tau isolation — not in TFF preselection, parameterised here.
+            # tau_iso's cuts.yaml value carries a literal `{vs_jet_wp}`
+            # placeholder (see the YAML's own comment); substituted here at
+            # the one call site that knows the runtime WP choice.
             if channel == "tt":
-                cuts["tau_iso"] = (
-                    f"(id_tau_vsJet_{vs_jet_wp}_1 > 0.5) && "
-                    f"(id_tau_vsJet_{vs_jet_wp}_2 > 0.5)"
-                )
+                cuts["tau_iso"] = _cs_cuts["tau_iso"].format(vs_jet_wp=vs_jet_wp)
             else:
-                cuts["tau_iso"] = f"(id_tau_vsJet_{vs_jet_wp}_2 > 0.5)"
-                cuts["mt_cut"] = "(mt_1 < 70)"
-                cuts["muon_iso" if channel == "mt" else "ele_iso"] = "(iso_1 < 0.15)"
+                cuts["tau_iso"] = _cs_cuts["tau_iso"].format(vs_jet_wp=vs_jet_wp)
+                cuts["mt_cut"] = _cs_cuts["mt_cut"]
+                _iso_key = "muon_iso" if channel == "mt" else "ele_iso"
+                cuts[_iso_key] = _cs_cuts[_iso_key]
             return Selection(name=channel, cuts=cuts)
 
         if "em" in channel:

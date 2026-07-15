@@ -16,15 +16,15 @@ from itertools import combinations
 import numpy as np
 import yaml
 
-import config.shapes.process_selection as selection
-import config.shapes.variations as variations
+import shapes.selection.process_selection as selection
+import shapes.selection.variations as variations
 import shapes.utils as shape_utils
-import config.ntuple_processor_config_helper as ntuple_processor_config_helper
-from config.helper_collection import PreserveROOTPathsAsStrings
+import common.ntuple_processor_config_helper as ntuple_processor_config_helper
+from common.helper_collection import PreserveROOTPathsAsStrings
 from config.logging_setup_configs import setup_logging
-from config.shapes.category_selection import categorization as default_categorization
+from shapes.selection.category_selection import categorization as default_categorization
 from config.shapes.taues_measurement_binning import categorization as taues_categorization
-from config.shapes.channel_selection import channel_selection
+from shapes.selection.channel_selection import channel_selection
 from config.shapes.control_binning import control_binning as default_control_binning
 from config.analysis import build_files_dict
 from ntuple_processor import GraphManager, RunManager, UnitManager

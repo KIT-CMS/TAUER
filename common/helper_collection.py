@@ -15,7 +15,7 @@ import uproot
 import yaml
 from tqdm import tqdm
 
-from .logging_setup_configs import setup_logging
+from config.logging_setup_configs import setup_logging
 
 logger = setup_logging(logger=logging.getLogger(__name__))
 

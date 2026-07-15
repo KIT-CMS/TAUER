@@ -8,10 +8,10 @@ Import-path change vs. the original: SMRun2Legacy pulled the DNN class mapping
 from an *external* smhtt_ul checkout via the ``SMHTT_UL_PATH`` env var, because
 SMRun2Legacy and smhtt_ul were separate repos. TauKITFlow merges what used to be
 smhtt_ul's role into itself, so ``stxs_stage0_run3`` now imports directly from
-``config.shapes.category_selection`` -- no external path / env var needed.
+``shapes.selection.category_selection`` -- no external path / env var needed.
 
 KNOWN GAP (documented, not silently papered over -- see STATUS.md "## Phase 2d"
-and "## Blockers"): ``config/shapes/category_selection.py`` does not yet define
+and "## Blockers"): ``shapes/selection/category_selection.py`` does not yet define
 a ``DNN_CLASS_MAPPING`` with per-category ``index``/``is_signal`` metadata the
 way smhtt_ul's did; it only has a single-channel (``mt``) ``category_mapping``
 without an ``is_signal`` flag. The ``stxs_stage0_run3`` categorization path
@@ -33,17 +33,17 @@ def _get_dnn_class_mapping() -> dict:
     Import DNN_CLASS_MAPPING from TauKITFlow's own central shapes config.
 
     Raises NotImplementedError with an explicit pointer to the gap (see module
-    docstring) if config/shapes/category_selection.py hasn't been extended
+    docstring) if shapes/selection/category_selection.py hasn't been extended
     with a DNN_CLASS_MAPPING (index + is_signal per category) yet.
     """
     try:
-        from config.shapes.category_selection import DNN_CLASS_MAPPING
+        from shapes.selection.category_selection import DNN_CLASS_MAPPING
     except ImportError as exc:
         raise NotImplementedError(
             "stxs_stage0_run3 categorization requires "
-            "config.shapes.category_selection.DNN_CLASS_MAPPING (per-channel dict "
+            "shapes.selection.category_selection.DNN_CLASS_MAPPING (per-channel dict "
             "of {category_name: {'index': int, 'is_signal': bool}}), which does not "
-            "exist yet -- config/shapes/category_selection.py currently only has a "
+            "exist yet -- shapes/selection/category_selection.py currently only has a "
             "single-channel 'category_mapping' without an 'is_signal' flag. "
             "See STATUS.md Phase 2d / Blockers. Use --categories gof or "
             "stxs_stage0 in the meantime."

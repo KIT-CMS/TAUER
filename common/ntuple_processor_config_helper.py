@@ -3,7 +3,7 @@ import sys
 from typing import List, Tuple, Union
 
 
-from config.helper_collection import NestedDefaultDict
+from common.helper_collection import NestedDefaultDict
 from ntuple_processor import RunManager
 
 

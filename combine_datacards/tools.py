@@ -6,7 +6,7 @@ Relocated verbatim (import path only changed) from SMRun2Legacy's
 bookkeeping (negative-bin fixing, zero-yield filtering, shape-vs-lnN
 conversion, Asimov replacement, NN-output rebinning) with no era/channel
 naming baked in, so it needed no reconciliation with
-``config/shapes/variations.py``. See STATUS.md ("## Phase 2d").
+``shapes/selection/variations.py``. See STATUS.md ("## Phase 2d").
 """
 import ctypes
 import logging

@@ -7,7 +7,7 @@ from typing import Any, Callable, Iterable, List, Tuple, Union
 
 import yaml
 
-from config.helper_collection import calculate_stxs_N_and_negative_fractions
+from common.helper_collection import calculate_stxs_N_and_negative_fractions
 from config.logging_setup_configs import LogContext, setup_logging
 from ntuple_processor.utils import Selection
 
