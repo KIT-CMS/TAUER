@@ -23,14 +23,14 @@ Python condor submitter, not a law/luigi HTCondorWorkflow.
   *containerized* CROWN production jobs (universe = container, a specific
   cvmfs-unpacked docker image, law's own job-wrapper/bootstrap scripts) — not
   a natural fit for shapes/plotting/training, which run in the existing
-  `taukiktflow` conda env against a CVMFS LCG view, exactly like run.sh
-  already invokes them interactively.
+  `taukiktflow` conda env against a CVMFS LCG view, exactly like run.py
+  already invokes them (converted from bash to Python in Phase 6d, same design).
 - Conclusion: a lightweight, standalone Python classad generator + `condor_submit`
   subprocess call is the right tool for this slice. All fan-out / job-spec logic
   is Python (this module + the per-stage submit_*.py CLIs); only the small
   per-job environment-bootstrap wrapper is generated as a bash script, which is
-  the same division of labour run.sh already uses (bash for env setup, Python
-  for everything else).
+  the same division of labour run.py uses (thin bash-only for the one
+  cmsenv/conda-activation step it can't avoid; Python for everything else).
 
 Conventions (validated against the live KIT-ETP condor pool, see STATUS.md):
 - `/work/sgiappic` (this repo's location) and `/cvmfs` are mounted on execute
@@ -109,7 +109,7 @@ def make_tag(prefix: str) -> str:
 def write_wrapper_script(plan: SubmissionPlan) -> Path:
     """Write the bash wrapper HTCondor executes. Its only job is environment
     bootstrap (LCG view + conda env + PYTHONPATH), mirroring utils/setup_root.sh
-    and run.sh's `check_env`/PYTHONPATH export — then it execs the target
+    and run.py's `run_in_conda()`/PYTHONPATH export (common/conda_env.py) — then it execs the target
     python entry point with condor's per-job --arguments. All job-spec / fan-out
     logic lives in Python; this is intentionally the only bash artifact."""
     wrapper = plan.run_dir / "wrapper.sh"
@@ -125,7 +125,7 @@ cd {REPO_ROOT}
 # interpreter/home pairing that crashes on startup
 # ("Fatal Python error: init_fs_encoding ... No module named 'encodings'").
 # Confirmed reproducible while building this wrapper; conda-only activation
-# (this block) is the environment run.sh's own SHAPES/PLOT/etc. modes end up
+# (this block) is the environment run.py's own SHAPES/PLOT/etc. modes end up
 # using in practice (LCG is redundant once TauFakeFactors's `taukiktflow` env
 # provides ROOT). If a future stage genuinely needs the LCG view instead of
 # this conda env, `unset PYTHONHOME` immediately before `conda activate` here.

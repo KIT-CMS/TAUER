@@ -105,7 +105,7 @@ def reorganise_tff_backgrounds(tff_dir: str, output_dir: str, era: str, channel:
     if not os.path.isdir(src_dir):
         raise FileNotFoundError(
             f"TFF preselection output not found: {src_dir}\n"
-            f"Did you run 'run.sh PRESEL --all-columns'?"
+            f"Did you run 'python3 run.py PRESEL --all-columns'?"
         )
 
     root_files = [f for f in os.listdir(src_dir) if f.endswith(".root")]

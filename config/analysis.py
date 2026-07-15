@@ -13,7 +13,7 @@ This module reads those files and provides a Python API used by:
   shapes/produce_shapes.py
   shapes/preselect.py
   trainings/create_training_dataset.py
-  run.sh  (via python -c)
+  common/lcg_env.py (get_output_features(), via python -c under the LCG view -- used by run.py PRESEL mode)
   config/generate_tff_configs.py
 
 TauFakeFactors and uncertainty-aware-training are NOT modified.
@@ -150,7 +150,7 @@ def get_training_variables() -> list[str]:
     return get_output_features() + get_flags()
 
 
-# Backward-compat alias (run.sh uses get_columns)
+# Backward-compat alias (get_output_features()'s original name)
 def get_columns() -> list[str]:
     return get_output_features()
 

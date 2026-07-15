@@ -36,21 +36,27 @@ TauHarvest/
 │   ├── plot_shapes_control.py     # mplhep CMS-style control plots
 │   └── process_ordering.py        # Background stack ordering
 ├── datacards/
-│   ├── produce_datacard.sh        # SM H→ττ datacard production
-│   ├── produce_workspace.sh       # RooWorkspace for Combine
-│   ├── produce_gof_datacard.sh    # GoF datacard
-│   └── produce_gof_workspace.sh   # GoF workspace
+│   ├── produce_datacard.py        # SM H→ττ datacard production
+│   ├── produce_workspace.py       # RooWorkspace for Combine
+│   ├── produce_gof_datacard.py    # GoF datacard
+│   ├── produce_gof_workspace.py   # GoF workspace
+│   ├── run_gof.py                 # End-to-end GoF test (datacard→workspace→combine→collect)
+│   └── run_impacts.py             # End-to-end Impacts (nuisance-ranking) workflow
 ├── friends/
 │   └── build_friend_tree.py       # Cross-section friend tree builder
 ├── trainings/                     # NN training pipeline (multiclass DNN)
+├── common/
+│   ├── cmsenv.py                  # Run CMSSW/Combine binaries via utils/setup_cmssw.sh
+│   ├── conda_env.py               # Run a subprocess inside the `taukiktflow` conda env
+│   ├── lcg_env.py                 # Run something under the CVMFS LCG view (utils/setup_root.sh)
+│   └── sample_paths.py            # CROWN ntuple/friend-tree path helpers (Run3)
 ├── utils/
-│   ├── setup_root.sh              # ROOT environment setup
-│   ├── setup_cmssw.sh             # CMSSW / Combine environment
-│   └── setup_ul_samples.sh        # Ntuple path helpers (Run3)
+│   ├── setup_root.sh              # ROOT environment setup (CVMFS LCG view -- bash, sources env)
+│   └── setup_cmssw.sh             # CMSSW / Combine environment (cmsenv -- bash, sources env)
 ├── ntuple_processor/              # Submodule: KIT-CMS/ntuple_processor
 ├── TauFakeFactors/                # Submodule: KIT-CMS/TauFakeFactors
 ├── environment.yml                # Conda environment
-└── run.sh                         # Main entry point
+└── run.py                         # Main entry point
 ```
 
 ---
@@ -199,25 +205,25 @@ A complete analysis run follows these steps:
 CROWNRun ntuples
       │
       ▼
-  XSEC friend trees       (run.sh XSEC)
+  XSEC friend trees       (run.py XSEC)
       │
       ▼
-  Shape production         (run.sh SHAPES or SHAPES-NOSYS)
+  Shape production         (run.py SHAPES or SHAPES-NOSYS)
       │  └── produce_shapes.py  ──► shapes.root
       │  └── do_estimations.py  ──► shapes.root (FF/QCD/EMB estimated)
       │
-      ├─► Control plots         (run.sh PLOT)
+      ├─► Control plots         (run.py PLOT)
       │       └── plot_shapes_control.py ──► png/pdf
       │
-      └─► Datacards             (datacards/produce_datacard.sh)
-              └── Workspace     (datacards/produce_workspace.sh)
+      └─► Datacards             (datacards/produce_datacard.py)
+              └── Workspace     (datacards/produce_workspace.py)
                       └─► Combine fits
 ```
 
 For NN-score categories, insert a training step before the final shape production:
 
 ```
-  Training shapes            (run.sh TRAIN-SHAPES)
+  Training shapes            (run.py TRAIN-SHAPES)
       │
       ▼
   Create training dataset    (trainings/create_training_dataset.py)
@@ -233,16 +239,16 @@ For NN-score categories, insert a training step before the final shape productio
 
 ## Modes of Operation
 
-All modes are invoked via `run.sh`:
+All modes are invoked via `run.py`:
 
 ```bash
-source run.sh <MODE> [additional-args]
+python3 run.py <MODE> [additional-args]
 ```
 
 ### XSEC — Build cross-section friend trees
 
 ```bash
-source run.sh XSEC
+python3 run.py XSEC
 ```
 
 Builds ROOT friend trees with cross-section weights using `friends/build_friend_tree.py`.
@@ -250,7 +256,7 @@ Builds ROOT friend trees with cross-section weights using `friends/build_friend_
 ### SHAPES — Shape production with systematics
 
 ```bash
-source run.sh SHAPES
+python3 run.py SHAPES
 ```
 
 Runs `shapes/produce_shapes.py` over the CROWNRun ntuples using `ntuple_processor`, booking all systematic variations (TES, JES, MET, btag, etc.).  
@@ -259,7 +265,7 @@ Then runs `shapes/do_estimations.py` for fake factor / QCD estimations.
 ### SHAPES-NOSYS — Nominal shapes only (fast)
 
 ```bash
-source run.sh SHAPES-NOSYS
+python3 run.py SHAPES-NOSYS
 ```
 
 Same as `SHAPES` but with `--skip-systematic-variations`. Useful for fast iteration and control plots.
@@ -267,7 +273,7 @@ Same as `SHAPES` but with `--skip-systematic-variations`. Useful for fast iterat
 ### PLOT — Control plots
 
 ```bash
-source run.sh PLOT
+python3 run.py PLOT
 ```
 
 Produces CMS-style control plots using mplhep from the shapes ROOT file.  
@@ -275,13 +281,13 @@ Output: `output/plots/${ERA}/png/` and `output/plots/${ERA}/pdf/`.
 
 Optional variables can be set:
 ```bash
-VARIABLES="m_vis,pt_1,pt_2" source run.sh PLOT
+VARIABLES="m_vis,pt_1,pt_2" python3 run.py PLOT
 ```
 
 ### TRAIN-SHAPES — Shapes for NN training
 
 ```bash
-source run.sh TRAIN-SHAPES
+python3 run.py TRAIN-SHAPES
 ```
 
 Produces nominal-only shapes with training-specific binning, used as input for `trainings/create_training_dataset.py`.
@@ -289,7 +295,7 @@ Produces nominal-only shapes with training-specific binning, used as input for `
 ### CONFIGS — Collect ntuple_processor YAML configs
 
 ```bash
-source run.sh CONFIGS
+python3 run.py CONFIGS
 ```
 
 Collects ntuple_processor configuration files without running any histogram production. Useful for debugging the sample/selection setup.
@@ -385,14 +391,14 @@ After producing shapes, create datacards and workspaces:
 # Set FITDIR to your CombineHarvester working directory
 export FITDIR=/path/to/combine/workdir
 
-./datacards/produce_datacard.sh 2022postEE mt smhtt
-./datacards/produce_workspace.sh 2022postEE smhtt 4
+./datacards/produce_datacard.py 2022postEE mt smhtt
+./datacards/produce_workspace.py 2022postEE smhtt 4
 ```
 
 For goodness-of-fit tests:
 ```bash
-./datacards/produce_gof_datacard.sh 2022postEE mt m_vis
-./datacards/produce_gof_workspace.sh 2022postEE mt m_vis
+./datacards/produce_gof_datacard.py 2022postEE mt m_vis
+./datacards/produce_gof_workspace.py 2022postEE mt m_vis
 ```
 
 ---
@@ -401,13 +407,13 @@ For goodness-of-fit tests:
 
 ```bash
 # Produce training shapes first
-source run.sh TRAIN-SHAPES
+python3 run.py TRAIN-SHAPES
 
 # Create training dataset
 python trainings/create_training_dataset.py --config trainings/setup.yaml --era $ERA --channel mt
 
 # Train
-source run.sh  # see trainings/run_training.sh for details
+# see trainings/ for the current (Phase 6c-owned) training entry point
 ```
 
 The DNN is a multiclass classifier. Classes: `ggH`, `qqH`, `ZTT`, `TT`, `W`, `QCD`. Training uses k-fold cross-validation; each fold produces a separate model which is then used for inference on the complementary data fold. The fold models are combined into a single deployable model by `combine_to_cennt_folds.py`.
@@ -434,10 +440,10 @@ git submodule update --init TauFakeFactors
 TauHarvest is Run3-only. Supported eras: `2022preEE`, `2022postEE`, `2023preBPix`, `2023postBPix`, `2024`, `2025`. Run2 eras are not supported.
 
 **Shape production is slow**  
-Use `SHAPES-NOSYS` for initial checks. Set `NPROCS` and `NTHREADS` to match available CPU cores, e.g. `NPROCS=4 NTHREADS=8 source run.sh SHAPES`. For a single channel, add `CHANNELS=mt`.
+Use `SHAPES-NOSYS` for initial checks. Set `NPROCS` and `NTHREADS` to match available CPU cores, e.g. `NPROCS=4 NTHREADS=8 python3 run.py SHAPES`. For a single channel, add `CHANNELS=mt`.
 
 **ntuple_processor submodule not found**  
 Run `git submodule update --init --recursive` from the TauHarvest root.
 
 **`ModuleNotFoundError` for `ntuple_processor` or `config`**  
-The `run.sh` script exports `PYTHONPATH`. If running Python scripts directly, set it manually: `export PYTHONPATH="${PYTHONPATH}:${PWD}"`.
+The `run.py` script exports `PYTHONPATH`. If running Python scripts directly, set it manually: `export PYTHONPATH="${PYTHONPATH}:${PWD}"`.

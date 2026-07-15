@@ -22,8 +22,8 @@ Usage:
   python config/generate_tff_configs.py --era 2022postEE --channels et,mt,tt
   python config/generate_tff_configs.py --era all --channels all
 
-  or from run.sh:
-  bash run.sh GEN-TFF-CONFIGS --era 2022postEE --channels mt,et
+  or from run.py:
+  python3 run.py GEN-TFF-CONFIGS --era 2022postEE --channels mt,et
 """
 
 import argparse
