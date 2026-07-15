@@ -3,20 +3,31 @@
 Regenerate TauFakeFactors per-channel preselection_{ch}.yaml from unified
 config YAML files.
 
-The four authoritative config files are:
-  config/samples.yaml    — background/data/signal sample lists
-  config/variables.yaml  — output_features (used as output_features in TFF YAML)
-  config/cuts.yaml       — per-channel event_selection cuts
-  config/weights.yaml    — mc_weights per channel (era_overrides for tt trigger)
+The authoritative sources are:
+  config/samples.yaml    — background/data/signal sample lists (read directly here)
+  config/variables.yaml  — output_features (read directly here)
+  config/cuts.yaml       — per-channel event_selection cuts (via config.analysis.get_preselection_cuts)
+  config/weights.yaml    — mc_weights per channel (via config.analysis.get_mc_weights)
 
 This script regenerates all sections, for each (era, channel) pair:
   TauFakeFactors/configs/smhtt_ul/{era}/preselection_{ch}.yaml
 
 Sections updated from the unified config:
   processes       — sample lists and tau_gen_modes (from samples.yaml)
-  event_selection — cut expressions          (from cuts.yaml)
-  mc_weights      — weighting expressions    (from weights.yaml)
+  event_selection — cut expressions          (config.analysis.get_preselection_cuts)
+  mc_weights      — weighting expressions    (config.analysis.get_mc_weights)
   output_features — branch list              (from variables.yaml output_features)
+
+Phase 6e note: event_selection/mc_weights used to be built by two local helpers
+here (_build_event_selection/_build_mc_weights) that re-implemented the exact
+same common+per-channel+era_overrides merge config/analysis.py already does
+for shapes/selection/channel_selection.py's own consumption of the same YAMLs
+— i.e. this script had its own private copy of that merge logic. Removed;
+this script now calls config.analysis.get_preselection_cuts()/get_mc_weights()
+directly, so there is exactly one implementation of "resolve era/channel cuts
+and weights from the central YAMLs" in the whole repo. See STATUS.md's
+Phase 6e section. This is also what btag_efficiencies/generate_configs.py
+(new in this phase) uses for the same reason.
 
 Usage:
   python config/generate_tff_configs.py --era 2022postEE --channels et,mt,tt
@@ -38,6 +49,7 @@ _CFG_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(_REPO_ROOT))
 
 from config.logging_setup_configs import setup_logging
+from config.analysis import get_preselection_cuts, get_mc_weights
 
 logger = setup_logging(logger=logging.getLogger(__name__))
 
@@ -45,8 +57,6 @@ TFF_CONFIG_ROOT = _REPO_ROOT / "TauFakeFactors" / "configs" / "smhtt_ul"
 
 _SAMPLES_YAML   = _CFG_DIR / "samples.yaml"
 _VARIABLES_YAML = _CFG_DIR / "variables.yaml"
-_CUTS_YAML      = _CFG_DIR / "cuts.yaml"
-_WEIGHTS_YAML   = _CFG_DIR / "weights.yaml"
 
 RUN3_ERAS = [
     "2022preEE",
@@ -89,36 +99,11 @@ def _build_processes_block(
     return processes
 
 
-def _build_event_selection(era: str, channel: str, cuts_cfg: dict) -> dict:
-    """Resolve per-era/channel event_selection from cuts.yaml."""
-    ch_cuts = cuts_cfg["preselection"].get(channel, {})
-    era_overrides = ch_cuts.get("era_overrides", {})
-    result = {k: v for k, v in ch_cuts.items() if k != "era_overrides"}
-    if era in era_overrides:
-        result.update(era_overrides[era])
-    return result
-
-
-def _build_mc_weights(era: str, channel: str, weights_cfg: dict) -> dict:
-    """Build flat mc_weights dict for TFF YAML from config/weights.yaml."""
-    wmc = weights_cfg.get("mc_weights", {})
-    result: dict = {}
-    result.update(wmc.get("common", {}))
-    ch_block = wmc.get(channel, {})
-    era_overrides = ch_block.get("era_overrides", {})
-    result.update({k: v for k, v in ch_block.items() if k != "era_overrides"})
-    if era in era_overrides:
-        result.update(era_overrides[era])
-    return result
-
-
 def regenerate_config(
     era: str,
     channel: str,
     samples: dict,
     variables: dict,
-    cuts: dict,
-    weights: dict,
     dry_run: bool = False,
 ) -> None:
     tff_yaml_path = TFF_CONFIG_ROOT / era / f"preselection_{channel}.yaml"
@@ -128,8 +113,13 @@ def regenerate_config(
 
     bg_era = samples.get("backgrounds", {}).get(era, {})
     processes = _build_processes_block(era, channel, bg_era)
-    event_selection = _build_event_selection(era, channel, cuts)
-    mc_weights = _build_mc_weights(era, channel, weights)
+    # Single-sourced: both getters live in config/analysis.py and are also what
+    # shapes/selection/channel_selection.py and process_selection.py read for
+    # the exact same era/channel — this script no longer re-parses cuts.yaml/
+    # weights.yaml itself (Phase 6e; previously duplicated the era_overrides
+    # merge logic that config.analysis already implements).
+    event_selection = get_preselection_cuts(era, channel)
+    mc_weights = get_mc_weights(era, channel)
     output_features = list(variables.get("output_features", []))
 
     new_cfg: dict = {
@@ -184,12 +174,10 @@ def main() -> None:
 
     samples   = _load_yaml(_SAMPLES_YAML)
     variables = _load_yaml(_VARIABLES_YAML)
-    cuts      = _load_yaml(_CUTS_YAML)
-    weights   = _load_yaml(_WEIGHTS_YAML)
 
     for era in eras:
         for channel in channels:
-            regenerate_config(era, channel, samples, variables, cuts, weights, dry_run=args.dry_run)
+            regenerate_config(era, channel, samples, variables, dry_run=args.dry_run)
 
     if not args.dry_run:
         logger.info(

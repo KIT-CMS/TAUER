@@ -18,9 +18,11 @@ Modes:
     TRAIN-SHAPES  Produce shapes for NN training
     CONFIGS       Collect ntuple_processor configs (YAML) -- no histogram production
     GEN-TFF-CONFIGS  Regenerate TFF per-channel preselection YAMLs from unified config
-    PRESEL        Run TauFakeFactors preselection saving OUTPUT_FEATURES (per channel)
-    FF            Run TauFakeFactors fake factor calculation
-    FF-CORR       Run TauFakeFactors fake factor corrections
+    PRESEL        Run TauFakeFactors preselection (per channel)
+    FF            Run TauFakeFactors fake factor calculation (per channel)
+    FF-CORR       Run TauFakeFactors fake factor corrections (per channel)
+    FF-MEASURE    Run the full FF measurement chain: GEN-TFF-CONFIGS -> PRESEL -> FF -> FF-CORR
+                  (the four modes above still exist for single-step reruns)
     TRAIN         Run NN training via law (uncertainty-aware-training)
     TRAIN-DATASET Build training feather folds from ROOT shapes (plain Python, no law/condor)
 
@@ -44,7 +46,6 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(REPO_ROOT))
 from common.conda_env import run_in_conda  # noqa: E402
-from common.lcg_env import get_output_features  # noqa: E402
 
 MODES = [
     "XSEC",
@@ -57,6 +58,7 @@ MODES = [
     "PRESEL",
     "FF",
     "FF-CORR",
+    "FF-MEASURE",
     "TRAIN",
     "TRAIN-DATASET",
 ]
@@ -325,8 +327,12 @@ def mode_gen_tff_configs(cfg, extra):
 
 
 def mode_presel(cfg, extra):
+    # Phase 6e note (STATUS.md "## Phase 6e"): this used to also pass
+    # `--columns <output_features>`, an argument preselection.py's argparse
+    # doesn't define at all (it reads output_features from the config file
+    # itself) -- that made every real PRESEL invocation fail with
+    # "unrecognized arguments". Removed.
     print(f"[PRESEL] Running TauFakeFactors preselection: era={cfg['era']} channels={cfg['channels']}")
-    output_features = get_output_features()
     for channel in cfg["channels"].split(","):
         print(f"[PRESEL] Processing channel {channel}")
         cmd = [
@@ -334,7 +340,6 @@ def mode_presel(cfg, extra):
             "TauFakeFactors/preselection.py",
             "--config-file", f"TauFakeFactors/configs/smhtt_ul/{cfg['era']}/preselection_{channel}.yaml",
             "--nthreads", str(cfg["nthreads"]),
-            "--columns", *output_features,
             *extra,
         ]
         result = run_conda(
@@ -346,23 +351,63 @@ def mode_presel(cfg, extra):
 
 
 def mode_ff(cfg, extra):
-    ff_config = cfg["ff_config"] or f"TauFakeFactors/configs/smhtt_ul/{cfg['era']}/fake_factors_{cfg['channels']}.yaml"
-    print(f"[FF] Running TauFakeFactors fake factor calculation: era={cfg['era']}")
-    cmd = ["python", "TauFakeFactors/ff_calculation.py", "--config-file", ff_config, *extra]
-    return run_plain(
-        cmd, env_overrides={"PYTHONPATH": f"{os.environ.get('PYTHONPATH', '')}:{REPO_ROOT / 'TauFakeFactors'}"}
-    ).returncode
+    # Phase 6e note: TauFakeFactors/configs/smhtt_ul/{era}/ ships one config
+    # PER CHANNEL (fake_factors_et.yaml, fake_factors_mt.yaml, ...), never a
+    # joined-multi-channel file -- the old default here
+    # (`fake_factors_{channels}.yaml`) only ever matched a real file when
+    # channels was a single channel. Now loops per channel, same as PRESEL.
+    # cfg["ff_config"] (if set) still overrides for a single explicit file.
+    print(f"[FF] Running TauFakeFactors fake factor calculation: era={cfg['era']} channels={cfg['channels']}")
+    env_overrides = {"PYTHONPATH": f"{os.environ.get('PYTHONPATH', '')}:{REPO_ROOT / 'TauFakeFactors'}"}
+    if cfg["ff_config"]:
+        cmd = ["python", "TauFakeFactors/ff_calculation.py", "--config-file", cfg["ff_config"], *extra]
+        return run_plain(cmd, env_overrides=env_overrides).returncode
+    for channel in cfg["channels"].split(","):
+        cmd = [
+            "python", "TauFakeFactors/ff_calculation.py",
+            "--config-file", f"TauFakeFactors/configs/smhtt_ul/{cfg['era']}/fake_factors_{channel}.yaml",
+            *extra,
+        ]
+        result = run_plain(cmd, env_overrides=env_overrides)
+        if result.returncode != 0:
+            return result.returncode
+    return 0
 
 
 def mode_ff_corr(cfg, extra):
-    ff_corr_config = (
-        cfg["ff_corr_config"] or f"TauFakeFactors/configs/smhtt_ul/{cfg['era']}/ff_corrections_{cfg['channels']}.yaml"
-    )
-    print(f"[FF-CORR] Running TauFakeFactors fake factor corrections: era={cfg['era']}")
-    cmd = ["python", "TauFakeFactors/ff_corrections.py", "--config-file", ff_corr_config, *extra]
-    return run_plain(
-        cmd, env_overrides={"PYTHONPATH": f"{os.environ.get('PYTHONPATH', '')}:{REPO_ROOT / 'TauFakeFactors'}"}
-    ).returncode
+    # Phase 6e note: same per-channel-file issue as FF above, plus the old
+    # default filename prefix was wrong (`ff_corrections_{ch}.yaml` -- the
+    # real files are named `corrections_{ch}.yaml`), so this mode's default
+    # never pointed at a file that exists. Fixed; cfg["ff_corr_config"] still
+    # overrides for a single explicit config file.
+    print(f"[FF-CORR] Running TauFakeFactors fake factor corrections: era={cfg['era']} channels={cfg['channels']}")
+    env_overrides = {"PYTHONPATH": f"{os.environ.get('PYTHONPATH', '')}:{REPO_ROOT / 'TauFakeFactors'}"}
+    if cfg["ff_corr_config"]:
+        cmd = ["python", "TauFakeFactors/ff_corrections.py", "--config-file", cfg["ff_corr_config"], *extra]
+        return run_plain(cmd, env_overrides=env_overrides).returncode
+    for channel in cfg["channels"].split(","):
+        cmd = [
+            "python", "TauFakeFactors/ff_corrections.py",
+            "--config-file", f"TauFakeFactors/configs/smhtt_ul/{cfg['era']}/corrections_{channel}.yaml",
+            *extra,
+        ]
+        result = run_plain(cmd, env_overrides=env_overrides)
+        if result.returncode != 0:
+            return result.returncode
+    return 0
+
+
+def mode_ff_measure(cfg, extra):
+    print(f"[FF-MEASURE] Running the full TauFakeFactors FF measurement chain: era={cfg['era']} channels={cfg['channels']}")
+    print("[FF-MEASURE] (GEN-TFF-CONFIGS -> PRESEL -> FF -> FF-CORR, see run_fake_factor_measurement.py)")
+    cmd = [
+        "python", "run_fake_factor_measurement.py",
+        "--era", cfg["era"],
+        "--channels", cfg["channels"],
+        "--nthreads", str(cfg["nthreads"]),
+        *extra,
+    ]
+    return run_conda(cmd, env_overrides={"PYTHONPATH": pythonpath_with_tff()}).returncode
 
 
 def mode_train_dataset(cfg, extra):
@@ -498,6 +543,8 @@ def main(argv=None) -> int:
         return mode_ff(cfg, extra)
     if mode == "FF-CORR":
         return mode_ff_corr(cfg, extra)
+    if mode == "FF-MEASURE":
+        return mode_ff_measure(cfg, extra)
     if mode == "TRAIN":
         return mode_train(cfg, extra)
     if mode == "TRAIN-DATASET":
