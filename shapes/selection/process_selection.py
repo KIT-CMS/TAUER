@@ -225,7 +225,25 @@ def DY_process_selection(channel, era, vs_jet_wp, vs_ele_wp, preselected=False, 
                 ),
             ]
         )
-        DY_process_weights.append(("zPtReweightWeight", "zPtReweightWeight"))
+        # Phase 6a (2026-07-15) root cause + fix: the 2018 validation production
+        # (SFs_EMB_Run2_v15nanoAOD_29_06_26) has no Z-pT-reweighting friend tree at
+        # all (confirmed: only a "xsec" friend directory exists under
+        # CROWNFriends/, no zpt-equivalent), so zPtReweightWeight is not a bare
+        # branch and not available via any friend either. Booking it
+        # unconditionally crashed the RDataFrame JIT with "use of undeclared
+        # identifier 'zPtReweightWeight'" -- and, worse, that failed JIT
+        # compilation corrupted the shared Cling interpreter state enough to
+        # produce *cascading spurious* "undeclared identifier" errors for
+        # completely unrelated, genuinely-present branches later in the same
+        # batch (confirmed: id_wgt_tau_vsJet_Medium_2 direct-Define succeeds
+        # standalone and is present in all 390 TT files, yet only failed in runs
+        # that also booked DY/zPtReweightWeight). Excluded for
+        # era in RUN2_PRODUCTION_ERAS, matching the existing btag_weight
+        # era-keyed exclusion pattern exactly (same class of gap: an era-specific
+        # production that lacks a branch/friend other eras have).
+        from config.analysis import RUN2_PRODUCTION_ERAS
+        if era not in RUN2_PRODUCTION_ERAS:
+            DY_process_weights.append(("zPtReweightWeight", "zPtReweightWeight"))
     return Selection(name="DY", weights=DY_process_weights)
 
 
