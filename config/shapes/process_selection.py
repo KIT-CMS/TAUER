@@ -174,14 +174,31 @@ def MC_base_process_selection(channel, era, vs_jet_wp, vs_ele_wp, preselected=Fa
             lumi_weight(era),
             prefiring_weight(era),
         ]
-    if channel not in ("mm", "mt"):
-        # btag weight is not part of the mt/mm base selection (no b-tag
-        # requirement there; it's applied at category level via an nbtag
-        # cut instead). Matches smhtt_ul's convention. Previously appended
-        # unconditionally for all channels here — silently correct only by
-        # coincidence for eras whose CROWN production happens to ship a
-        # `btag_weight` branch; the 2018 validation production used for
-        # Phase 2a does not ship one, which surfaced this bug.
+    # Phase 5.1 (2026-07-15) root cause + fix: this used to exclude "mt" from
+    # btag_weight unconditionally (`channel not in ("mm", "mt")`), which was
+    # wrong — smhtt_ul's live reference (`config/shapes/process_selection.py`)
+    # only excludes "mm" (`if channel != "mm":`, with a `# and channel != "mt"`
+    # commented out i.e. disabled — mt *does* get btag_weight there today).
+    # Confirmed the real 2024 CROWN production (htt_260602_2024-25_v5) genuinely
+    # ships a `btag_weight` branch for mt (`xrdfs`/direct branch-list check on a
+    # real TT ntuple file). Excluding it for mt was silently dropping a real
+    # per-event b-tag data/MC scale-factor reweighting for every mt-channel MC
+    # process — and since TT/VV are the two process families with real b-jets
+    # (DY/W/signal are mostly b-jet-poor, where this weight is close to 1),
+    # this was the dominant root cause of the TT-TTT/TTL/TTJ and VV-VVT/VVL/VVJ
+    # residuals: a real bin-by-bin comparison against a fresh smhtt_ul rerun
+    # (2024/mt, TT+VV subprocesses only) showed new/legacy ratios of
+    # 0.65-0.78 with this bug present — see STATUS.md Phase 5.1 for full
+    # before/after numbers.
+    #
+    # The 2018 exception this code used to protect against (Phase 2a: that
+    # validation production's CROWN output doesn't ship `btag_weight` at all)
+    # is real and still needs to be excluded — but that's an era-specific
+    # ntuple-schema gap, not a channel-specific one, so the guard is now keyed
+    # on era, matching smhtt_ul's channel-only exclusion (mm) for every era
+    # whose production actually has the branch.
+    from config.analysis import RUN2_PRODUCTION_ERAS
+    if channel != "mm" and era not in RUN2_PRODUCTION_ERAS:
         MC_base_process_weights.append(("btag_weight", "btagWeight"))
     return Selection(
         name="MC base",
