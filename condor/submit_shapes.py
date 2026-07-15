@@ -22,7 +22,9 @@ NOTE (see STATUS.md Phase 1 note + shapes/produce_shapes.py --directory help):
 --directory must be the bare xrootd store path (e.g.
 /store/user/<user>/CROWN/ntuples/<tag>/CROWNRun/), NOT a full root://host/...
 URL, when --xrootd is set. This script builds that path itself (mirroring
-utils/setup_ul_samples.sh) so callers don't have to get this right by hand.
+common/sample_paths.py's convention -- formerly utils/setup_ul_samples.sh,
+converted to Python in Phase 6d, see STATUS.md "## Phase 6d") so callers
+don't have to get this right by hand.
 """
 from __future__ import annotations
 
@@ -55,7 +57,7 @@ def parse_args():
     p.add_argument("--eras", type=csv, default=list(RUN3_ERAS), help="Comma-separated eras (default: all Run3 eras from config.analysis).")
     p.add_argument("--channels", type=csv, default=get_channels(), help="Comma-separated channels (default: all channels from config.analysis).")
     p.add_argument("--vs-jet-wp", default="Medium")
-    p.add_argument("--vs-ele-wp", default=None, help="Default: Tight for et, VVLoose otherwise (matches run.sh).")
+    p.add_argument("--vs-ele-wp", default=None, help="Default: Tight for et, VVLoose otherwise (matches run.py).")
     p.add_argument("--user", default=getpass.getuser(), help="Grid storage username (default: current user).")
     p.add_argument("--output-dir", default="output")
     p.add_argument("--ff-friends-dir", default=None)

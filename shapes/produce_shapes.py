@@ -59,7 +59,9 @@ def parse_arguments():
              "NOT a full root://host/... URL -- ntuple_processor/booking.py's xrootd branch "
              "prepends the xrootd host itself, so a full URL here double-prefixes it and "
              "every dirlist() call silently fails with 'TypeError: NoneType object is not "
-             "iterable'. See utils/setup_ul_samples.sh's $NTUPLES for the exact convention.",
+             "iterable'. See common/sample_paths.py's UlSamplePaths.ntuples for the exact "
+             "convention (formerly utils/setup_ul_samples.sh's $NTUPLES; converted to Python "
+             "in Phase 6d).",
     )
     parser.add_argument("--et-friend-directory", type=str, default=[], nargs="+")
     parser.add_argument("--mt-friend-directory", type=str, default=[], nargs="+")
