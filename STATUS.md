@@ -1662,3 +1662,257 @@ of scope" under Phase 2a for items deliberately deferred in that slice.
    Full physics-content validation of this path is a future slice (DNN inference
    + score friends + branch reconciliation), not a config gap. `gof`/`stxs_stage0`
    remain unaffected either way.
+
+## Addendum plan (2026-07-15) — remaining work items
+
+User supplied a follow-up punch list on top of Phases 1-4b above. Organized into phases by
+dependency (structural changes that touch overlapping files are grouped into the same slice to
+avoid worktree merge conflicts; cleanup/docs deferred to last since earlier phases will create
+new dead code and change the structure docs need to describe).
+
+### Phase 5 — sequential foundation (2 independent tracks, each blocking its own Phase 6 dependents)
+
+- **5.1** — Root-cause and fix the TTL/VVJ discrepancies flagged in Phase 2b/2d (TT-TTL ~+3.9%/~1.6%,
+  VV-VVJ ~26.6% residual). Rerun the 2024 samples fresh through smhtt_ul to get up-to-date reference
+  shapes, bin-by-bin compare against TauKITFlow, find the actual root cause(s), and fix until they
+  agree within the established tolerance. This is the trust foundation the Phase 6 comparators below
+  build on. (Running in a sibling worktree in parallel with 5.2 below.)
+- **5.2** — Config duplication cleanup: reconcile `config/cuts.yaml` vs `channel_selection.py` vs
+  `category_selection.py` (single-source the cuts, no shadow copies), and audit/collapse redundant
+  shape-production passes across control-plots/training/combine so each is generated as few times as
+  possible. Also move non-config files/actions currently sitting under `config/` to a directory that
+  matches what they actually do. **See "## Phase 5.2" below for the full record.**
+
+### Phase 6 — parallel vertical slices (own worktree/branch each), after Phase 5 lands
+
+- **6a** — Run Run2 (2018) samples through smhtt_ul and compare against how TauKITFlow handles the
+  same data.
+- **6b** — tauES: run and validate the tauES samples (using CROWN directly if needed), and extract
+  the tauES calculation out of smhtt_ul (`tauID_SFs_dev` branch) into its own dedicated space inside
+  TauKITFlow, wired consistently into the rest of the framework.
+- **6c** — Remove the `law` dependency from the training setup; submit to condor directly (same
+  philosophy as the rest of the framework's Python submission code) and rewrite the local
+  (non-condor) workflow to not use law either.
+- **6d** — Convert remaining bash scripts to Python control scripts/routines, framework-wide.
+- **6e** — TauFakeFactors slimdown: make it use TauKITFlow's central preselection code instead of its
+  own, extract the btag efficiency code out into its own dedicated space, and integrate
+  TauFakeFactors as a seamless part of the whole framework's workflow rather than a bolted-on step.
+- **6f** — Decide whether `ntuple_processor` (vendored booking/optimization/variations layer) is
+  still needed, and if so rework it into modern, simpler code either in place or relocated.
+
+### Phase 7 — sequential, after Phase 6 merges
+
+- **7.1** — Final framework-wide dead-code cleanup pass (deferred to last on purpose: Phase 6's
+  structural moves will themselves create newly-dead code that an earlier pass would miss).
+- **7.2** — Write documentation as a README with example calls for each step, in the order they're
+  meant to run — deferred to last so it describes the settled structure, not a moving target.
+
+Each slice agent: read this file and the relevant Phase 1-4b sections above for context, work in its
+own worktree/branch, run its own validation, and update this file (append, don't rewrite prior
+sections) with what's done/validated/blocked before merging to master.
+
+## Phase 5.2 — Config duplication cleanup + move non-config files out of config/
+
+Status: **IN PROGRESS — checkpoint.** This section is being written incrementally as work
+progresses (per explicit instruction: commit + checkpoint STATUS.md periodically, not just at the
+end, so a cut-off session is resumable from `git log`/`git diff` on this branch +this file alone).
+
+Branch: `phase5.2-config-cleanup` (this worktree). Running in parallel with a sibling agent's
+Phase 5.1 (physics-discrepancy root-cause) in a different worktree — no direct coordination, and
+this slice does not touch shape-production physics logic/cut *values*, only structure/duplication/
+file placement, per the task scope.
+
+### Duplication #1 found: `config/shapes/tff_adapter.py` — dead shadowed re-implementations
+
+`tff_adapter.py`'s own docstring claimed it was a pure "backward-compatibility shim... all
+functionality has moved to config/analysis.py", importing `build_files_dict`,
+`get_background_samples as get_background_sample_names`, `get_preselection_cuts as
+get_tff_event_selection`, `get_mc_weights as get_tff_mc_weights`, `get_samples as
+get_combined_files`, `build_presel_files_dict` from `config.analysis` — but then **redefined every
+one of those same names locally, below the import**, so the local defs silently shadowed the
+aliased imports. Confirmed by repo-wide grep that only `get_tff_event_selection` is actually
+imported from this module anywhere (`shapes/selection/channel_selection.py`, one call site) — the
+other five re-implementations (`get_background_sample_names`, `get_tff_mc_weights`,
+`get_combined_files`, `build_files_dict`, `build_presel_files_dict`) were **100% dead code**, and
+would have raised `NameError` on an unimported `logger` if ever actually called (this module never
+imported `logging`/`logger`) — further confirming they were never exercised by any test or real run.
+
+**Fix:** rewrote `tff_adapter.py` down to its one real, used function
+(`get_tff_event_selection`/`_load_tff_yaml`), removed the dead shadowed re-implementations and the
+now-misleading "pure shim" docstring. Documented in the new docstring **why**
+`get_tff_event_selection` is deliberately *not* a re-export of
+`config.analysis.get_preselection_cuts` (the obvious "just delegate" fix): it reads the TFF
+submodule's own generated `preselection_{channel}.yaml` directly, not `config/cuts.yaml`, because
+`config/cuts.yaml` → TFF YAML is a **build/sync step** (`config/generate_tff_configs.py`, run
+manually, not automatically on every `cuts.yaml` edit) — reading the TFF YAML directly guarantees
+`channel_selection()`'s tau-ID/vsMu/trigger cuts always match what TauFakeFactors will actually use
+for the fake-factor measurement selection (the entire point of routing through this adapter),
+rather than transiently reading a `cuts.yaml` value that's already moved past the last
+regeneration. This is intentional, recorded design, not an unreconciled duplicate — `config/cuts.yaml`
+stays the one editable source of truth for the cut *values*, TFF's generated YAML is a downstream
+copy of it, and this one call site deliberately reads that downstream copy.
+
+### Duplication #2 found (bigger): `config/cuts.yaml`'s entire `channel_selection:` block was 100% dead YAML
+
+Confirmed by grep (`"channel_selection"` as a dict key) that **nothing in the Python codebase ever
+read `cuts.yaml`'s top-level `channel_selection:` block** (`common:`/`et:`/`mt:`/`tt:` sub-blocks:
+`extraelec_veto`, `extramuon_veto`, `dilepton_veto`, `os`, `tau_iso` (with a `{vs_jet_wp}`
+placeholder — the YAML's own comment even says *"`{vs_jet_wp}` is a runtime placeholder filled by
+channel_selection.py"*, i.e. this wiring was clearly intended but never actually built), `mt_cut`,
+`ele_iso`/`muon_iso`). Instead, `shapes/selection/channel_selection.py` (formerly
+`config/shapes/channel_selection.py`) had every one of these same cut strings hardcoded as Python
+literals — a byte-for-byte, unintentional duplicate of the YAML, with the YAML being the dead copy
+this whole time. This is the same class of bug STATUS.md's pre-existing Blocker #1 already flagged
+for the narrower `jet_veto` case (also confirmed still true: `channel_selection.py` hardcoded its
+own `jet_vetomap` cut rather than reading `config/cuts.yaml`'s `preselection.*.jet_veto` entry via
+`get_preselection_cuts()`, even though `shapes/preselect.py` already reads that same entry
+correctly for signal samples) — this audit found it's not just `jet_veto`, it's the *entire*
+`channel_selection:` YAML block.
+
+**Reconciliation decision:** per the "data lives in YAML, era/channel-conditional logic stays
+Python" philosophy already recorded in this file's Phase 1 section, these are cut-value *data*
+(simple string literals/formulas, not era/channel-branching logic), so **`config/cuts.yaml` is the
+single source of truth going forward**, not the Python file. Added
+`config.analysis.get_channel_selection_cuts(channel, era=None)` (mirrors the existing
+`get_preselection_cuts()` pattern: merges `common` + per-channel sub-block, with optional
+`era_overrides` support for forward-compatibility even though none exist in the YAML today).
+`shapes/selection/channel_selection.py` now calls this getter instead of hardcoding the values a
+second time; `jet_vetomap` now reads `get_preselection_cuts(era, channel)["jet_veto"]` instead of
+its own separate hardcoded copy (closing the narrower part of Blocker #1 too), with the pre-existing
+hardcoded default kept as a fallback only for the `em` channel (which cuts.yaml's `preselection:`
+block doesn't define — same channel coverage as before, not a behavior change).
+
+**Verified byte-for-byte no behavior change** (real import, `taukiktflow` conda env,
+`TauFakeFactors`/`ntuple_processor` symlinked in for the session per the documented worktree-submodule
+workaround, restored to empty dirs before every commit): called
+`channel_selection(channel=ch, era="2024", vs_jet_wp="Medium", vs_ele_wp="VVLoose")` for
+`ch in ("mt", "et", "tt")` before vs. after the refactor and diffed the resulting `Selection.cuts`
+list — identical cut-name-to-expression pairs in both cases, e.g. `mt`:
+`extraelec_veto=(extraelec_veto < 0.5)`, `jet_vetomap=(jet_vetomap < 0.5)`,
+`tau_iso=(id_tau_vsJet_Medium_2 > 0.5)`, `mt_cut=(mt_1 < 70)`, `muon_iso=(iso_1 < 0.15)`, etc. — and
+`tt`'s `tau_iso=(id_tau_vsJet_Medium_1 > 0.5) && (id_tau_vsJet_Medium_2 > 0.5)` (the `.format()`
+substitution of the YAML's `{vs_jet_wp}` placeholder producing exactly the same string the old
+f-string literal did).
+
+### Move #1: "selection logic" out of `config/` into `shapes/selection/`
+
+Per the task's explicit instruction (naming `channel_selection.py`/`category_selection.py` as the
+example), moved the four modules that are genuinely **executable, era/channel-conditional
+selection/weight-string-building logic** (not config data) out of `config/shapes/`:
+`channel_selection.py`, `category_selection.py`, `process_selection.py`, `variations.py` →
+new package **`shapes/selection/`** (sibling to `shapes/produce_shapes.py`, which is their only
+real first-party consumer besides `combine_datacards/categories.py`).
+
+Chose `shapes/selection/` over a bare top-level `selection/` package specifically to avoid a name
+collision: `shapes/produce_shapes.py` already has a local variable/import alias `selection` (`import
+...process_selection as selection`) at several call sites — nesting under `shapes/` avoids that
+collision while still describing what the package is for.
+
+**Left in `config/shapes/`, on purpose** (data tables / thin shims, not selection logic):
+`control_binning.py`, `gof_binning.py`, `taues_measurement_binning.py` (binning-edge arrays keyed by
+variable name — data, expressed in Python only because `np.linspace`/irregular bin edges don't
+serialize cleanly to YAML, same class of decision as Phase 1's process_selection.py/variations.py
+Python-not-YAML call, just for binning instead of cuts), `signal_files.py` and `tff_adapter.py`
+(both thin backward-compat/adapter shims over `config/analysis.py` and the TFF submodule
+respectively, not selection logic themselves).
+
+**Also considered and left in place:** `config/generate_tff_configs.py` (a CLI script, not config
+data by the letter of the instruction) — judged as tightly-coupled config-sync tooling (regenerates
+TFF's derived YAMLs from `config/cuts.yaml`/`samples.yaml`/`weights.yaml`/`variables.yaml`, nothing
+else) rather than analysis business logic, and moving it only affects one `run.sh` call site. Left
+in `config/` as a judgment call; flagging here in case a future pass disagrees.
+
+**Import updates** (repo-wide grep after the move, confirmed no stale references remain outside of
+this file's own historical prose and comments in `shapes/selection/category_selection.py` that
+correctly still refer to *smhtt_ul's* file layout, not TauKITFlow's):
+- `shapes/produce_shapes.py`: `config.shapes.{process_selection,variations,category_selection,
+  channel_selection}` → `shapes.selection.{...}` (control_binning/taues_measurement_binning/
+  gof_binning imports unchanged — those stayed put).
+- `shapes/selection/variations.py`: its own internal `from config.shapes.process_selection import
+  _get_stxs_bin_or_range` → `from shapes.selection.process_selection import ...`; a docstring
+  example `from config.shapes import variations` → `from shapes.selection import variations`.
+- `combine_datacards/categories.py` (the only other real consumer, imports `DNN_CLASS_MAPPING`) and
+  `combine_datacards/make_datacards.py`: `config.shapes.category_selection` →
+  `shapes.selection.category_selection`, including the module docstrings/error message text.
+- `combine_datacards/__init__.py`, `tools.py`, `systematics.py`, `compare_datacards.py`: doc-comment
+  references to ``config/shapes/variations.py`` (naming-convention provenance notes) →
+  ``shapes/selection/variations.py``.
+- `config/analysis.py`: module docstring's consumer list updated
+  (`config/shapes/process_selection.py`/`variations.py` → `shapes/selection/...`).
+
+### Move #2: generic utilities out of `config/` into `common/`
+
+`config/helper_collection.py` (generic `ObjBuildingDict`/`NestedDefaultDict`/
+`PreserveROOTPathsAsStrings`/`calculate_stxs_N_and_negative_fractions` utility classes/functions —
+no config data, no analysis-specific logic) and `config/ntuple_processor_config_helper.py` (booking-
+graph glue helpers for `ntuple_processor`) are pure utility code, not configuration. Moved to a new
+top-level `common/` package.
+
+**Regression found and fixed during validation, worth recording:** first attempt moved these two to
+`utils/` (the obvious existing home, next to `setup_cmssw.sh` etc.) — this **broke real script
+invocation**: `python3 shapes/produce_shapes.py --help` failed with `ModuleNotFoundError: No module
+named 'utils.helper_collection'; 'utils' is not a package`, because running a script directly puts
+the *script's own directory* (`shapes/`) first on `sys.path`, and `shapes/utils.py` (a pre-existing,
+unrelated flat module — booking helpers for shape production) shadowed the top-level `utils/`
+package for that one invocation mode (`python3 -c "import ..."` from the repo root didn't show the
+bug — only direct script execution, which is how `run.sh`/`condor/*.py` wrappers actually invoke
+`produce_shapes.py`, does). Renamed the target package to `common/` instead (no collision anywhere
+in the repo, confirmed by checking `condor/common.py` is a submodule-qualified name, not a
+top-level-importable `common`). Re-verified `python3 shapes/produce_shapes.py --help` and 7 other
+entry points (`shapes/preselect.py`, `shapes/do_estimations.py`, `plotting/plot_shapes_control.py`,
+`shapes/convert_to_synced_shapes.py`, `condor/submit_{shapes,plotting,training}.py`) all run cleanly
+after the `common/` fix — this regression would otherwise have silently broken every real
+shape-production invocation via `run.sh`/condor, so it's recorded here explicitly as a real bug this
+slice introduced-then-caught, not a hypothetical.
+
+Import updates: `config/shapes/control_binning.py`, `shapes/selection/process_selection.py`,
+`shapes/produce_shapes.py`, `common/ntuple_processor_config_helper.py` (its own internal import of
+`helper_collection`) all updated to `common.helper_collection`/`common.ntuple_processor_config_helper`.
+`common/helper_collection.py`'s own relative import `from .logging_setup_configs import
+setup_logging` (worked when the file lived next to `logging_setup_configs.py` inside `config/`) fixed
+to the absolute `from config.logging_setup_configs import setup_logging` now that it's moved out.
+
+### Validation performed so far
+
+Environment: `taukiktflow` conda env; `TauFakeFactors`/`ntuple_processor` symlinked into this
+worktree from the main checkout for the session (same one-time worktree-submodule-gap workaround
+Phase 3/4/4b documented — restored to empty placeholder directories before every commit, confirmed
+via `git status --short` showing no submodule-pointer changes).
+
+1. `python3 -c "import ast; ast.parse(...)"` over every changed/moved file — all parse cleanly.
+2. Real imports (not just parse): `config.analysis.get_channel_selection_cuts('mt')`,
+   `get_preselection_cuts('2024','mt')['jet_veto']`, `shapes.selection.{channel_selection,
+   category_selection,process_selection,variations}` all import and execute correctly; confirmed
+   `DNN_CLASS_MAPPING['mt']` still returns the same 7-class dict as before the move.
+3. **Byte-for-byte cut-string equivalence** (see Duplication #2 above) for `channel_selection()`
+   across `mt`/`et`/`tt` at era `2024`, `vs_jet_wp="Medium"`, `vs_ele_wp="VVLoose"` — identical to
+   the pre-refactor hardcoded literals.
+4. `--help` run cleanly (rc=0, no tracebacks) for: `shapes/produce_shapes.py`,
+   `shapes/preselect.py`, `shapes/do_estimations.py`, `plotting/plot_shapes_control.py`,
+   `shapes/convert_to_synced_shapes.py`, `condor/submit_shapes.py`, `condor/submit_plotting.py`,
+   `condor/submit_training.py` — all touched by or downstream of this slice's import-path changes.
+5. Repo-wide grep for stale `config.shapes.{channel_selection,category_selection,
+   process_selection,variations}` / `config.helper_collection` / `config.ntuple_processor_config_helper`
+   import paths after the moves — none remain in executable code (only historical/smhtt_ul-referring
+   prose, listed above).
+
+### Still to do in this slice (not yet done as of this checkpoint)
+
+- Shape-iteration duplication audit (control-plots / training / combine re-production) — item 2 of
+  the task. Preliminary look: `shapes/produce_shapes.py` already unifies control-plot/gof/full-analysis
+  modes into one script (mode flags, not separate scripts/passes) — this looks already consolidated,
+  not newly fixed. `plotting/plot_shapes_control.py` and `combine_datacards/` are pure downstream
+  consumers of `produce_shapes.py`'s output ROOT file (no re-derivation of cuts/re-run over raw
+  ntuples). `trainings/create_training_dataset.py` is a separate concern: it reads flat per-event
+  ntuples (not histogram "shapes") via its own `--config`/`--common-setup-config` master YAML
+  (external, not in `config/`), which does duplicate cut/weight *concepts* in a different config
+  format rather than reusing `shapes/selection/process_selection.py`/`channel_selection.py` — not
+  yet fully chased down; need to finish confirming whether this is real drift risk worth flagging or
+  an acceptable, structurally-necessary difference (histograms vs. per-event training rows are
+  fundamentally different data shapes, and the *expensive* step — CROWN preselection — is already
+  shared between shape production and training via `shapes/preselect.py`'s output, per Phase 1).
+- `config/cuts.yaml` itself: no further YAML edits identified as needed beyond what's already fixed
+  (jet_veto casing, from the pre-existing Blocker #1 fix) — the `channel_selection:` block's values
+  are now actually consumed, so nothing to change there content-wise.
+- Final full-diff review + final STATUS.md write-up (this section will be extended, not rewritten).
+- Not yet committed as of this checkpoint — about to commit this batch now.

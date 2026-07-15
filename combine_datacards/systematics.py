@@ -2,11 +2,11 @@
 Systematic-uncertainty definitions for SM H->tautau datacards.
 
 Relocated from SMRun2Legacy's ``python/systematics.py`` (``run3_htt`` branch),
-and *renamed to match TauKITFlow's own ``config/shapes/variations.py`` naming
+and *renamed to match TauKITFlow's own ``shapes/selection/variations.py`` naming
 convention* rather than carrying SMRun2Legacy's naming verbatim -- see
 STATUS.md ("## Phase 2d") for the full reconciliation record. Summary:
 
-- ``config/shapes/variations.py`` is CROWN/ntuple_processor-side: it names the
+- ``shapes/selection/variations.py`` is CROWN/ntuple_processor-side: it names the
   "Up"/"Down"-shifted histograms that ``shapes/produce_shapes.py`` +
   ``shapes/do_estimations.py`` write into the shape ROOT files. Those
   histogram-name templates use bare literal placeholders ``Era`` and

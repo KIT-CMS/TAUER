@@ -20,7 +20,7 @@ eyeball:
   2. NUISANCES: the set of nuisance-parameter names on each side, split into
      shared / new-only / legacy-only.  Here a difference is *expected and
      intentional* -- Phase 2d deliberately reconciled the systematics naming to
-     config/shapes/variations.py (JEC 27-source split vs. the legacy regional
+     shapes/selection/variations.py (JEC 27-source split vs. the legacy regional
      grouping, tau-ID/ES pT- vs. decay-mode splitting, etc.). The comparator
      therefore does not fail on nuisance-set differences by default; it lists
      them so the reconciliation can be audited against STATUS.md Phase 2d.

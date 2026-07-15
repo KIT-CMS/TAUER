@@ -4,7 +4,7 @@ from itertools import product
 from typing import Any, Callable
 
 from config.logging_setup_configs import setup_logging
-from config.shapes.process_selection import _get_stxs_bin_or_range
+from shapes.selection.process_selection import _get_stxs_bin_or_range
 from ntuple_processor.utils import Cut, Weight
 from ntuple_processor.variations import (
     AddCut,
@@ -1134,7 +1134,7 @@ list of all variations defined within that collection.
 
 For example, instead of fetching each variation individually this would be possible:
 
-    from config.shapes import variations
+    from shapes.selection import variations
 
     # Retrieve and loop over all fake process estimation variations
     variations = [

@@ -9,7 +9,7 @@ All data lives in three YAML files next to this module:
 This module reads those files and provides a Python API used by:
   config/shapes/tff_adapter.py  (backward-compat shim)
   config/shapes/signal_files.py (backward-compat shim, re-exports SIGNAL_SAMPLES)
-  config/shapes/process_selection.py (reads get_luminosity())
+  shapes/selection/process_selection.py (reads get_luminosity())
   shapes/produce_shapes.py
   shapes/preselect.py
   trainings/create_training_dataset.py
@@ -18,7 +18,7 @@ This module reads those files and provides a Python API used by:
 
 TauFakeFactors and uncertainty-aware-training are NOT modified.
 
-config/shapes/process_selection.py and config/shapes/variations.py stay as Python
+shapes/selection/process_selection.py and shapes/selection/variations.py stay as Python
 modules, not YAML: they encode executable, era/channel-conditional weight- and
 cut-string construction (chainable Selection composition, STXS stitching-weight
 calculation, dataclasses) that would lose correctness and readability if flattened
@@ -253,6 +253,41 @@ def get_preselection_cuts(era: str, channel: str) -> dict[str, str]:
     # Build fresh dict excluding the era_overrides meta-key
     result = {k: v for k, v in cuts_cfg.items() if k != "era_overrides"}
     if era in era_overrides:
+        result.update(era_overrides[era])
+    return result
+
+
+def get_channel_selection_cuts(channel: str, era: str | None = None) -> dict[str, str]:
+    """
+    Return the shape-production-only channel_selection cuts (applied on top of
+    the preselection cuts above -- extraelec_veto/extramuon_veto/dilepton_veto/
+    os, plus per-channel tau_iso/mt_cut/ele_iso/muon_iso) for the given channel,
+    read from config/cuts.yaml's `channel_selection:` block.
+
+    Phase 5.2 note: this getter didn't exist before -- shapes/selection/
+    channel_selection.py had these exact same cut strings hardcoded as Python
+    literals, verbatim-duplicating (and never actually reading)
+    config/cuts.yaml's `channel_selection:` block, which was consequently 100%
+    dead YAML (confirmed by grep: nothing read the `channel_selection` top-level
+    key before this). Single-sourced here; channel_selection.py now reads
+    through this function instead of hardcoding the values a second time. See
+    STATUS.md's Phase 5.2 section for the full duplication audit.
+
+    Merges `common` (applies to every channel) with the channel-specific
+    sub-block (channel-specific keys win on conflict). The `tau_iso` value
+    contains a literal `{vs_jet_wp}` placeholder -- callers must
+    `.format(vs_jet_wp=...)` it themselves (the WP is a shape-production
+    runtime choice, not something this config layer knows about).
+    Supports an optional per-channel `era_overrides` sub-block, mirroring
+    get_preselection_cuts()'s pattern, for forward-compatibility -- none is
+    defined in config/cuts.yaml today.
+    """
+    cs_cfg = _load_cuts()["channel_selection"]
+    result: dict[str, str] = dict(cs_cfg.get("common", {}))
+    ch_cfg = cs_cfg.get(channel, {})
+    era_overrides = ch_cfg.get("era_overrides", {})
+    result.update({k: v for k, v in ch_cfg.items() if k != "era_overrides"})
+    if era is not None and era in era_overrides:
         result.update(era_overrides[era])
     return result
 

@@ -1,7 +1,7 @@
 from ntuple_processor import Histogram
 import numpy as np
 from typing import Any, Dict, Union
-from config.helper_collection import ObjBuildingDict
+from common.helper_collection import ObjBuildingDict
 
 
 class HistogramBuildingDict(ObjBuildingDict):

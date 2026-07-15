@@ -19,7 +19,7 @@ Changes vs. the SMRun2Legacy original (beyond the import paths, which now
 point at ``combine_datacards.*`` instead of ``CombineHarvester.SMRun2Legacy.*``):
 - ``--smhtt-path`` / ``SMHTT_UL_PATH`` removed: TauKITFlow now *is* what used
   to be the separate smhtt_ul checkout, so combine_datacards.categories reads
-  config.shapes.category_selection directly (see combine_datacards/categories.py).
+  shapes.selection.category_selection directly (see combine_datacards/categories.py).
 """
 import argparse
 import glob
