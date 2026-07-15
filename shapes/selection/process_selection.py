@@ -517,7 +517,25 @@ def ZTT_embedded_process_selection(channel, era, apply_wps, vs_jet_wp, vs_ele_wp
                     ("(trg_wgt_single_mu24)", "trgweight"),
                 ]
             )
-        if apply_wps:
+        # Phase 6a (2026-07-15) root cause + fix: the 2018 jvoss validation
+        # production's TauEmbedding-MuTauFinalState ntuples do not ship any
+        # id_wgt_tau_vsJet_* branch at all (confirmed via direct branch listing
+        # on a real embedded file: zero matches for "id_wgt_tau_vsJet") --
+        # embedded samples get their own emb_idsel_wgt/emb_triggersel_wgt
+        # selection-efficiency correction instead of a standard MC tau-ID scale
+        # factor, so this branch genuinely doesn't exist for them, unlike MC
+        # samples where it does. Booking it unconditionally under --apply-tauid
+        # crashed the RDataFrame JIT with "use of undeclared identifier
+        # 'id_wgt_tau_vsJet_Medium_2'" for the emb dataset specifically (100%
+        # reproducible in isolation, independent of any other process being
+        # booked in the same run -- this is what was actually behind the
+        # session's earlier suspected "JIT cascade" hypothesis, which turned out
+        # to be wrong; the real cause is this one genuinely-missing branch).
+        # Excluded for era in RUN2_PRODUCTION_ERAS, matching the btag_weight/
+        # zPtReweightWeight era-keyed exclusion pattern used elsewhere in this
+        # file for the same class of gap.
+        from config.analysis import RUN2_PRODUCTION_ERAS
+        if apply_wps and era not in RUN2_PRODUCTION_ERAS:
             ztt_embedded_weights.append(
                 (f"((gen_match_2==5)*id_wgt_tau_vsJet_{vs_jet_wp}_2 + (gen_match_2!=5))", "taubyIsoIdWeight")
             )
