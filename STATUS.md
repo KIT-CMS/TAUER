@@ -2249,3 +2249,223 @@ restored to empty placeholder directories before this final commit (confirmed vi
 Committed to branch `phase5.2-config-cleanup` in this worktree (two commits: the structural
 move/reconciliation, and this STATUS.md write-up). Not pushed, no force operations, no destructive
 git commands used, per the task's git-safety instructions.
+
+## Phase 6e — TauFakeFactors slimdown, btag_efficiencies extraction, FF-measurement integration
+
+Status: **DONE.** Branch `phase6e-tff-slimdown`, new worktree
+`.claude/worktrees/phase6e-tff-slimdown` (branched fresh from `master`/`a61a3b4`, since this
+worktree's shared main checkout had its branch changed out from under it mid-session by another
+concurrent agent — see "Worktree note" at the end of this section). Running alongside sibling
+agents' 6a/6b/6c/6d/6f slices per the Phase 6 fan-out plan above.
+
+### Part 1 — TauFakeFactors preselection duplication: what was actually found
+
+Before touching anything, audited what "TauFakeFactors' own preselection logic" actually consists
+of today, since Phase 5.2 had already built `config/generate_tff_configs.py` (a build/sync script
+that regenerates `TauFakeFactors/configs/smhtt_ul/{era}/preselection_{ch}.yaml` from
+`config/cuts.yaml`/`samples.yaml`/`weights.yaml`/`variables.yaml`) and `config/shapes/tff_adapter.py`
+(reads that generated YAML back for `shapes/selection/channel_selection.py`). Read
+`TauFakeFactors/preselection.py` in full: it is **already 100% config-driven** — every cut/weight
+it applies comes from `config["event_selection"]`/`config["mc_weights"]` (the YAML passed via
+`--config-file`), no hardcoded era/channel cut strings anywhere in the script itself. So the
+smhtt_ul FF-measurement preselection side of "TFF has its own duplicate preselection logic" had
+already been closed by Phase 5.2's `generate_tff_configs.py` — there was no live duplicate left to
+remove there.
+
+What **was** a real, live duplicate, found by diffing `TauFakeFactors/configs/btag_efficiency/{era}/
+preselection_{ch}.yaml`'s `event_selection:` block against `config/cuts.yaml`: this is a *second*,
+separate TFF preselection config (used only for the b-tag efficiency measurement, completely
+independent of the smhtt_ul FF-measurement config Phase 5.2 already fixed) whose `event_selection:`
+was a hand-typed, unreconciled copy of most of `config/cuts.yaml`'s `preselection:`/
+`channel_selection:` entries (`had_tau_decay_mode`, `had_tau_id_vs_ele`, `jet_veto`, the
+extra-lepton vetoes, opposite-sign, tau-vsJet WP cut). This is the actual duplicate this phase
+closes — see Part 2 below, since fixing it fell out naturally from relocating the btag-efficiency
+code into its own space (its config needed to move anyway).
+
+**Also found and fixed, in `config/generate_tff_configs.py` itself** (the smhtt_ul side):
+`_build_event_selection()`/`_build_mc_weights()` were **local re-implementations** of the exact
+same common+per-channel+`era_overrides` merge that `config.analysis.get_preselection_cuts()`/
+`get_mc_weights()` already do — i.e. two copies of one merge algorithm, one in `config/analysis.py`
+(used by `shapes/selection/channel_selection.py`) and one duplicated inline in the TFF-config
+generator. Removed the duplicate; `generate_tff_configs.py` now calls the central getters
+directly. **Validated byte-for-byte**: wrote a standalone comparison of the old local helpers vs.
+the central getters for every (era, channel) combination — **0 mismatches across all 18** Run3
+era × {et,mt,tt} combos (dict equality, not just string diff). Also ran a full dry-run
+regeneration before/after and confirmed the YAML payload is identical (only cosmetic log-line
+differences from the different script filename in the log tag).
+
+### Part 2 — btag efficiency extraction: `btag_efficiencies/`
+
+**Naming decision** (recorded per the repo's established naming philosophy, same reasoning
+pattern as `combine_datacards/` in Phase 2d): new top-level **`btag_efficiencies/`** — plural,
+matching the actual output (per-era, per-sample-type, per-WP/flavor/pT/eta efficiency maps), and
+deliberately *not* named after where it came from. It measures a detector/production-level
+quantity (jet b-tag efficiency, consumed downstream as a CROWN-level `btagWeight` branch/friend —
+see the `process_selection.py` note below) that has nothing to do with fake-factor measurement,
+TauFakeFactors' actual job — it only lived inside the TFF submodule as a historical accident of
+where someone put the script.
+
+**Relocated:**
+- `TauFakeFactors/btag_efficiency.py` → `btag_efficiencies/calculate_efficiency.py` — moved with
+  no logic changes, plus a `sys.path` bootstrap added (before its `import CustomLogging`/
+  `import helper.functions` lines) that adds `TauFakeFactors/` to `sys.path` so it keeps reaching
+  TFF's generic `CustomLogging`/`helper` packages **as an external library dependency** rather than
+  duplicating them — the same "reach a sibling package, don't fork it" pattern
+  `combine_datacards/` already uses for `CombineHarvester.CombineTools` (Phase 2d).
+- `TauFakeFactors/configs/btag_efficiency/{era}/*.yaml` → `btag_efficiencies/configs/{era}/*.yaml`
+  — moved for all 6 Run3 eras.
+- `TauFakeFactors/run_eff.sh`, `run_presel.sh` — removed (superseded by
+  `btag_efficiencies/run_btag_efficiency.py`, see Part 3-equivalent below).
+
+**New `btag_efficiencies/generate_configs.py`** closes the Part-1 duplicate found above: rebuilds
+each `preselection_{ch}.yaml`'s `event_selection:` block from
+`config.analysis.get_preselection_cuts()`/`get_channel_selection_cuts()` for `et`/`mt`/`tt`
+(single-sourced — same central getters `generate_tff_configs.py` uses). One cut is **deliberately
+not** single-sourced: the b-tag efficiency measurement uses a looser transverse-mass cut
+(`mt_1 < 50`) than shape production's central `mt_cut` (`mt_1 < 70`) to keep more statistics in its
+control region — this is a genuine, intentional physics difference confirmed by diffing the old
+file, not undiscovered drift, so it's kept as an explicit named local override
+(`_BTAG_CR_MT_CUT`) with a docstring explaining why, rather than silently sourced from a getter
+that would make a future central `mt_cut` change silently retune the b-tag efficiency CR too. The
+`em` channel is left untouched/unregenerated: `config/cuts.yaml`'s `preselection:`/
+`channel_selection:` blocks don't cover `em` at all (same pre-existing gap Phase 5.2 already noted
+for `shapes/selection/channel_selection.py`), so there is no central source to regenerate it from.
+
+**`btag_efficiencies/run_btag_efficiency.py`** — new single entry point, `--step
+{preselect,calculate,all}`: `preselect` runs `TauFakeFactors/preselection.py` (reused as-is,
+already config-driven) against the relocated config, one job per (era, channel); `calculate` runs
+`calculate_efficiency.py`, one job per era (its own config's `channels:` list covers every channel
+internally in one job, so per-channel fan-out doesn't apply to this step).
+
+**`condor/submit_btag_efficiency.py`** — new, follows the existing `condor/submit_*.py` pattern
+(`JobSpec`/`SubmissionPlan`/`submit()` from `condor/common.py`, era/channel defaults from
+`config.analysis.RUN3_ERAS`/`get_channels()`): one job per (era, channel) for `--step preselect`,
+one job per era for `--step calculate` — matching the two scripts' actual parallelisable
+granularity (see script docstring).
+
+**Consumer check (per the task's explicit instruction to verify whatever consumes btag efficiency
+maps points at the new location):** grepped the whole non-TFF repo for `btag_efficiency.json`/
+`btagEfficiency`/`btag_eff` references. Found none — `shapes/selection/process_selection.py`'s
+`btag_weight` (added `("btag_weight", "btagWeight")` to `MC_base_process_selection`'s weight list,
+Phase 5.1) reads a **branch already present in the CROWN ntuple** (`btagWeight`, computed upstream
+at the CROWN/friend-tree level using the efficiency map, outside this repo), not a file path — so
+there was nothing in TauKITFlow's own code pointing at the old
+`TauFakeFactors/configs/btag_efficiency/` path to update. The only repo-internal hit was a dead
+comment (`# btag_eff = btag_eff`) in `shapes/selection/variations.py:1303`, not a real reference.
+
+**Validated:**
+- Real imports under the dedicated `fake_factors` conda env (not `taukiktflow` — see environment
+  note below): `import btag_efficiencies.calculate_efficiency` succeeds and its `func` module
+  resolves to the real `TauFakeFactors/helper/functions.py` on disk, confirming the `sys.path`
+  bootstrap correctly reaches TFF's helper package as an external dependency.
+- `btag_efficiencies/generate_configs.py --dry-run` for all 6 Run3 eras × {et, mt, tt}: no errors;
+  spot-checked `mt`/`tt` output against the original hand-written YAMLs — semantically equivalent
+  (e.g. `lep_iso: (iso_1 < 0.15)` from the central single-value getter vs. the old file's redundant
+  `((iso_1 >= 0.0) && (iso_1 <= 0.15))` — isolation is non-negative by construction, so these are
+  equivalent, and the new form is the single central definition instead of a second hand-typed
+  one); `em` confirmed byte-identical to the pre-existing file (untouched, as designed).
+- `condor_submit -dry-run` (real binary) validated classads for both `--step preselect` (6 jobs,
+  2 eras × 3 channels) and `--step calculate` (2 jobs, one per era).
+- **Environment note, recorded rather than silently worked around:** `TauFakeFactors/helper/
+  functions.py` imports `ruamel.yaml`, which is not installed in the `taukiktflow` conda env this
+  rework otherwise uses for shape production — confirmed this is a **pre-existing environment gap,
+  not something this phase introduced**, by reproducing the identical `ModuleNotFoundError` from
+  TFF's own original (pre-move) `helper/functions.py` import under the same env. A separate
+  `fake_factors` conda env already exists on this machine with the right dependencies and was used
+  for the validation above; TauFakeFactors' own `environment.yml` presumably documents this, and
+  this phase doesn't change which env preselection.py/ff_calculation.py/btag scripts expect —
+  `run_fake_factor_measurement.py`/`run_btag_efficiency.py` invoke them via `subprocess.run` with
+  whatever Python is on `PATH` at call time, same as `run.sh`'s existing PRESEL/FF/FF-CORR modes
+  already did (those also assume the caller has activated the right env first).
+
+### Part 3 — Seamless FF-measurement integration: `run_fake_factor_measurement.py` + `run.sh FF-MEASURE`
+
+Before this phase, running the fake-factor measurement meant knowing to invoke four separate
+`run.sh` modes by hand, in the right order (`GEN-TFF-CONFIGS`, `PRESEL`, `FF`, `FF-CORR`) — each
+already existed and was already documented in `run.sh --help`, but nothing tied them together as
+"one step of the pipeline," and nothing enforced the ordering (e.g. forgetting `GEN-TFF-CONFIGS`
+after a `config/cuts.yaml` edit silently measures FFs against stale cuts).
+
+New **`run_fake_factor_measurement.py`** (repo root, Python per the framework's "new scripts are
+Python" convention) chains all four steps for a given `--era`/`--channels`
+(`config.analysis.RUN3_ERAS`/`get_channels()`-defaulted, same convention as `condor/submit_*.py`):
+`config/generate_tff_configs.py` → `TauFakeFactors/preselection.py` (per channel) →
+`TauFakeFactors/ff_calculation.py` (per channel) → `TauFakeFactors/ff_corrections.py` (per
+channel). `--steps` lets you run a subset (e.g. just `ff-corr` after tweaking a correction, without
+rerunning preselection). Output lands exactly where `shapes/preselect.py --tff-dir` and
+`shapes/produce_shapes.py`'s `--*-friend-directory`/`run.sh`'s `FF_FRIENDS_DIR` already expect —
+this script only chains the existing steps, it doesn't change any output path.
+
+Wired into `run.sh` as a new **`FF-MEASURE`** mode (added to the top-of-file mode list and
+`--help` text); the four underlying modes (`GEN-TFF-CONFIGS`/`PRESEL`/`FF`/`FF-CORR`) are kept
+exactly as-is for granular single-step reruns, not replaced.
+
+**Three real, pre-existing bugs found and fixed while making this chain actually work
+end-to-end** (none introduced by this phase — all were latent in `run.sh`'s existing PRESEL/FF/
+FF-CORR modes, presumably never actually exercised for a real multi-channel run before):
+1. `run.sh`'s `PRESEL` mode passed `--columns "${OUTPUT_FEATURES[@]}"` to
+   `TauFakeFactors/preselection.py` — its argparse (checked exhaustively: `--config-file`,
+   `--nthreads`, `--ncores`, `--disable-multiprocessing`, `--log-level` only) defines no
+   `--columns` argument at all (it reads `output_features` from the config file itself, per Part
+   1's audit). Every real `PRESEL` invocation would have failed with "unrecognized arguments:
+   --columns ...". Removed.
+2. `run.sh`'s `FF`/`FF-CORR` mode defaults assumed one joined config file per invocation
+   (`fake_factors_${CHANNELS}.yaml`/`ff_corrections_${CHANNELS}.yaml` with `$CHANNELS` defaulting
+   to the raw comma-joined string `"et,mt,tt"`), but confirmed on disk
+   (`TauFakeFactors/configs/smhtt_ul/2024/`) that these configs only ever ship **one file per
+   single channel** (`fake_factors_et.yaml`, `fake_factors_mt.yaml`, `fake_factors_tt.yaml`,
+   `corrections_et.yaml`, etc.) — the old default only ever matched a real file when `$CHANNELS`
+   happened to be a single channel. Fixed to loop per channel (same as `PRESEL`); explicit
+   `$FF_CONFIG`/`$FF_CORR_CONFIG` overrides still work unchanged for a single explicit file.
+3. `FF-CORR`'s default filename prefix was simply wrong: `ff_corrections_{ch}.yaml` vs. the real
+   files' `corrections_{ch}.yaml` (no `ff_` prefix) — fixed.
+
+**Validated:** `bash -n run.sh` (syntax); `run_fake_factor_measurement.py --help` runs cleanly;
+a real `--steps gen-configs` invocation (safe, idempotent) executed `main()` end-to-end against
+real `config/cuts.yaml`/`TauFakeFactors/configs/smhtt_ul/2024/preselection_mt.yaml`; argv
+construction for the `presel`/`ff`/`ff-corr` steps (captured via a patched `_run`) was checked
+against real filenames confirmed present on disk for era 2024 — all match after the three fixes
+above.
+
+### Files changed / added (full list for this phase)
+
+- `config/generate_tff_configs.py` — removed `_build_event_selection()`/`_build_mc_weights()`;
+  now calls `config.analysis.get_preselection_cuts()`/`get_mc_weights()` directly.
+- **New** `btag_efficiencies/__init__.py`, `calculate_efficiency.py` (moved + `sys.path`
+  bootstrap), `generate_configs.py`, `run_btag_efficiency.py`, `configs/{2022preEE,2022postEE,
+  2023preBPix,2023postBPix,2024,2025}/*.yaml` (moved; `preselection_{et,mt,tt}.yaml`'s
+  `event_selection:` regenerated, `preselection_em.yaml`/`btag_efficiency*.yaml`/
+  `common_settings.yaml` unchanged content, just relocated).
+- **New** `condor/submit_btag_efficiency.py`.
+- **New** `run_fake_factor_measurement.py`.
+- `run.sh` — new `FF-MEASURE` mode; `PRESEL`/`FF`/`FF-CORR` modes fixed (see the three bugs above);
+  mode list/`--help` text updated.
+- **Inside the `TauFakeFactors` submodule** (committed separately, as its own commit
+  `518f561 "Remove btag-efficiency code..."` on its existing `run3_smhtt` branch — the submodule's
+  gitlink pointer in this repo's own tree is **not** touched/staged, matching the established
+  Phase 3/4/4b/5.2 workaround for this submodule; the user's own pre-existing uncommitted
+  `CustomLogging`/`datasets` changes were left completely untouched, confirmed via `git status`
+  before and after): removed `btag_efficiency.py`, `configs/btag_efficiency/`, `run_eff.sh`,
+  `run_presel.sh`.
+
+### Worktree note (for whoever reads this next)
+
+This phase's work was done in a **freshly created** worktree/branch
+(`.claude/worktrees/phase6e-tff-slimdown`, branched from `master`), not the worktree path this
+session started in (`.claude/worktrees/agent-a262615a30a42ee81`, referenced in this session's
+early tool calls) — that path no longer existed partway through the session, and the shared main
+checkout at the repo root (`/work/sgiappic/TauKITFlow`) was observed switching branches out from
+under this session between tool calls (seen on `phase6f-ntuple-processor`, then
+`phase6a-run2-2018-validation`, within the same minute, with no action taken by this session) —
+almost certainly a concurrent sibling agent (6a/6f) using that same directory rather than its own
+isolated worktree. To avoid any risk of clobbering that concurrent work or the user's own
+uncommitted `TauFakeFactors` submodule changes, this phase created its own dedicated worktree
+before doing anything further, mirroring the pattern the 6c agent already used
+(`.claude/worktrees/phase6c-remove-law`). **If the merge step for Phase 6e finds the main
+checkout on an unexpected branch, that's this pre-existing multi-agent-shared-directory issue, not
+something Phase 6e did.**
+
+TauFakeFactors/ntuple_processor were symlinked into this worktree from the main checkout's real
+submodule content for the session (same one-time workaround Phase 3/4/4b/5.2 documented), and
+restored to empty placeholder directories before every commit (confirmed via `git status --short`
+showing no submodule-pointer changes staged in any of this phase's three commits).
