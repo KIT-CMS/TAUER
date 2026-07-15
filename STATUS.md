@@ -1612,6 +1612,105 @@ its point 4.
   — `categories.py`'s `stxs_stage0_run3` path already consumed this dict; it just
   had nothing to consume before.
 
+## Phase 5.1 — Root-cause TTL/VVJ discrepancies (IN PROGRESS — checkpoint)
+
+Status: **IN PROGRESS.** This is a checkpoint written mid-slice per an explicit
+instruction to checkpoint incrementally rather than risk losing work to a context
+cutoff. If you are resuming this: read this section, check `git log` on branch
+`phase5.1-ttl-vvj-rootcause` for what's already committed, and check whether the
+background shape-production runs mentioned below completed (they were fired off
+right before this checkpoint was written and are not yet reflected in results below).
+
+**Scope:** re-examine the TT-TTL (+3.9% Phase 2b / ~1.6% Phase 3, era-dependent) and
+VV-VVJ (~26.6% low, Phase 3) discrepancies with fresh 2024 data from both frameworks,
+find root cause(s), fix in TauKITFlow (not a fudge factor).
+
+**Confirmed root cause #1 (TT-TTT/TT-TTL residual) - FIXED:** `ttbar_em_weight()` in
+`config/shapes/process_selection.py` (both frameworks) applies a hardcoded, per-era
+data/MC normalization scale factor to all ttbar (TTT+TTL) events, derived from an
+em-channel control-region measurement. TauKITFlow's copy of this function had a
+**stale** set of `ratio_em` values (comment: computed on `m_vis>100` only, no nbtag
+cut - e.g. 2024: `0.926025`). smhtt_ul's *live* checkout has since been recalibrated
+(`config/shapes/calculate_ttbar_weights.py`, "260602" tag, nbtag>=0 selection to
+better isolate ttbar) to a **different, newer** set of values (2024: `0.945792`) -
+confirmed by reading smhtt_ul's `process_selection.py` directly: the old values are
+still there, commented out, immediately above the new ones, with an explicit
+"old weigths ... wrong weight for 24-25" comment marking them stale. Ratio of
+old/new for 2024: `0.926025/0.945792 = 0.9791` -> TauKITFlow was applying a weight
+**~2.09% lower** than smhtt_ul's current reference - same direction and closely
+matching magnitude as the Phase 3-reported TT-TTT (1.66% low) / TT-TTL (1.63% low)
+residuals. This is a real, dated, single-number recalibration in the legacy
+reference, not a code/logic difference (the `TTT_process_selection`/
+`TTL_process_selection`/`TTJ_process_selection` cut expressions themselves are
+byte-identical between the two frameworks for `mt`/`et`/`tt`/`em` - diffed directly,
+only `mm`/`ee` branches differ, and TauKITFlow doesn't support `mm`/`ee` at all so
+that's moot).
+
+**Fix applied:** `config/shapes/process_selection.py`'s `ttbar_em_weight()` updated
+to the current smhtt_ul "260602" `ratio_em` values for all 6 Run3 eras (2022preEE:
+`0.827018`, 2022postEE: `0.955392`, 2023preBPix: `1.016815`, 2023postBPix:
+`0.977028`, 2024: `0.945792`, 2025: `0.918900`), old values kept commented out for
+provenance (same convention smhtt_ul itself uses). **Not yet numerically
+re-validated end-to-end against a fresh legacy file** - see below.
+
+**VV-VVJ investigation so far:** `VVT_process_selection`/`VVJ_process_selection`/
+`VVL_process_selection` cut expressions are also byte-identical between frameworks
+for the channels TauKITFlow supports (diffed directly). No `ttbar_em_weight`-style
+per-process normalization factor exists for VV in either framework - `VV_process_selection`
+only carries the generic `MC_base_process_selection` weights + `numberGeneratedEventsWeight`
++ `crossSectionPerEventWeight`, same on both sides. **Checked the VV sample list
+specifically** (since Phase 3 flagged VVJ as a low-stat process where a single
+sample's presence/absence would swing the ratio): smhtt_ul's `config/shapes/file_names.py`
+`common_files_2024["VV"]` is a **20-sample list that merges diboson (WW/WZ/ZZ, 10
+samples) with single-top (ST t-channel + tW, 10 samples)** under one "VV" key.
+TauKITFlow's `config/samples.yaml` has these as two separate top-level background
+keys, `diboson` (10 samples, exact match) and `ST` (10 samples, exact match) - but
+`config/analysis.py`'s `_TFF_TO_DATASET` dict **already maps both `"diboson"` and
+`"ST"` to the same ntuple_processor key `"VV"`** (line ~91-92, with an explicit
+`# single-top merged into VV` comment), and `get_background_samples()` merges them
+via `result.setdefault(ds_key, []).extend(...)`. So the merged 20-sample VV list is
+**already identical between the two frameworks** - this is not (or not simply) a
+sample-list bug. Diffed every individual sample name in both 20-sample lists:
+identical set, same production tag (`RunIII2024Summer24NanoAODv15-150X`). VVJ
+specifically (gen_match_2==6, i.e. the genuinely-faked-tau subset of VV) is a very
+low-statistics slice of an already lower-cross-section process family, so the 26.6%
+residual is plausibly dominated by MC statistical fluctuation rather than a
+selection/weight bug - **not yet confirmed either way with fresh numbers**, next
+step below is designed to settle this.
+
+**In progress at checkpoint time:** launched two real, fresh background shape
+productions restricted to `--process-selection ttt,ttl,ttj,vvt,vvl,vvj` and
+`--control-plot-set m_vis,pt_1,pt_2` (narrowed scope to make a same-day rerun
+practical) for 2024/mt against the live CROWN production:
+- TauKITFlow (this worktree, `taukiktflow` conda env, with the `ttbar_em_weight` fix
+  above already applied): `shapes/produce_shapes.py --era 2024 --channels mt
+  --vs-jet-wp Medium --vs-ele-wp VVLoose --apply-tauid --control-plots
+  --control-plot-set m_vis pt_1 pt_2 --xrootd --directory
+  /store/user/sgiappic/CROWN/ntuples/htt_260602_2024-25_v5/CROWNRun
+  --mt-friend-directory .../CROWNFriends/xsec/ --process-selection
+  ttt,ttl,ttj,vvt,vvl,vvj --skip-systematic-variations --no-dnn-categorization
+  --num-processes 8 --num-threads 8 --output-file output/2024-mt-ttvv-phase51`
+- smhtt_ul (`/work/sgiappic/smhtt_ul`, LCG_106 view via `utils/setup_root.sh`, no
+  conda - same house rule as previous phases): same processes/variables via
+  `shapes/produce_shapes.py` directly (equivalent to `control_plots_ul.sh -m SHAPES`),
+  output `output/2024-mt-ttvv-phase51-legacy.root`.
+
+**Next steps once these complete (not yet done as of this checkpoint):**
+1. Run `shapes/do_estimations.py` on both outputs if needed (probably not required
+   for a pure MC bin-by-bin comparison, no QCD/FF estimation involved for TT/VV).
+2. Run `plotting/compare_control_shapes.py --new-file <TauKITFlow output>
+   --legacy-file <smhtt_ul output> --channel mt --selection Nominal --processes
+   TT-TTT,TT-TTL,TT-TTJ,VV-VVT,VV-VVL,VV-VVJ --variables m_vis,pt_1,pt_2` and record
+   the actual before/after ratios (before = using the old TauKITFlow numbers, which
+   Phase 3 already measured; after = with the `ttbar_em_weight` fix).
+3. If TT-TTT/TTL now agree within tolerance (3-sigma / whatever rel-diff convention
+   Phase 2b/3 established) and VVJ still doesn't, chase VVJ further (statistical
+   significance test: is 26.6% within VVJ's own Poisson uncertainty at this
+   sample's stats? if yes, this is a statistics-limited process, not a bug, and
+   should be documented as such rather than "fixed" further).
+4. Write the final numbers into a proper (non-checkpoint) version of this section,
+   replacing this IN PROGRESS marker.
+
 ## Blockers
 
 Note: none of the below block Phase 2a specifically — see "Not done / explicitly out
