@@ -2388,3 +2388,194 @@ append, no prior lines rewritten), so a `STATUS.md` merge conflict here, if any,
 append-vs-append conflict, not a semantic one.
 
 No blockers. Not pushed; no destructive git operations used.
+
+## Phase 6a — Run2 2018 validation against smhtt_ul (in progress, checkpointed)
+
+Status: **IN PROGRESS.** Real, substantial findings below (not yet a clean bin-by-bin pass/fail
+number — see "Not yet done"). Checkpointing now per the resumability policy since this session hit
+a usage-limit reset mid-investigation; whoever resumes should read this section fully before
+re-running anything, several real environment/config gaps were found and (for the legacy side)
+worked around in a scratch copy, not in the real `smhtt_ul` checkout.
+
+Branch: `phase6a-run2-2018-validation`, worked in its own worktree
+(`.claude/worktrees/phase6a-run2-2018-validation`) after discovering mid-session that this
+worktree's shared parent checkout (`/work/sgiappic/TauKITFlow`) was being branch-switched by other
+concurrent Phase-6 agents (found the working tree unexpectedly on `phase6f-ntuple-processor` after
+a session reset) — moved into an isolated worktree to avoid further collisions. One stray commit
+(`7aa83ec`, "Phase 6f: keep ntuple_processor as external submodule") ended up on this branch from
+that collision before the move; left as-is (harmless STATUS.md-only append, reverting it would be a
+destructive op on another agent's real work) rather than rewriting history.
+
+### Scope
+
+Era/channel: 2018/mt (the only channel with real validation data in the jvoss production, same
+scope as Phase 2a). Processes: `data, ztt, zl, zj, ttt, ttl, ttj, vvt, vvl, vvj, w, emb` (full
+background+embedding set used for 2018 elsewhere in this repo; no signal samples exist for 2018 in
+this production, consistent with `config/samples.yaml`). Variables: `m_vis, pt_1, pt_2` (matches
+Phase 5.1's narrowed scope for a same-day turnaround). Data:
+`root://cmsdcache-kit-disk.gridka.de//store/user/jvoss/CROWN/ntuples/SFs_EMB_Run2_v15nanoAOD_29_06_26/`.
+Grid proxy confirmed valid (148h remaining at session start).
+
+### Legacy reference: smhtt_ul's live checkout could not run 2018/mt against this production as-is — three real, independent gaps found and worked around in a scratch copy (not in the real checkout)
+
+Per the task's read-only treatment of `smhtt_ul`, all of the below patches were applied to a
+**scratch copy** (`rsync`'d, minus `output/`/`validation_database/`/`logs/`, to this session's
+scratchpad directory, never to `/work/sgiappic/smhtt_ul` itself) so the real legacy checkout stays
+untouched. Each patch is narrow, documented inline in the scratch copy with a "PHASE 6a PATCH"
+comment block, and traces to a real, confirmed fact about either the live code or the real ntuples
+— not a guess:
+
+1. **Embedding is currently fully disabled in smhtt_ul's live checkout, for every era, not just
+   2018.** `shapes/produce_shapes.py`'s `add_processes()` has the `emb` `add_fn(...)` call
+   commented out (line 276), so `--process-selection emb` silently books nothing regardless of era.
+   Separately, `config/shapes/process_selection.py`'s `ZTT_embedded_process_selection()` has its
+   *own* core weight lines commented out too (`# ("emb_genweight", "emb_genweight")` /
+   `# ("emb_idsel_wgt_1*emb_idsel_wgt_2*emb_triggersel_wgt", "emb_selection_weight")`, lines
+   579-580) — these two lines sit *before* the era-conditional branching, so every era is affected,
+   not just Run3 (which Phase 2a already knew had a `(0.25)` placeholder scale weight for Run3
+   specifically — this is a different, more fundamental gap: the actual generator/selection-
+   efficiency weight product is dead code for every era in the current checkout). Uncommented both
+   in the scratch copy only (verbatim — these are exactly the two branches Phase 2a independently
+   confirmed present and correct in the real 2018 embedded ntuples: `emb_genweight`,
+   `emb_idsel_wgt_1`, `emb_idsel_wgt_2`, `emb_triggersel_wgt`).
+2. **smhtt_ul's static `config/shapes/file_names.py` 2018/mt sample list does not match the jvoss
+   validation production at all.** It hardcodes an older `NanoAODv9-106X` campaign's sample names
+   (e.g. `DYJetsToLL_M-50_..._RunIISummer20UL18NanoAODv9-106X`) and a data-sample name with a
+   `_GT36` suffix (`SingleMuon_Run2018A-UL2018_GT36`) that doesn't exist in the real production
+   (confirmed: this caused a real `xrdfs`-level `TypeError` — `dirlist()` on the `_GT36`-suffixed
+   path returns nothing, and `ntuple_processor/booking.py`'s except-clause re-raises `TypeError`).
+   This is expected — `file_names.py` was never written with this specific reduced validation
+   production in mind — but it means smhtt_ul cannot be pointed at the jvoss production without an
+   override. Replaced the 2018/mt block in the scratch copy with the exact `NanoAODv15-150X`
+   sample names already confirmed via `xrdfs ls` in Phase 2a / this repo's
+   `config/samples.yaml` (DY: 2, TT: 3, VV: 11 [3 diboson + 8 ST], W: 1, data: 4 [no `_GT36`],
+   EMB: 4 — identical to TauKITFlow's own 2018 sample lists, so both frameworks now read the
+   *identical* file set).
+3. **`add_processes()` unconditionally requires `qqH`/`ggH`/`ttH`/`VH` dataset keys** (no signal
+   samples exist for 2018 in this production, so this is a guaranteed `KeyError` for any 2018 run
+   regardless of `--process-selection`). TauKITFlow's own `add_processes()` already guards every
+   entry on dataset-key presence (Phase 2a, `_add()` helper) — mirrored the identical guard into
+   the scratch copy so it can run the same background+embedding-only `--process-selection` this
+   repo uses for 2018.
+
+None of these three are physics-content bugs in smhtt_ul's *design* — they're a stale
+config/production-list mismatch (2) and dead-but-clearly-intended-to-work code (1, 3) — but all
+three are real, and (1) especially means "run smhtt_ul as literally checked out" would silently
+produce **zero embedded histograms for any era**, which the task explicitly required be covered
+for Run2. Documented rather than silently patched-and-forgotten so whoever owns `smhtt_ul` upstream
+can decide whether to re-enable embedding for real (this repo's TauKITFlow side does not have this
+problem — Phase 2a already fixed and validated real embedding weights there).
+
+### Real, confirmed environment/production-schema findings (apply equally to both frameworks — not a TauKITFlow-vs-legacy discrepancy)
+
+Found by direct RDataFrame/xrootd branch inspection against the real jvoss 2018 production, not
+assumed:
+
+1. **`btag_weight` genuinely does not exist as a branch** in this production (confirmed via a real
+   RDataFrame JIT error, `use of undeclared identifier 'btag_weight'`, and independently via a
+   direct branch-listing check) — re-confirms Phase 2a's original finding, still true. TauKITFlow
+   already excludes it correctly for `era in RUN2_PRODUCTION_ERAS` (Phase 5.1). smhtt_ul's live
+   checkout has **no** era exception for this at all (`if channel != "mm":` unconditionally, for
+   every era) — patched the scratch copy the same way TauKITFlow already does (`and era != "2018"`)
+   so the legacy side can run at all against this production; documented as a real, era-specific
+   gap in the live smhtt_ul checkout, same class of finding as (1) above.
+2. **New finding: MC background shape production for 2018 requires an xsec friend tree that
+   neither Phase 1 nor Phase 2a ever wired up.** `numberGeneratedEventsWeight`,
+   `crossSectionPerEventWeight`, and `negative_events_fraction` — needed by every MC process
+   selection (`DY_process_selection`, `TT_process_selection`, `VV_process_selection`,
+   `W_process_selection` — both frameworks, identical formulas) — are **not** present as bare
+   branches on the raw CROWN ntuple (confirmed via direct branch listing on a real TT file: absent).
+   They live in a friend tree at
+   `.../SFs_EMB_Run2_v15nanoAOD_29_06_26/CROWNFriends/xsec/2018/<sample>/mt/*.root` (confirmed
+   present, exactly 3 branches: `crossSectionPerEventWeight`, `negative_events_fraction`,
+   `numberGeneratedEventsWeight`) — the same "xsec friends" convention Phase 1/Phase 3 already used
+   for Run3 (`--mt-friend-directory .../CROWNFriends/xsec/`), just never previously exercised for
+   2018 because **Phase 2a's own 2018 validation runs never actually executed a full RDataFrame
+   event loop for an MC background process** — its "real" runs were `--only-create-graphs`,
+   `--collect-config-only`, and one embedded-process real run (embedding doesn't need cross-section
+   normalization at all, so this gap was invisible to it). Both this run's TauKITFlow invocation and
+   the legacy scratch-copy invocation now pass
+   `--mt-friend-directory /store/user/jvoss/CROWN/ntuples/SFs_EMB_Run2_v15nanoAOD_29_06_26/CROWNFriends/xsec`
+   to fix this — **worth promoting into the permanent 2018 production command/docs going forward**,
+   this isn't scratch-only like the smhtt_ul patches above.
+3. **Real, currently-unresolved gap: no Z-pT-reweighting friend tree exists anywhere in this
+   validation production.** `zPtReweightWeight` (applied to every DY sub-process, both frameworks)
+   is not a bare branch and has no corresponding friend tree under `CROWNFriends/` (only `xsec/`
+   exists — confirmed via `xrdfs ls` on the parent `CROWNFriends/` directory: exactly one
+   subdirectory). This is a genuine production-level gap (the jvoss production is described,
+   Phase 2a, as "SF-measurement-focused... not the full 2018 analysis production" — this is
+   consistent with that framing: an ancillary correction like Z-pT reweighting wasn't needed for
+   the SF measurement this production was actually made for). Affects DY shape production in
+   **both** frameworks identically — not a TauKITFlow-vs-legacy discrepancy. Not yet resolved: the
+   DY control-plot run has not completed past this point (see below).
+4. **Under investigation, not yet root-caused: a real RDataFrame JIT `"use of undeclared
+   identifier"` error for `id_wgt_tau_vsJet_Medium_2` (TT process, both frameworks) despite the
+   branch being confirmed present** — verified three independent ways: (a) direct standalone
+   `RDataFrame(...).Define("x", "id_wgt_tau_vsJet_Medium_2")` on the exact file succeeds and
+   evaluates to a sane value (`Mean ≈ 0.96`); (b) a header-only branch-listing sweep across **all
+   390 files** in the 3 TT sub-samples confirms the branch is present in every single file, no
+   exceptions; (c) the same identifier is used correctly elsewhere in the same run's log
+   (`taubyIsoIdWeight` construction is logged correctly before the crash). This rules out a missing-
+   branch/schema-mismatch cause on both counts that would normally explain this exact ROOT error
+   message. Working hypothesis, not yet confirmed: a ROOT/RDataFrame JIT thread-safety issue under
+   `--num-threads > 1` (the LCG_106 ROOT build's Cling JIT is not fully safe for concurrent
+   `Define()` compilation across many independently-booked selection graphs — 11 process-selection
+   graphs × 3 variables in this run) rather than a genuine physics/config bug in either framework —
+   supported by the fact that a `--num-threads 1` rerun (single-threaded, `--process-selection ttt`
+   only) got measurably further without hitting the error within the time this session had to
+   observe it (see "Not yet done" below — this retest had not finished at last check).
+
+### Not yet done / explicitly open at this checkpoint
+
+- **No clean bin-by-bin comparator run yet** (the actual Phase 6a deliverable) — both the
+  legacy-scratch-copy run and TauKITFlow's own run for the full `data,ztt,zl,zj,ttt,ttl,ttj,vvt,
+  vvl,vvj,w,emb` process set crashed on finding #4 above before producing an output ROOT file. A
+  `--num-threads 1, --process-selection ttt-only` retest was in progress (single process family, to
+  cheaply confirm/refute the JIT-threading hypothesis) when this checkpoint was written; if it
+  completes cleanly, the fix is simply to run the full comparison with `--num-threads 1` (slower,
+  but correctness-first); if it still fails, the JIT hypothesis is wrong and needs further
+  root-causing (next step then: bisect which specific `--process-selection` subset trips it, since
+  `ttt`-only stresses far fewer concurrently-JIT'd `Define()` graphs than the full 11-process set).
+- **`compare_control_shapes.py` has not yet been run for 2018** — blocked on the above; the
+  comparator itself needs no changes (same `{dataset}#{channel}{process_suffix}#{selection}#
+  {variable}` histogram-naming convention Phase 2b/3/5.1 already validated works for both
+  frameworks, era-independent).
+- **The `zPtReweightWeight` gap (finding #3) is unresolved** — for the eventual comparison run, the
+  plan is to treat `zPtReweightWeight` as `1.0` in *both* frameworks for this validation-only
+  comparison (documented substitution, not a physics fix — DY absolute normalization for this one
+  comparison won't include Z-pT reweighting, but the comparison remains meaningful for testing
+  whether TauKITFlow's code matches legacy's code on everything that *is* available in this
+  production), unless a Z-pT friend tree is found elsewhere before then.
+- **Config duplication found, not yet fixed**: `config/samples.yaml`'s top-level `luminosity:` map
+  has **two** `'2018':` keys (line 17: `59.8`, from Phase 2b's smhtt_ul `DrawLumi()` plotting
+  value; line 24: `59.83`, from Phase 2a's production-side value, matching smhtt_ul's live
+  `lumi_weight()`) — YAML silently keeps only the last one (`59.83`), so the `59.8` entry is dead
+  and the duplication is confusing, not incorrect (the surviving value, `59.83`, is the one both
+  `get_luminosity()` call sites already correctly use, confirmed against smhtt_ul's live
+  `lumi_weight()` for era `"2018"` in this session's own file read). Fix (delete the dead `59.8`
+  duplicate) is low-risk and still open at this checkpoint — flagged here in case whoever resumes
+  gets there before I do.
+- **`trg_wgt_single_mu24ormu27` (TauKITFlow, 2018/mt) vs. smhtt_ul's piecewise
+  `((pt_1>=25 && pt_1<28)* trg_wgt_single_mu24) + ((pt_1>28)* trg_wgt_single_mu27)` (live
+  checkout) — not yet numerically cross-checked against each other.** Both branches are confirmed
+  present in the real ntuples (`trg_wgt_single_mu24ormu27`, `trg_wgt_single_mu24`,
+  `trg_wgt_single_mu27` all exist). These may be the same physical quantity expressed two ways (a
+  precomputed OR-branch vs. a manually-reconstructed piecewise formula) or may differ at the
+  boundary/normalization level — not resolved yet, flagged as a candidate discrepancy source for
+  the eventual bin-by-bin comparison to either confirm-clean or root-cause.
+
+### Environment notes for whoever resumes
+
+- Legacy scratch copy lives outside the repo (session scratchpad,
+  `smhtt_ul_patched/`, rsync'd from `/work/sgiappic/smhtt_ul` minus `output/`/`validation_database/`/
+  `logs/`) — re-create it (rsync + the three patches above) if it's gone; do **not** apply these
+  patches to the real `/work/sgiappic/smhtt_ul` checkout.
+- Legacy environment: LCG_106 (`source /cvmfs/sft.cern.ch/lcg/views/LCG_106/x86_64-el9-gcc13-opt/setup.sh`),
+  matching `smhtt_ul/utils/setup_root.sh`'s `portal1` branch. TauKITFlow environment: `taukiktflow`
+  conda env, `PYTHONPATH` including this worktree root + `TauFakeFactors/` (symlinked in from the
+  main checkout for the session, per the documented worktree-submodule-gap workaround — **removed
+  and restored to empty directories before every commit**, confirmed via `git status --short`
+  showing no submodule-pointer changes).
+- Both frameworks' 2018/mt commands now need `--mt-friend-directory
+  /store/user/jvoss/CROWN/ntuples/SFs_EMB_Run2_v15nanoAOD_29_06_26/CROWNFriends/xsec` (finding #2
+  above) in addition to `--directory .../CROWNRun`.
