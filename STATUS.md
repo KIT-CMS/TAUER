@@ -1475,6 +1475,143 @@ the real xrootd shape-production run (`voms-proxy-info`).
   matching Phase 3's own single-combination validation depth; nothing in
   `run_gof.sh`/`run_impacts.sh` is hardcoded to `m_vis`/`mt`/`2024` specifically.
 
+## Phase 4b — Close the `stxs_stage0_run3` (Run3 DNN) `DNN_CLASS_MAPPING` gap (Blocker #3)
+
+Status: **DONE at the config + datacard-construction level.** The
+`NotImplementedError` that `combine_datacards/categories.py`'s `stxs_stage0_run3`
+path raised is gone; `make_datacards.py --categories stxs_stage0_run3` now
+builds a real, valid 7-category Combine datacard end-to-end (validated below).
+The remaining piece — real DNN-scored *physics content* — is a genuinely larger,
+separate gap (no DNN-score friend trees exist yet); see "honest boundary" below.
+Blocker #3 is updated to **PARTIALLY RESOLVED** accordingly.
+
+### Where the `is_signal` ground truth came from
+
+smhtt_ul is checked out on branch **`77af7d0` ("nn, combine")** — ahead of what
+earlier phases looked at — and its `config/shapes/category_selection.py` now
+contains a real, current `DNN_CLASS_MAPPING` (the single source of truth
+consumed by *its own* `produce_shapes.py`/`plot_shapes_control.py`). In it, the
+two Higgs production-mode classes are the only signal classes:
+- `ggh` (index 0) → `is_signal: True`
+- `vbf` (index 1) → `is_signal: True`
+- `dyjets_tt` (DY→ττ), `dyjets_ll` (DY→ll), `jetFakes`, `ttbar`, `diboson` →
+  all `is_signal: False` (background / control regions).
+
+It also defines `et` (same 7-class scheme as its `mt`) and `tt` (a 5-class
+scheme: `ggh`/`vbf`/`dyjets_tt`/`jetFakes`/`bkg_rest`) — but under **smhtt_ul's
+own class names**, which do **not** match TauKITFlow's existing
+`category_mapping` names (`ggh`/`qqh`/`ztt`/`ff`/`zll`/`tt`/`misc`, mt only).
+
+### What was built, and the reconciliation decision
+
+`config/shapes/category_selection.py` now defines **`DNN_CLASS_MAPPING`** in the
+exact shape `combine_datacards/categories.py` expects
+(`{channel: {name: {"index": int, "is_signal": bool}}}`). Two decisions,
+mirroring Phase 2d's "follow TauKITFlow's naming where it's correct, pull the
+*semantics* from legacy" rule:
+1. **Single-sourced off the existing `category_mapping`** (a dict comprehension,
+   no names/indices duplicated). TauKITFlow's own `mt` class names + DNN
+   output-class indices are kept verbatim (they are what TauKITFlow's DNN
+   categorization branch `mt_max_index` actually selects on); only the new
+   `is_signal` field is added, via a `SIGNAL_CLASSES = {"ggh", "qqh"}` set
+   (`qqh` == legacy `vbf`) taken straight from the legacy ground truth above.
+   Result for `mt`: `ggh`(0)/`qqh`(1) signal; `ztt`(2)/`ff`(3)/`zll`(4)/`tt`(5)/
+   `misc`(6) background — physically exactly the legacy split.
+2. **`mt` only, on purpose.** `et`/`tt` were *not* added: doing so would mean
+   mixing two naming schemes across channels (TauKITFlow names for `mt`, legacy
+   `dyjets_*`/`jetFakes`/`ttbar`/`diboson` names for `et`/`tt`) with no
+   TauKITFlow-side `category_mapping` to reconcile against, and `mt` is the only
+   channel validated end-to-end anywhere in this rework. Documented inline in
+   `category_selection.py`; deferred until `category_mapping` itself grows those
+   channels. (Noted, not swept under the rug — this is a naming-scheme boundary,
+   not laziness.)
+
+**Also fixed (would otherwise have been a false-positive re-block):**
+`config/shapes/category_selection.py` imported `ntuple_processor` unconditionally
+at module top. The CMSSW/`cmsenv` datacard session has no `ntuple_processor`, so
+`categories.py`'s `from config.shapes.category_selection import DNN_CLASS_MAPPING`
+would have raised `ImportError` → mis-caught as the very `NotImplementedError`
+we're closing. Guarded the import in `try/except` (mirroring smhtt_ul's own
+file) and skip only the production-side `categorization` build when it's absent;
+`DNN_CLASS_MAPPING` stays importable with or without `ntuple_processor`.
+Confirmed both ways (bare `python3` and under `cmsenv`).
+
+### Real end-to-end validation (structurally-faithful synthetic shapes)
+
+Environment: CMSSW_15_0_2 via `utils/setup_cmssw.sh` (`cmsenv`), with
+`PYTHONPATH` = repo root + `TauFakeFactors/` (the `CustomLogging` package lives
+in that submodule, exactly as `datacards/produce_datacard.sh` sets it; the
+worktree's own submodule is unpopulated, so the main checkout's
+`/work/sgiappic/TauKITFlow/TauFakeFactors` was used read-only for the run).
+
+Built 7 structurally-faithful synthetic per-category synced files — the same
+honestly-labeled synthetic approach Phase 2d used, **not** fabricated "real"
+data — one per DNN class, matching exactly what
+`shapes/convert_to_synced_shapes.py` emits and what `make_datacards.py`'s
+`stxs_stage0_run3` branch consumes:
+`synced_shapes-2024-mt-synthetic-dnn/2024-mt-synced-{ggh,qqh,ztt,ff,zll,tt,misc}.root`,
+each with a `TDirectory mt_<cat>` containing `ZL, TTL, VVL, EMB, jetFakes`
+(= `get_backgrounds("mt", embedding=True, jetfakes=True)`), `ggH_htt125,
+qqH_htt125` (= `get_signals("stxs_stage0")` @ m=125), `data_obs`, plus
+`CMS_PileUp` Up/Down (MC processes) and `CMS_ff_total_sub_syst_mt_2024` Up/Down
+(jetFakes) shape templates to exercise shape-systematic attachment in this path.
+
+`python3 combine_datacards/make_datacards.py --era 2024 --channels mt
+--categories stxs_stage0_run3 --stxs-signals stxs_stage0 --input-folder <scratch>
+--ntuple-tag synthetic --tag dnn --embedding True --jetfakes True
+--real-data False --systematics True --bbb True --convert-shapes-to-lnN False
+--rebinning-strategy none` produced, **with no `NotImplementedError` and no
+errors**:
+- **7 per-category datacards** `htt_mt_{ggh,qqh,ztt,ff,zll,tt,misc}_2024.txt` +
+  `common/htt_input_2024.root`, one bin each (`imax 1`, `jmax 6`).
+- Each card's process block is correct: `ggH_htt`/`qqH_htt` as signal
+  (process id `-1`/`0`), `ZL/TTL/VVL/EMB/jetFakes` as backgrounds (`1..5`).
+- **Both shape systematics survived and attached** in the DNN path
+  (`CMS_PileUp` on MC, `CMS_ff_total_sub_syst_mt_2024` on jetFakes), alongside
+  the expected lnN priors — confirming the DNN path exercises the same
+  systematics/filtering machinery Phase 3/4 validated for `gof`.
+- `combineCards.py` combined them into `mt/combined.txt`: **`imax 7`** (all 7
+  DNN bins), **`jmax 6`**, **`kmax 14`** nuisances — the signal categories
+  (`ggh`, `qqh`) ordered first, background/control categories after, exactly as
+  `get_categories(stxs_stage0_run3)` returns.
+- **`text2workspace.py combined.txt -m 125`** ran to completion (exit 0),
+  producing a valid 79 KB RooWorkspace with per-bin autoMCStats — i.e. the
+  combined DNN datacard is genuinely valid Combine input, not just
+  syntactically well-formed text.
+
+### Honest boundary — what is NOT yet validated (the real, larger remaining gap)
+
+**Real DNN-scored physics content does not exist yet, and this slice did not
+fabricate it.** TauKITFlow's DNN categorization (`category_selection.py`'s
+`categorization`) selects on friend-tree branches `{channel}_max_index` /
+`{channel}_max_score`, supplied via `--*-friend-directory`. But:
+- `friends/build_friend_tree.py` (the only friend producer in the repo) writes
+  **only normalization-weight branches** (`numberGeneratedEventsWeight`,
+  `crossSectionPerEventWeight`, `negative_events_fraction`) — **no DNN-score
+  branch at all.** There is no DNN-inference/score friend producer in TauKITFlow.
+- There is also an **unreconciled branch-name divergence**: TauKITFlow expects
+  `{channel}_max_index`/`{channel}_max_score`, whereas smhtt_ul's current
+  (`77af7d0`) NN code emits `nn_predicted_class`/`nn_predicted_max_value`.
+
+So producing a *real* 2024/mt DNN-scored shape file needs, as a separate and
+materially larger future slice: (a) a DNN-inference step + score friend-tree
+producer, (b) reconciling that branch-naming, (c) then
+`produce_shapes.py` (default, DNN categorization) → `convert_to_synced_shapes.py`
+→ this datacard path with real templates. That's a distinct piece of work with
+its own physics validation, not something closeable by config alone. **What this
+slice closes is precisely the config + datacard-construction gap** (Blocker #3),
+validated with faithful synthetic shapes — the boundary the task anticipated in
+its point 4.
+
+### Files changed
+
+- `config/shapes/category_selection.py` — added `SIGNAL_CLASSES` +
+  `DNN_CLASS_MAPPING` (single-sourced off `category_mapping`, `is_signal` from
+  legacy `77af7d0`); guarded the `ntuple_processor` import so `DNN_CLASS_MAPPING`
+  imports cleanly under `cmsenv`. No changes to `combine_datacards/` were needed
+  — `categories.py`'s `stxs_stage0_run3` path already consumed this dict; it just
+  had nothing to consume before.
+
 ## Blockers
 
 Note: none of the below block Phase 2a specifically — see "Not done / explicitly out
@@ -1511,6 +1648,17 @@ of scope" under Phase 2a for items deliberately deferred in that slice.
    "Goal 2" section. The `stxs_stage0_run3` (DNN) categorization path still
    additionally needs Blocker #3 (`DNN_CLASS_MAPPING`) closed before it can use
    this converter end-to-end; the `gof` path (what Phase 3 validated) does not.
-3. **`config/shapes/category_selection.py` lacks `DNN_CLASS_MAPPING`** (see
-   Phase 2d above) — blocks `--categories stxs_stage0_run3` specifically;
-   `gof`/`stxs_stage0` are unaffected.
+3. **PARTIALLY RESOLVED by Phase 4b.** Was: "`config/shapes/category_selection.py`
+   lacks `DNN_CLASS_MAPPING`" — blocked `--categories stxs_stage0_run3`. **Config
+   + datacard-construction half is now closed:** `DNN_CLASS_MAPPING` is defined
+   (single-sourced off `category_mapping`, `is_signal` from smhtt_ul `77af7d0`),
+   the `NotImplementedError` is gone, and `make_datacards.py --categories
+   stxs_stage0_run3` builds a real 7-category datacard + valid workspace (see
+   Phase 4b for numbers). **Still open — a distinct, larger gap:** no real
+   DNN-scored shapes exist yet, because TauKITFlow has no DNN-score friend-tree
+   producer (`friends/build_friend_tree.py` writes only normalization weights)
+   and the friend-branch names are unreconciled with smhtt_ul
+   (`{channel}_max_index/max_score` vs `nn_predicted_class/nn_predicted_max_value`).
+   Full physics-content validation of this path is a future slice (DNN inference
+   + score friends + branch reconciliation), not a config gap. `gof`/`stxs_stage0`
+   remain unaffected either way.
