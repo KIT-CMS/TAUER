@@ -2249,3 +2249,163 @@ restored to empty placeholder directories before this final commit (confirmed vi
 Committed to branch `phase5.2-config-cleanup` in this worktree (two commits: the structural
 move/reconciliation, and this STATUS.md write-up). Not pushed, no force operations, no destructive
 git commands used, per the task's git-safety instructions.
+
+## Phase 6c — Remove law from the training setup; local + condor workflows are plain Python
+
+Status: **DONE.** Branch `phase6c-remove-law`, own worktree, scoped to `trainings/`, `condor/`, and
+`run.sh` only (no touches to `shapes/selection/*`, `config/*`, TauFakeFactors, or `ntuple_processor`,
+per the task's explicit scope note).
+
+### Finding #1 (corrects the task's premise): `trainings/create_training_dataset.py` never used law
+
+The addendum-plan punch list (and the task instructions handed to this slice) describe
+`trainings/create_training_dataset.py` as "a local law.Task graph calling subprocess.run directly."
+That description does not match this repo's actual history: `git log --all --oneline --
+trainings/create_training_dataset.py` shows exactly **one** commit ever touched this file — the
+baseline import commit — and the file has never contained `import law`/`from law` or any
+`subprocess.run` call. It is, and always has been, a single plain-Python script: `argparse` CLI,
+sequential `for` loops over `Iterate.subprocesses(config)`, direct pandas/ROOT calls. Grepping the
+whole repo confirms `law`/`luigi` appear in exactly three non-submodule files: `run.sh` (real usage,
+see below), and `condor/common.py`/`condor/__init__.py` (prose in docstrings/comments explaining the
+Phase 2c law-vs-standalone-condor decision, no executable dependency).
+
+This means the description in the task setup conflated `create_training_dataset.py` (the top-level
+dataset-prep step TauKITFlow owns) with `trainings/uncertainty-aware-training/`'s own
+`_law_workflow_ff.py`/`_law_CENNT_workflow.py` (the NN-training-loop submodule, which *does* use
+`law.Task` subclasses calling `subprocess.run` — Phase 2c's docstring in `condor/common.py`
+describes exactly that file, correctly, as living inside the submodule). Recorded here explicitly
+rather than silently "fixed" a problem that didn't exist in the file the task named.
+
+### What this means items 1/2 of the task reduce to
+
+- **Item 1 ("replace the law.Task graph in `create_training_dataset.py` with plain Python doing
+  direct condor submission")**: the plain-Python part was already true (see Finding #1), and the
+  direct-condor submission part was already built in Phase 2c (`condor/submit_training.py` — one
+  job per (era, channel), slices a master YAML, shells out to `condor_submit`, no law/luigi
+  anywhere). No code changes were needed to satisfy this item; it was already done by a prior phase.
+  Re-validated it still works (see Validation below) rather than taking that on faith.
+- **Item 2 ("rewrite the local (non-condor) workflow to not use law")**: also already true structurally
+  (`python trainings/create_training_dataset.py --config ...` is itself the plain-Python local
+  workflow, no scheduler). What was missing was a discoverable `run.sh` entry point for it — every
+  other pipeline stage (`SHAPES`, `PLOT`, `TRAIN-SHAPES`, `CONFIGS`, ...) has one, but the dataset-prep
+  step didn't. **Added `run.sh`'s new `TRAIN-DATASET` mode** (plain bash case-block, same pattern as
+  every other mode in this file — no new bash *tooling*, just one more branch in the existing
+  dispatcher): `conda activate taukiktflow` (no `source utils/setup_root.sh`, deliberately — the
+  Phase 2c PYTHONHOME/`init_fs_encoding` crash note applies here too, so this mode follows the
+  conda-only pattern `condor/common.py`'s wrapper already uses) then
+  `python trainings/create_training_dataset.py --config "$TRAIN_CONFIG" --base-dataset-directory
+  "$BASE_DATASET_DIR" [--common-setup-config "$COMMON_SETUP_CONFIG"] "$@"`. New env vars documented
+  in the usage block: `TRAIN_CONFIG` (required), `BASE_DATASET_DIR` (default
+  `/ceph/$USER/smhtt_ul_new/training_datasets`, matching the script's own Python default),
+  `COMMON_SETUP_CONFIG` (optional).
+
+### Submodule-boundary decision: `trainings/uncertainty-aware-training/`'s `TRAIN` mode is left untouched
+
+Per the task's explicit instruction to check whether TauKITFlow's own wrapping code needs to touch
+law here before considering any submodule-internal change: `run.sh`'s `TRAIN` mode (the *actual* NN
+training loop, as opposed to the dataset-prep step above) does invoke the `law` CLI directly —
+`cd trainings/uncertainty-aware-training && law index -v` and `law run "$TRAIN_TASK" --workers ...
+--local-scheduler --version ... --cuda-device ... --dataset-directory=... --base-config-file=...`.
+This is real, and grep alone doesn't clear it (it's a CLI shell-out, not a Python import), so it
+gets its own explicit call per the task's instructions:
+
+- **Decision: left untouched, submodule internals not modified.** Reasoning:
+  - `run.sh`'s `TRAIN` block contains zero task-graph/orchestration *logic* of its own — no
+    `requires()`/`output()`/dependency wiring, no retry/skip-if-exists semantics. It only forwards
+    user-supplied parameters (`$TRAIN_TASK`, `$CUDA_DEVICE`, `$DATASET_DIR`, `$UAT_CONFIG_DIR`,
+    `$CHANNELS`) as CLI arguments to the submodule's own `law run <task>` entry point. Structurally
+    this is identical to how the `PRESEL`/`FF`/`FF-CORR` modes a few lines above shell out to
+    TauFakeFactors' own `preselection.py`/`ff_calculation.py`/`ff_corrections.py` CLIs — TauKITFlow
+    treats each submodule's chosen CLI as an opaque external command, regardless of what that
+    submodule built the CLI on top of (argparse for TauFakeFactors, law/luigi for
+    uncertainty-aware-training). The task-graph dependency logic (`RunAllCENNTConfusionMatrixWorkflow`
+    and whatever `requires()` chain it expands into across CENNT confusion-matrix experiments per
+    channel) is entirely defined inside `trainings/uncertainty-aware-training/`'s own
+    `_law_workflow_ff.py`/`_law_CENNT_workflow.py`/`law.cfg` — code this slice does not own and, per
+    the framework's "modify submodule internals only as a last resort" philosophy (same standard
+    Phase 1's CROWN-preselection call and Phase 2c's original law decision both applied), should not
+    reimplement in TauKITFlow just to avoid the word "law" appearing in a shell-out.
+  - Removing law here for real would mean either (a) rewriting the submodule's task-dependency graph
+    from scratch inside TauKITFlow (duplicating, not removing, complexity — and risking silently
+    changing which training steps run in what order), or (b) modifying the submodule itself to
+    expose a non-law entry point — both are last-resort moves the task's own instructions say to
+    avoid unless genuinely necessary, and neither is necessary here since `run.sh` itself carries no
+    law-specific logic beyond the one CLI invocation.
+  - Practically, this submodule isn't even checked out in this worktree (confirmed:
+    `trainings/uncertainty-aware-training` is gitlink-only, mode `160000`, pointing at
+    `3ea763aed9256813012ad4b050d5c672522ed4c9`, with an empty placeholder directory on disk and *no*
+    entry in `.gitmodules` — same "symlink in for the session, restore to empty before commit"
+    pattern already documented for `TauFakeFactors`/`ntuple_processor` in earlier phases), so its
+    internals could not be safely inspected or modified from here even if that were the right call.
+  - Documented this decision in `run.sh` itself (a comment block directly above the `TRAIN` case),
+    not just in STATUS.md, so the next person reading `run.sh` sees the reasoning in place rather
+    than having to cross-reference this file.
+- This mirrors Phase 2c's identical prior call ("`trainings/uncertainty-aware-training/`'s law setup
+  is untouched") — Phase 6c reaffirms it rather than reopening it, now with the `run.sh`-level
+  shell-out explicitly considered (Phase 2c's writeup focused on the condor-submission angle, not on
+  whether `run.sh`'s existing `TRAIN` mode itself counted as "TauKITFlow depending on law").
+
+### Validation performed
+
+- `grep -rn "import law\|from law" trainings/` (this worktree, submodule dir is the empty
+  placeholder) → **zero matches**. `grep -n "\blaw\b" run.sh` → matches only inside the `TRAIN` mode's
+  code/comments and its own help text (all accounted for above); no other file under `trainings/` or
+  `condor/` contains executable law usage (`condor/common.py`/`condor/__init__.py` mentions are
+  docstring prose only, unchanged from Phase 2c).
+- `bash -n run.sh` → syntax OK.
+- `python3 -c "import ast; ast.parse(...)"` on `trainings/create_training_dataset.py` and
+  `condor/submit_training.py` → both parse cleanly.
+- Real (not simulated) `condor_submit -dry-run` round-trip, `taukiktflow` conda env, TauFakeFactors
+  symlinked in for the session only (restored to an empty placeholder directory before this commit,
+  confirmed via `git status --short` showing no submodule-pointer diff): built a one-job plan via
+  `condor/submit_training.py --master-config <tiny mt/2024/ztt config> --eras 2024 --channels mt
+  --base-dataset-directory <scratch dir> --tag phase6c-validation --dry-run` → produced a
+  well-formed classad (`Arguments="--config .../mt_2024.yaml --base-dataset-directory ..."`,
+  `JobUniverse=5`, correct `Requirements=`/`AccountingGroup=` fields) with no parse errors — confirms
+  Phase 2c's condor path for this stage still works unmodified.
+- Real end-to-end wrapper execution (clean shell, `env -i` with only `HOME`/`PATH`/`USER` set, to
+  catch environment bugs a dry-run can't see, same method Phase 2c used): ran the generated
+  `condor/run/training/phase6c-validation/wrapper.sh --help`. Ran cleanly through `conda activate
+  taukiktflow` → real ROOT import (`Successfully loaded custom styles from ~/.rootlogon.C` messages,
+  i.e. ROOT genuinely initialized) → `create_training_dataset.py`'s argparse `--help` output, rc=0,
+  no tracebacks. (First attempt with a fully-empty `env -i`, no `USER`, hit a pre-existing
+  `KeyError: 'USER'` in the script's own `--base-dataset-directory` default
+  [`f"/ceph/{os.environ['USER']}/..."`] — not a law-removal bug, just an artifact of the artificially
+  bare test shell; real condor jobs and real interactive shells always have `USER` set, so this
+  wasn't chased further, noted here only for completeness.)
+- Generated condor run-directory (`condor/run/training/phase6c-validation/`) removed after
+  validation, and the `TauFakeFactors` symlink used for the session restored to an empty directory
+  before committing — `git status --short` shows only `run.sh` modified, no submodule-pointer or
+  stray-file noise.
+
+### Files changed
+
+- `run.sh` — added `TRAIN-DATASET` mode (plain-Python local entry point for
+  `trainings/create_training_dataset.py`, no law); added a documentation comment above the existing
+  `TRAIN` mode recording the submodule-boundary decision; updated the mode list (header comment +
+  `*)` usage block) and env-var help text for both.
+- No changes to `trainings/create_training_dataset.py`, `condor/submit_training.py`,
+  `condor/common.py`, or any file under `trainings/uncertainty-aware-training/` — none were
+  necessary (see Findings above).
+
+### What was deliberately left as-is / not chased
+
+- `trainings/uncertainty-aware-training/`'s law-based task graph (submodule internals) — see the
+  submodule-boundary decision above.
+- The residual item Phase 5.2 flagged for this slice to "naturally revisit" (whether training's
+  external per-run `--config` master YAML's `subprocess_dict[Keys.CUT]`/`[Keys.WEIGHT]` column-name
+  references are built by re-authoring cut logic somewhere in `trainings/`, rather than referencing
+  already-materialised columns) — traced one level further this time:
+  `trainings/src/dataset_manipulation.py::nominal_weight_and_cut` reads `subprocess_dict[Keys.NOMINAL][Keys.WEIGHT]`/`[Keys.CUT]`
+  as **column-name strings looked up directly in the already-loaded `subprocess_df`**
+  (`df[...] = self.subprocess_df[weight].astype(np.float32).values` — a plain column select, not an
+  expression string passed to `ROOT.RDataFrame.Filter`/`.Define`), confirming Phase 5.2's earlier
+  read: this is data selection, not cut-logic re-authoring, at least at this layer. Where those named
+  columns are first written (upstream, at the preselection/CROWN-friend stage) was still not traced
+  end-to-end — that's a physics-adjacent, potentially multi-file trace through `shapes/preselect.py`
+  and/or TauFakeFactors' preselection output columns, out of scope for a law-removal slice and
+  explicitly excluded by this task's own scope note (item 9: no touches to `shapes/selection/*` or
+  TauFakeFactors internals). Left as a residual for a future slice, same as Phase 5.2 flagged it.
+
+Committed to branch `phase6c-remove-law` in its own worktree. Not pushed, no force operations, no
+destructive git commands used.
