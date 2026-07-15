@@ -45,7 +45,11 @@ OUTPUT_FOLDER="${FITDIR}/output_${ANALYSIS}"
 # combine_datacards/ and config/ need to be importable -- run from the repo root
 # (this script is expected to be invoked as ./datacards/produce_datacard.sh from
 # the TauKITFlow repo root, same convention as before).
-export PYTHONPATH="$(pwd):${PYTHONPATH}"
+# TauFakeFactors must also be on PYTHONPATH: config/logging_setup_configs.py
+# imports the CustomLogging package, which only lives inside the TauFakeFactors
+# submodule (Phase 4 finding -- this was untested under CMSSW's own Python
+# until Phase 4's real run hit it; same fix as run.sh's shape-production path).
+export PYTHONPATH="$(pwd):$(pwd)/TauFakeFactors:${PYTHONPATH}"
 
 python3 combine_datacards/make_datacards.py \
     --era="${ERA}" \

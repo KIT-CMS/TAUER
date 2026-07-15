@@ -11,6 +11,18 @@ export SCRAM_ARCH=${SCRAM_ARCH:-el9_amd64_gcc12}
 export VO_CMS_SW_DIR=/cvmfs/cms.cern.ch
 source $VO_CMS_SW_DIR/cmsset_default.sh
 
+# Phase 4 fix: a user-site numpy (~/.local/lib/python3.9/site-packages, picked
+# up because Python's user-site is on sys.path by default even inside cmsenv)
+# shadows CMSSW's own bundled numpy (CVMFS py3-numpy 1.24.3). CVMFS's pandas is
+# a compiled extension built against that bundled numpy's ABI, so importing
+# the wrong numpy first breaks it at import time:
+#   ValueError: numpy.dtype size changed, may indicate binary incompatibility.
+#   Expected 96 from C header, got 88 from PyObject
+# which in turn crashes text2workspace.py (HiggsAnalysis.CombinedLimit.ShapeTools
+# imports pandas). Not a CMSSW bug -- fixed by excluding the user site-packages
+# directory for the lifetime of this CMSSW shell.
+export PYTHONNOUSERSITE=1
+
 CMSSW_BASE_DIR=${CMSSW_BASE_DIR:-/ceph/sgiappic}
 CMSSW_RELEASE=${CMSSW_RELEASE:-CMSSW_15_0_2}
 

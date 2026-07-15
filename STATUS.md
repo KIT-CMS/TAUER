@@ -1209,7 +1209,271 @@ Pipeline run, using the `gof` categorization path (fully functional per Phase 2d
 
 ## Phase 4 — GoF/impacts
 
-Status: NOT STARTED.
+Status: **DONE.** Stood up and ran, for real, the standard CMS Combine
+GoodnessOfFit + Impacts workflow end-to-end against a real (non-synthetic)
+2024/mt `gof` datacard/workspace built from a fresh real shape production
+(the Phase 3 shape file itself no longer existed on disk — it was never
+committed, being large generated output — so this slice reproduced it).
+Real numbers below, not just "ran successfully."
+
+### Scope decided for this slice
+
+Per the task framing ("define this phase's scope yourself"), scoped to:
+- One real GoF test (`gof` category, 2024/mt, `m_vis` discriminant — the
+  validated Phase 2d/3 path; the DNN `stxs_stage0_run3` path stays out per
+  Blocker #3, unrelated to this phase).
+- One real Impacts run against the same workspace.
+- New CLI layer (`datacards/run_gof.sh`, `datacards/run_impacts.sh`) wired on
+  top of the pre-existing `produce_gof_datacard.sh`/`produce_gof_workspace.sh`,
+  which needed real fixes (below) — they had never actually been run against
+  a real synced shape file before this slice, only against Phase 2d's
+  hand-built synthetic one.
+- Condor submission for GoF/Impacts: **deliberately not built.** The real run
+  below took under 5 minutes wall-clock total for both GoF (300 toys) and
+  Impacts (42 nuisances) on a single 2024/mt/`gof`/`m_vis` card — nowhere near
+  the "slow, grid-shaped" case the task anticipated. A full production config
+  (all discriminant variables, real systematic-variation shapes once produced,
+  every channel/era) would plausibly justify condor fan-out the same way
+  `condor/submit_shapes.py` etc. do (Phase 2c) — noted here as a natural
+  follow-up, not attempted speculatively.
+
+### What was found: `produce_gof_datacard.sh`/`produce_gof_workspace.sh` had never actually been run for real
+
+Both existed since Phase 2d/rewiring but were validated there only against a
+**hand-built synthetic shape file** (Phase 2d's own note: "no real physics
+content"). Running them for real in this slice surfaced three real bugs, none
+previously visible because nothing had exercised these two scripts against a
+real synced shape file or under CMSSW's own Python before now:
+
+1. **`produce_gof_datacard.sh`'s `--gof-category-name` was wired to a bare
+   `"gof"`/`$TAG` value that never matches a real synced file.**
+   `shapes/convert_to_synced_shapes.py --gof` writes a TDirectory named
+   `"{channel}_{variable}"` (e.g. `mt_m_vis`) — confirmed directly by listing
+   the real synced file's keys (see below) — and
+   `combine_datacards/make_datacards.py`'s `ExtractShapes("$BIN/$PROCESS")`
+   needs `--gof-category-name` to equal that exact directory name to find any
+   histograms at all. Fixed: `produce_gof_datacard.sh` now derives
+   `GOF_CATEGORY_NAME="${CHANNEL}_${VARIABLE}"` itself instead of taking an
+   opaque `TAG` argument.
+2. **`produce_gof_workspace.sh` built a `multiSignalModel` (`r_ggH`/`r_qqH`)
+   workspace**, which is wrong for both downstream steps: `combine -M
+   GoodnessOfFit --fixedSignalStrength=0` and single-POI `combineTool.py -M
+   Impacts` both expect (or work far more simply with) Combine's *default*
+   single-`r` physics model. Fixed: rewritten to call plain
+   `text2workspace.py <card> -m 125 -o ws.root` (no `-P
+   multiSignalModel`/`--PO` maps) — the standard choice for a one-bin `gof`
+   category where there's no ggH/qqH separation to preserve anyway.
+3. **`config/logging_setup_configs.py`'s `CustomLogging` import
+   (`from CustomLogging import ...`) is only satisfiable with
+   `TauFakeFactors/` on `PYTHONPATH`** — true for the `taukiktflow` conda env
+   (already fixed by `run.sh`'s `PYTHONPATH=...:${PWD}/TauFakeFactors`) but
+   this had never been fixed for the **CMSSW-side** scripts
+   (`produce_datacard.sh`/`produce_gof_datacard.sh`), which import
+   `combine_datacards/make_datacards.py` → `config.logging_setup_configs` →
+   `CustomLogging` under CMSSW's own Python. Both scripts crashed with
+   `ModuleNotFoundError: No module named 'CustomLogging'` the first time they
+   were actually run in this slice. Fixed both `export PYTHONPATH=` lines to
+   include `$(pwd)/TauFakeFactors`.
+
+### Real environment bug found and fixed: `utils/setup_cmssw.sh` numpy/pandas ABI clash
+
+`text2workspace.py` (imports `HiggsAnalysis.CombinedLimit.ShapeTools` →
+`pandas`) crashed under a freshly-sourced `utils/setup_cmssw.sh` with:
+```
+ValueError: numpy.dtype size changed, may indicate binary incompatibility.
+Expected 96 from C header, got 88 from PyObject
+```
+Root-caused directly: `python3 -c "import numpy; print(numpy.__file__)"`
+under `cmsenv` resolved to `~/.local/lib/python3.9/site-packages/numpy`
+(numpy 2.0.2, a user-site install) instead of CVMFS's bundled numpy 1.24.3 —
+Python's user-site directory is on `sys.path` by default even inside
+`cmsenv`, and CVMFS's `py3-pandas` is a compiled extension built against the
+bundled numpy's ABI, so importing the wrong numpy first breaks pandas'
+compiled `_libs` at import time. Confirmed the fix directly:
+`PYTHONNOUSERSITE=1` excludes the user site-packages directory for the shell,
+after which `import pandas` and `text2workspace.py --help` both succeed under
+`cmsenv`. Added `export PYTHONNOUSERSITE=1` to `utils/setup_cmssw.sh` itself
+(not just this session's shell) so every future CMSSW-side script sourcing it
+gets the fix automatically — this was a latent bug in the existing setup
+script that any script importing `pandas`-dependent Combine machinery
+(`text2workspace.py`, `FitDiagnostics`, ...) would have hit, not something
+specific to GoF/Impacts.
+
+### New files
+
+- **`datacards/run_gof.sh`** — orchestrates the full GoF workflow: places a
+  synced shape file at the path `make_datacards.py` expects, calls
+  `produce_gof_datacard.sh` + `produce_gof_workspace.sh`, runs `combine -M
+  GoodnessOfFit` once on real data (observed statistic) and again `N_TOYS`
+  times split across `PARALLEL` seeds (b-only, `--fixedSignalStrength=0`,
+  matching `smhtt_ul/gof_tests.sh`'s GOF mode), collects via
+  `combineTool.py -M CollectGoodnessOfFit`, and prints the observed statistic
+  + toy-based p-value (own small Python snippet, no dependency added).
+  Supports `saturated`/`KS`/`AD` algorithms (`plotGof.py` invoked for the
+  latter two, matching legacy).
+- **`datacards/run_impacts.sh`** — the standard `combineTool.py -M Impacts`
+  pipeline (`--doInitialFit` → `--doFits` per-nuisance, both `--parallel` →
+  `-o impacts.json` → `plotImpacts.py`), adapted from
+  `smhtt_ul/fitting/impacts.sh`/`gof_tests.sh`'s IMPACTS mode to TauKITFlow's
+  default single-`r` workspace (no `--redefineSignalPOIs` juggling needed —
+  exactly one POI). Prints its own top-15 nuisance-impact ranking table
+  (parses `impacts.json` directly, no new dependency).
+
+### Real validation run
+
+Environment: `taukiktflow` conda env for shape production (with
+`TauFakeFactors`/`ntuple_processor` symlinked into this worktree from the main
+checkout for the session's duration, then restored to empty dirs before
+committing — the same one-time worktree-submodule-gap workaround Phase 3
+documented, not a new issue). `utils/setup_cmssw.sh`
+(CMSSW_15_0_2/`el9_amd64_gcc12`) for the Combine side, in a separate shell
+session, per house rule. Grid proxy: valid, **150h remaining** at the time of
+the real xrootd shape-production run (`voms-proxy-info`).
+
+1. **Real shape reproduction (2024/mt, `gof`, `m_vis` only).**
+   `shapes/produce_shapes.py --era 2024 --channels mt --vs-jet-wp Medium
+   --vs-ele-wp VVLoose --apply-tauid --gof-inputs --control-plot-set m_vis
+   --xrootd --directory
+   /store/user/sgiappic/CROWN/ntuples/htt_260602_2024-25_v5/CROWNRun
+   --mt-friend-directory .../CROWNFriends/xsec/ --skip-systematic-variations
+   --no-dnn-categorization --num-processes 12 --num-threads 8` ran to
+   completion against the live 2024 CROWN production, followed by
+   `shapes/do_estimations.py -e 2024 --do-qcd` and
+   `shapes/convert_to_synced_shapes.py -e 2024 --gof -n 4`.
+   - **Bug found in the process (own driver script, not repo code):**
+     `--control-plot-set` is `nargs="+"` (space-separated), not
+     comma-separated — passing `"pt_1,pt_2,m_vis,..."` as one token made
+     `get_control_units` raise `Exception: Variable pt_1,pt_2,...,pt_vis not
+     available in control_binning` since the whole comma-joined string was
+     treated as a single (nonexistent) variable name. Not a repo bug; just a
+     footgun in this slice's own shell invocation, fixed by switching to a
+     single `m_vis` argument (sufficient for this validation; nothing stops
+     a real production run from passing multiple space-separated variables).
+   - Real synced output: `2024-mt-synced-m_vis.root`, one TDirectory
+     `mt_m_vis`, **14 real histograms**: `ZTT, ZL, ZJ, TTT, TTL, TTJ, VVT, VVL,
+     VVJ, W, ggH_htt125, qqH_htt125, ttH_htt125, VH125` + `data_obs`.
+     `data_obs` integral **1,473,179.0** — bit-identical to Phase 3's real
+     2024/mt `data#mt#Nominal#m_vis` observation, confirming this reproduction
+     drew from the same real data as Phase 3 (same live production, same
+     selection).
+2. **Real datacard + workspace.** `datacards/run_gof.sh 2024 mt m_vis
+   <synced file> saturated 300 htt_260602_2024-25_v5 0 10` built
+   `htt_mt_m_vis_2024.txt` (1 bin, real-data observation, `embedding=false
+   jetfakes=false` — same MC-only closure model Phase 3 bit-identically
+   validated) + `common/htt_input_2024.root`, combined via `combineCards.py`,
+   then `text2workspace.py` → `ws.root` (default single-`r` model,
+   **31 analysis bins**, `SetAutoMCStats` applied — confirmed via the
+   `combine` startup log listing all 31 `prop_binhtt_mt_m_vis_2024_bin*`
+   Gaussian-constrained nuisances).
+3. **Real GoF result (saturated test statistic, real data):**
+   - **Observed test statistic: 1816.9417** (`combine -M GoodnessOfFit
+     --algo=saturated --fixedSignalStrength=0`, real `data_obs`).
+   - **300 toys thrown** (10 parallel seeds x 30 toys/seed, `--toysFreq`,
+     b-only `--fixedSignalStrength=0`), collected via `combineTool.py -M
+     CollectGoodnessOfFit` into `gof_saturated.json`.
+   - **p-value = 0.0000** (0/300 toys >= observed). Read honestly, not
+     glossed over: this reflects the *reduced* background model used here
+     (MC-only, no embedding/jetFakes, `--skip-systematic-variations` shape
+     production per Phase 3's Goal 1 choice) — with essentially zero shape
+     freedom beyond `autoMCStats` and a handful of administrative `lnN`
+     priors, the model has no mechanism to absorb real data's statistical
+     fluctuations across 31 bins, so a very poor saturated-GoF p-value is the
+     *expected* outcome of this reduced setup, not a sign the GoF machinery is
+     broken — the pipeline itself (real data, real toys, real p-value
+     arithmetic) is what this phase was scoped to validate, and it did.
+     Getting a physically meaningful p-value would need the full
+     embedding+jetFakes+shape-systematics production Phase 3 explicitly
+     scoped out (see its "Not done" list) — a natural next step, not
+     re-attempted here.
+   - Total wall-clock for datacard+workspace+GoF (observed + 300 toys):
+     **~26 seconds** (`09:55:01` datacard start → `09:55:26` `gof_saturated.json`
+     written) — confirms this scale of GoF run is nowhere near
+     condor-shaped, per the scope note above.
+4. **Real Impacts result (same workspace):**
+   - **`--doInitialFit`: best-fit r = 2.993 (-1.850/+1.828, 68% CL)**
+     (`combineTool.py -M Impacts --doInitialFit --robustFit 1`, 7.3s).
+   - **`--doFits`: 42 nuisance parameters fit** (1 POI `r` + 41 others: 31
+     `autoMCStats` bin nuisances + 10 administrative `lnN`-derived
+     parameters — `BR_htt_THU`, `BR_htt_PU_alphas`, `BR_htt_PU_mq`,
+     `CMS_eff_m`, `CMS_eff_t_wp_Run2024`, `CMS_htt_tjXsec`, `CMS_htt_vvXsec`,
+     `CMS_htt_wjXsec`, `CMS_htt_zjXsec`, `lumi_13.6TeV_Run2024`,
+     `lumi_13.6TeV_correlated`), all fit successfully in parallel
+     (`--parallel 10`, 20.2s wall-clock for all 42 fits — confirms
+     `combineTool.py`'s own multiprocessing parallelism, not a new mechanism
+     built here).
+   - **`impacts_2024_mt_m_vis.json` + `impacts_2024_mt_m_vis.pdf`** produced
+     by `plotImpacts.py` (a real ranked tornado plot, 2 pages/30+12
+     parameters split, matplotlib/ROOT rendering succeeded with only expected
+     "pull could not be computed" warnings for a handful of `lnN`-only
+     nuisances with no external constraint term to plot a pull against —
+     standard Combine behavior, not an error).
+   - **Top-5 ranked nuisances by |impact on r|:**
+
+     | rank | impact | nuisance |
+     |---|---|---|
+     | 1 | 1.5709 | `prop_binhtt_mt_m_vis_2024_bin10` |
+     | 2 | 1.3202 | `prop_binhtt_mt_m_vis_2024_bin11` |
+     | 3 | 1.1442 | `prop_binhtt_mt_m_vis_2024_bin12` |
+     | 4 | 1.1386 | `prop_binhtt_mt_m_vis_2024_bin9` |
+     | 5 | 0.9147 | `prop_binhtt_mt_m_vis_2024_bin6` |
+
+     All top-ranked nuisances are `autoMCStats` bin-by-bin statistical
+     uncertainties, not any physics systematic — consistent with (not an
+     artifact of) this shape file having zero shape-type systematics
+     (`--skip-systematic-variations`, same as Goal 1's Phase 3 production):
+     with no JES/tau-ID/tau-ES templates to rank, bin-by-bin MC statistics are
+     mechanically the largest-impact nuisances left. A production run with
+     real systematic-variation shapes (Phase 3's explicitly-deferred "Not
+     done" item) would be needed to get a physics-meaningful impact ranking
+     dominated by named systematics instead.
+   - Total wall-clock, both Impacts steps: **~28 seconds**
+     (7.3s + 20.2s, collect+plot negligible).
+
+### Files changed / added
+
+- `datacards/run_gof.sh` — new. Orchestrates synced-file placement → datacard
+  → workspace → observed GoF → toys → collect → p-value.
+- `datacards/run_impacts.sh` — new. Orchestrates the standard `-M Impacts`
+  `doInitialFit`/`doFits`/collect/`plotImpacts.py` pipeline + a ranked
+  nuisance-impact summary table.
+- `datacards/produce_gof_datacard.sh` — fixed `--gof-category-name` to derive
+  `"${CHANNEL}_${VARIABLE}"` (matching `convert_to_synced_shapes.py --gof`'s
+  real TDirectory naming) instead of a bare tag that never matched any real
+  synced file; added `TauFakeFactors` to `PYTHONPATH`; added
+  `--embedding`/`--jetfakes` passthrough args (default off, matching the
+  MC-only model Phase 3 validated).
+- `datacards/produce_gof_workspace.sh` — switched from a `multiSignalModel`
+  (`r_ggH`/`r_qqH`) workspace to Combine's default single-`r` model via plain
+  `text2workspace.py`, required for `--fixedSignalStrength=0` (GoF) and
+  single-POI Impacts.
+- `datacards/produce_datacard.sh` — added `TauFakeFactors` to `PYTHONPATH`
+  (same latent CustomLogging-import gap as `produce_gof_datacard.sh`, fixed
+  for consistency even though this slice's real run only exercised the GoF
+  script).
+- `utils/setup_cmssw.sh` — added `export PYTHONNOUSERSITE=1` (real
+  numpy/pandas ABI-mismatch fix, see above).
+
+### Not done / explicitly out of scope for this slice
+
+- **Condor submission for GoF/Impacts** — deliberately not built; see scope
+  note above (real run was seconds, not condor-shaped at this scale).
+- **A physically meaningful GoF p-value / impact ranking** — needs a shape
+  production run with real systematic-variation templates and the full
+  embedding+jetFakes background model, both explicitly out of Phase 3's scope
+  too. This phase validated that the GoF/Impacts *machinery* runs correctly
+  end-to-end against real data and produces real, correctly-computed
+  statistics — not that today's reduced shape production yields a
+  publication-grade result (it doesn't, and isn't expected to).
+- **DNN (`stxs_stage0_run3`) GoF/Impacts** — still blocked on Blocker #3
+  (`DNN_CLASS_MAPPING`), same as every prior phase's datacard work.
+- **KS/AD GoF algorithms** — `run_gof.sh` supports them (mirrors
+  `smhtt_ul/gof_tests.sh`'s per-algorithm loop) but only `saturated` was run
+  for real in this slice; `--toysFreq` is only applied for `saturated` per
+  the legacy script's own convention, `--plots` for the other two.
+- **Multiple discriminant variables / channels / eras in one pass** — this
+  slice validated the mechanism on one (era, channel, variable) combination,
+  matching Phase 3's own single-combination validation depth; nothing in
+  `run_gof.sh`/`run_impacts.sh` is hardcoded to `m_vis`/`mt`/`2024` specifically.
 
 ## Blockers
 
