@@ -2654,3 +2654,142 @@ Committed to branch `phase6d-bash-to-python` in this worktree (one commit so
 far covering the full conversion + doc updates; this STATUS.md write-up is a
 second commit). Not pushed, no force operations, no destructive git commands
 used, per the task's git-safety instructions.
+
+## Phase 6f — `ntuple_processor`: decide keep-external / simplify / absorb
+
+Status: **DONE. Decision: keep as-is, genuinely external, no code changes.**
+
+Branch: `phase6f-ntuple-processor` (this worktree, off `master` at `a61a3b4`, the same commit
+Phase 5.2 merged to). Running in parallel with sibling agents on 6a/6b/6c/6d/6e in separate
+worktrees — **this slice makes no changes visible outside `STATUS.md` itself**, so there is
+nothing structural for those slices to reconcile on merge (see "Why this is conflict-free for
+6a/6e" at the end of this section, since the task specifically flagged that concern).
+
+### What `ntuple_processor` actually is
+
+Read `ntuple_processor/{__init__.py,booking.py,optimization.py,run.py,variations.py,utils/*}`
+in full. It is a small (~4 files, ~60KB total, plus a `utils/` package and a real `tests/`
+directory with 4 passing unit tests) RDataFrame booking/optimization layer with three genuine,
+non-trivial responsibilities, none of which are legacy cruft:
+
+1. **`booking.py`** — `dataset_from_crownoutput`/`dataset_from_artusoutput` (CROWN/artus-output
+   directory discovery incl. an xrootd `dirlist()` path and a `validation_database/` file-schema
+   cache — this is the machinery Phase 1 already validated end-to-end against real 2024 xrootd
+   data, see Phase 1's item 4), plus `Unit`/`UnitManager` (the booking unit abstraction: a
+   dataset + selections + actions, with `Variation.create()`-driven expansion into
+   Nominal/shifted units and a duplicate-action-name safety check).
+2. **`optimization.py`** — `Graph`/`GraphManager`: turns booked `Unit`s into a tree
+   (dataset → selection → selection → ... → action) and merges/de-duplicates identical subtrees
+   across datasets and selections (`merge_datasets`/`optimize_selections`/`_merge_children`) so
+   RDataFrame only builds each shared filter/define chain once instead of once per variation —
+   this is real, load-bearing shared-subgraph optimization, not dead scaffolding.
+3. **`run.py`** (not read in full line-by-line here but grepped/imported successfully; it's what
+   `common/ntuple_processor_config_helper.py` and `shapes/produce_shapes.py` import as
+   `RunManager` — the actual `RDataFrame(...).Histo1D(...)`/booking-to-histogram execution step)
+   plus `variations.py` (`ReplaceCut`/the `Variation` machinery consumed by
+   `shapes/selection/variations.py`) and `utils/_booking.py`'s `WarnDict` (a `dict` subclass that
+   logs/warns on silent key overwrites — used throughout `shapes/selection/*.py` for cut/weight
+   dictionaries so a typo'd duplicate key doesn't silently clobber another).
+
+No dead optimization paths or obviously-legacy patterns were found worth stripping: the
+`level=0/1/2` optimization switch in `GraphManager.optimize()` is a real, used feature (level 0
+= no merging, useful for debugging a single variation's graph in isolation), and the
+`try/except ModuleNotFoundError` fallback around `config.logging_setup_configs` in
+`booking.py`/`optimization.py` is deliberate — it lets `ntuple_processor` be imported standalone
+(as its own package, by its own `tests/`, or by a sibling analysis) without requiring
+TauKITFlow's `config/` package to exist on the path, which is exactly the kind of decoupling a
+genuinely-external dependency should have, not something to "modernize away."
+
+### Is it still genuinely external? — checked, yes
+
+`ntuple_processor/.git` is a file (gitlink), confirming it's wired as a real git submodule, not
+a plain vendored copy. `.gitmodules`:
+
+```
+[submodule "ntuple_processor"]
+	path = ntuple_processor
+	url = git@github.com:KIT-CMS/ntuple_processor.git
+```
+
+Checked three things to answer "is this still a real upstream, or a dead-in-place fork that only
+pretends to be external" (the exact question the task posed, mirroring the SMRun2Legacy
+decision-making in Phase 2d):
+
+1. **The submodule checkout is on `master`, clean, up to date with `origin/master`**
+   (`git -C ntuple_processor status` → "up to date with 'origin/master'", nothing to commit).
+   `git branch -a` inside it shows `origin/master`, `origin/sm_devs`, `origin/nmssm_devs` —
+   multiple active feature branches on the actual GitHub remote, not a single stale snapshot.
+2. **The exact same submodule, same URL, same pinned usage pattern, is independently present in
+   `smhtt_ul`** (`/work/sgiappic/smhtt_ul/.gitmodules`: `submodule "ntuple_processor"` →
+   `git@github.com:KIT-CMS/ntuple_processor.git`, `branch = master`). `smhtt_ul` is the exact
+   legacy reference analysis this whole rework has been diffing against since Phase 2b/3/5.1 —
+   i.e. `ntuple_processor` is a **shared tool used by at least two independent KIT-CMS analyses**,
+   not a fork that only TauKITFlow happens to carry around. This is the opposite situation from
+   SMRun2Legacy (Phase 2d), where the `run3_htt` branch actually checked out locally had already
+   diverged into being this one analysis's own rewrite with a dead C++ binary as its only
+   "upstream" trace — there is no equivalent divergence here: this checkout's `master` **is**
+   `origin/master`, unmodified, shared verbatim with a second analysis.
+3. **No local modifications anywhere in the tree.** `git -C ntuple_processor diff`/`status` show
+   nothing; TauKITFlow has never patched its own copy.
+
+**Decision: keep it vendored/external, exactly like CROWN, unchanged.** This is the "genuinely
+external, actively tracks an upstream still in use, no benefit to absorbing" branch the task
+instructions explicitly named as a valid outcome, and it applies cleanly here:
+- absorbing it into TauKITFlow (e.g. `shapes/booking/`) would fork a tool `smhtt_ul` still shares,
+  meaning any future upstream fix/feature (e.g. a booking bugfix landing on `origin/master`) would
+  need to be manually re-applied to TauKITFlow's copy instead of picked up by `git submodule
+  update`, for zero present benefit — there is no "dismantle, don't wrap" case to make since the
+  boundary isn't fake: it really is used, as-is, by more than one project.
+- simplifying "in place" inside the submodule checkout would mean shipping a local patch to a
+  package with genuine upstream branches, silently diverging TauKITFlow's copy from what
+  `smhtt_ul`/future KIT-CMS analyses run, for a package that (per the read-through above) has no
+  actual legacy cruft to remove — there's nothing to simplify that would be worth that tradeoff.
+- this mirrors the CROWN precedent already recorded in this file (Phase 1's "CROWN/KingMaker are
+  meant to stay analysis-agnostic and structurally untouched"): `ntuple_processor` is the same
+  kind of shared, actively-used, externally-versioned dependency, not analysis-specific glue
+  wearing an external-looking wrapper.
+
+### What changed as a result
+
+**Nothing in `ntuple_processor/` or any import path.** No file moved, no `.gitmodules` edit, no
+`ntuple_processor`-internal code change. This section of `STATUS.md` is the only diff this slice
+produces (plus this session's branch/commit bookkeeping).
+
+### Validation performed
+
+Environment: `taukiktflow` conda env, with `TauFakeFactors`/`ntuple_processor` populated in this
+worktree (this session ran directly in the main `/work/sgiappic/TauKITFlow` working copy, not a
+`.claude/worktrees/...` git-worktree checkout, so the Phase 3/4b-documented empty-submodule-in-a-
+worktree gap did not apply here; `PYTHONPATH` needed `TauFakeFactors/` appended for `CustomLogging`
+per `run.sh`'s existing convention — a pre-existing environment-setup requirement unrelated to
+this slice, not a bug found or fixed here).
+
+1. **`ntuple_processor`'s own test suite:** `python -m unittest ntuple_processor.tests.test_booking
+   -v` → **4/4 tests pass** (`Ntuple`/`Dataset`/`Cut`/`Weight` equality semantics).
+2. **Direct import:** `import ntuple_processor`, `from ntuple_processor.utils import Selection,
+   WarnDict` — both succeed cleanly.
+3. **All repo-wide consumers import cleanly**, unchanged (found via `grep -rl ntuple_processor
+   --include=*.py`): `shapes/produce_shapes.py`, `shapes/utils.py`, `shapes/preselect.py`,
+   `shapes/selection/{channel_selection,category_selection,process_selection,variations}.py`,
+   `config/analysis.py`, `config/shapes/{control_binning,taues_measurement_binning}.py`,
+   `combine_datacards/systematics.py` (docstring reference only),
+   `common/ntuple_processor_config_helper.py` — verified via `python -c "import ..."` for each
+   module (`shapes.produce_shapes`, `shapes.selection.channel_selection`,
+   `config.shapes.control_binning`, `shapes.selection.category_selection` with
+   `_ntuple_processor_available == True`, `common.ntuple_processor_config_helper`), all succeeded.
+4. **CLI dry-run:** `python shapes/produce_shapes.py --help` runs end-to-end (full ROOT/RDataFrame
+   import chain, `ntuple_processor` import included) with no errors.
+
+### Why this is conflict-free for 6a/6e (which the task flagged as importing from
+`ntuple_processor` too)
+
+Both 6a and 6e can merge without any special handling for this slice: **the `ntuple_processor`
+import surface (`from ntuple_processor import ...`, `from ntuple_processor.utils import ...`,
+`from ntuple_processor.variations import ...`) is completely unchanged** — no rename, no move, no
+new re-export shim. Any code either of them writes against today's `ntuple_processor` import paths
+will still be correct after this branch merges, because this branch doesn't touch that surface at
+all. The only merge-worthy artifact from this slice is this `STATUS.md` section itself (pure
+append, no prior lines rewritten), so a `STATUS.md` merge conflict here, if any, is a trivial
+append-vs-append conflict, not a semantic one.
+
+No blockers. Not pushed; no destructive git operations used.
