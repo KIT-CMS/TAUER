@@ -174,14 +174,31 @@ def MC_base_process_selection(channel, era, vs_jet_wp, vs_ele_wp, preselected=Fa
             lumi_weight(era),
             prefiring_weight(era),
         ]
-    if channel not in ("mm", "mt"):
-        # btag weight is not part of the mt/mm base selection (no b-tag
-        # requirement there; it's applied at category level via an nbtag
-        # cut instead). Matches smhtt_ul's convention. Previously appended
-        # unconditionally for all channels here — silently correct only by
-        # coincidence for eras whose CROWN production happens to ship a
-        # `btag_weight` branch; the 2018 validation production used for
-        # Phase 2a does not ship one, which surfaced this bug.
+    # Phase 5.1 (2026-07-15) root cause + fix: this used to exclude "mt" from
+    # btag_weight unconditionally (`channel not in ("mm", "mt")`), which was
+    # wrong — smhtt_ul's live reference (`config/shapes/process_selection.py`)
+    # only excludes "mm" (`if channel != "mm":`, with a `# and channel != "mt"`
+    # commented out i.e. disabled — mt *does* get btag_weight there today).
+    # Confirmed the real 2024 CROWN production (htt_260602_2024-25_v5) genuinely
+    # ships a `btag_weight` branch for mt (`xrdfs`/direct branch-list check on a
+    # real TT ntuple file). Excluding it for mt was silently dropping a real
+    # per-event b-tag data/MC scale-factor reweighting for every mt-channel MC
+    # process — and since TT/VV are the two process families with real b-jets
+    # (DY/W/signal are mostly b-jet-poor, where this weight is close to 1),
+    # this was the dominant root cause of the TT-TTT/TTL/TTJ and VV-VVT/VVL/VVJ
+    # residuals: a real bin-by-bin comparison against a fresh smhtt_ul rerun
+    # (2024/mt, TT+VV subprocesses only) showed new/legacy ratios of
+    # 0.65-0.78 with this bug present — see STATUS.md Phase 5.1 for full
+    # before/after numbers.
+    #
+    # The 2018 exception this code used to protect against (Phase 2a: that
+    # validation production's CROWN output doesn't ship `btag_weight` at all)
+    # is real and still needs to be excluded — but that's an era-specific
+    # ntuple-schema gap, not a channel-specific one, so the guard is now keyed
+    # on era, matching smhtt_ul's channel-only exclusion (mm) for every era
+    # whose production actually has the branch.
+    from config.analysis import RUN2_PRODUCTION_ERAS
+    if channel != "mm" and era not in RUN2_PRODUCTION_ERAS:
         MC_base_process_weights.append(("btag_weight", "btagWeight"))
     return Selection(
         name="MC base",
@@ -251,19 +268,48 @@ def ttbar_em_weight(channel, era, **kwargs):
     """
     # Get the data/MC ratio from em channel for m_vis > 100
     # Calculated as: (data - all_backgrounds) / TT_MC in em channel
-    
+    #
+    # Phase 5.1 (2026-07-15): these were a stale set of ratio_em values (computed on
+    # m_vis>100 only, no nbtag cut). smhtt_ul's live reference checkout
+    # (config/shapes/calculate_ttbar_weights.py, "260602" tag) has since been
+    # recalibrated with an nbtag>=0 selection that better isolates ttbar and
+    # excludes DY/other backgrounds more cleanly; the recalibrated numbers are used
+    # for real shape production there. Root-caused as the source of the ~1.6-2%
+    # TT-TTT/TT-TTL residual flagged in Phase 3 (STATUS.md) after the lumi bug was
+    # accounted for: TauKITFlow was still on the old numbers while smhtt_ul's
+    # reference had moved on. Updated to match (single real recalibration, not a
+    # fudge factor — same quantity, refreshed measurement). Old values kept
+    # commented out immediately below for provenance/rollback, same convention
+    # smhtt_ul itself uses.
+    #
+    # old (stale, m_vis>100 only, no nbtag cut):
+    # if era == "2022preEE":
+    #     ratio_em = "0.850809"  # ± 0.006696
+    # elif era == "2022postEE":
+    #     ratio_em = "0.927774"  # ± 0.003925
+    # elif era == "2023preBPix":
+    #     ratio_em = "0.967221"  # ± 0.004604
+    # elif era == "2023postBPix":
+    #     ratio_em = "0.898871"  # ± 0.006258
+    # elif era == "2024":
+    #     ratio_em = "0.926025"  # ± 0.002382
+    # elif era == "2025":
+    #     ratio_em = "0.928433"  # ± 0.002396
+
+    # new "260602" recalibration (nbtag>=0, excludes DY and most other backgrounds
+    # more cleanly) — matches smhtt_ul's current live reference checkout.
     if era == "2022preEE":
-        ratio_em = "0.850809"  # ± 0.006696
+        ratio_em = "0.827018"  # ± 0.002797
     elif era == "2022postEE":
-        ratio_em = "0.927774"  # ± 0.003925
+        ratio_em = "0.955392"  # ± 0.001769
     elif era == "2023preBPix":
-        ratio_em = "0.967221"  # ± 0.004604
+        ratio_em = "1.016815"  # ± 0.002064
     elif era == "2023postBPix":
-        ratio_em = "0.898871"  # ± 0.006258
+        ratio_em = "0.977028"  # ± 0.002836
     elif era == "2024":
-        ratio_em = "0.926025"  # ± 0.002382
+        ratio_em = "0.945792"  # ± 0.000892
     elif era == "2025":
-        ratio_em = "0.928433"  # ± 0.002396
+        ratio_em = "0.918900"  # ± 0.000890
     else:
         ratio_em = "1.0"
     

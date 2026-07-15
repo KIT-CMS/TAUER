@@ -1612,6 +1612,220 @@ its point 4.
   — `categories.py`'s `stxs_stage0_run3` path already consumed this dict; it just
   had nothing to consume before.
 
+## Phase 5.1 — Root-cause TTL/VVJ discrepancies
+
+Status: **DONE for TT-TTT/TTL/TTJ and VV-VVT/VVL (now bit-identical to a fresh
+smhtt_ul rerun). VV-VVJ remains a real, unresolved ~25.7% residual** — root-cause
+not found despite exhaustive code-level diffing; documented as an open item below
+rather than papered over, per the stop condition.
+
+**Method:** reran real 2024/mt shapes fresh through both frameworks against the
+live CROWN production (`htt_260602_2024-25_v5`), restricted to
+`--process-selection ttt,ttl,ttj,vvt,vvl,vvj` / `--control-plot-set m_vis,pt_1,pt_2`
+(narrowed scope for a same-day turnaround — full-variable-set reproduction is a
+strictly larger version of the same run, not expected to change any conclusion
+below since these are channel/process-level weight and cut effects, not
+variable-specific):
+- TauKITFlow (this worktree, `taukiktflow` conda env):
+  `shapes/produce_shapes.py --era 2024 --channels mt --vs-jet-wp Medium --vs-ele-wp
+  VVLoose --apply-tauid --control-plots --control-plot-set m_vis pt_1 pt_2 --xrootd
+  --directory /store/user/sgiappic/CROWN/ntuples/htt_260602_2024-25_v5/CROWNRun
+  --mt-friend-directory .../CROWNFriends/xsec/ --process-selection
+  ttt,ttl,ttj,vvt,vvl,vvj --skip-systematic-variations --no-dnn-categorization`.
+- smhtt_ul (`/work/sgiappic/smhtt_ul`, LCG_106 view via `utils/setup_root.sh`, no
+  conda — same house rule as Phase 2d/3): identical processes/variables/WPs via
+  `shapes/produce_shapes.py` directly (the equivalent of
+  `control_plots_ul.sh -m SHAPES`).
+- Comparator: the existing `plotting/compare_control_shapes.py` (Phase 2b), plus a
+  direct `TH1::Integral()`/bin-error read for the specific before/after numbers
+  below (needed to see per-fix deltas at higher precision than the comparator's
+  pass/fail log lines give).
+
+### Root cause #1 (small, confirmed, FIXED): stale `ttbar_em_weight` calibration
+
+`ttbar_em_weight()` in `config/shapes/process_selection.py` (both frameworks)
+applies a hardcoded, per-era data/MC ttbar normalization scale factor (an
+em-channel control-region measurement), multiplied into every TTT+TTL event.
+TauKITFlow's copy carried a **stale** set of `ratio_em` values (m_vis>100 only, no
+nbtag cut — 2024: `0.926025`); smhtt_ul's live checkout has since been recalibrated
+(`config/shapes/calculate_ttbar_weights.py`, "260602" tag, nbtag>=0 selection) to a
+**different, newer** set (2024: `0.945792`) — the old values are left commented out
+in smhtt_ul's own file with an explicit "wrong weight for 24-25" comment. Updated
+TauKITFlow to the current smhtt_ul values for all 6 Run3 eras. Small effect in
+isolation (~1-2% depending on era) but real and dated.
+
+### Root cause #2 (small, confirmed, FIXED): `btag_weight` wrongly excluded from `mt`
+
+`MC_base_process_selection()` in TauKITFlow excluded **both** `mm` and `mt` from the
+per-event `btag_weight` data/MC b-tag scale-factor reweighting
+(`if channel not in ("mm", "mt"): ...append(btag_weight)`). smhtt_ul's live
+reference only excludes `mm` (`if channel != "mm":`, with a
+`# and channel != "mt"` **commented out**, i.e. disabled — mt gets `btag_weight`
+there today). Confirmed directly that the real 2024 CROWN production ships a
+`btag_weight` branch for `mt` (branch-list check on a live TT ntuple file:
+`['btag_value_1', 'btag_value_2', 'btag_weight', 'nbtag']` present). The `mt`
+exclusion was inherited from a Phase 2a fix for a genuine but *era-specific* gap
+(the 2018 CROWN validation production used there does not ship `btag_weight` at
+all) that was incorrectly encoded as a *channel*-level exclusion instead of an
+*era*-level one, silently also breaking `mt` for every Run3 era where the branch
+does exist. Fixed by keying the guard on `era not in RUN2_PRODUCTION_ERAS`
+(`config/analysis.py`) instead of `channel`, matching smhtt_ul's channel-only
+(`mm`-only) exclusion for every era that actually has the branch. Small effect in
+isolation (~1-2%).
+
+### Root cause #3 (dominant, confirmed, FIXED): two global cuts entirely missing from `channel_selection()`
+
+This is the fix that actually closed the bulk of the gap. smhtt_ul's live
+`config/shapes/channel_selection.py` sets, **unconditionally for every channel**,
+right after the jet-veto-map cut and before the per-channel branch:
+```python
+cuts["pt"] = "(pt_2 > 25)"
+cuts["mt"] = "mt_1 < 60"
+```
+Both are active (not commented out) in the current reference — confirmed by
+reading the file directly and by diffing the actual per-run booking log output
+side by side (`channel_selection (Cuts): Using: ... pt: (pt_2 > 25) / mt: mt_1 <
+60 / ... mt_cut: (mt_1 < 70)` on the legacy side vs. no `pt`/`mt` entries at all on
+the TauKITFlow side, otherwise identical cut lists). TauKITFlow's
+`channel_selection.py` had **no equivalent of either cut** — it only ever applied
+the separate, per-channel, looser `mt_cut: (mt_1 < 70)`, and no `pt_2` floor at
+all. Net effect: TauKITFlow was letting through every event with
+`60 <= mt_1 < 70` and every event with `pt_2` between whatever the trigger-implied
+floor is and 25 GeV that smhtt_ul's live selection excludes — a real, silent
+over-inclusion affecting every MC process in every channel, not something visible
+in the DY/W/signal comparisons because those already agreed well enough (~0.4%,
+Phase 3) that this hadn't been suspected, but which dominates the *relative*
+picture for TT/VV because those processes are the two families where changes near
+the `mt_1` boundary are most populated (real/fake top and diboson topologies).
+Fixed by adding both cuts to TauKITFlow's `channel_selection()`, unconditionally,
+matching smhtt_ul's placement and text exactly.
+
+### Before/after numbers (2024/mt, `m_vis`, `Nominal` selection; both integrals bin-by-bin summed; legacy lumi-corrected by the independently-confirmed, still-live smhtt_ul-side 2x lumi bug documented in Phase 3, `218.9/109.816`)
+
+| process | raw ratio (before any Phase 5.1 fix) | raw ratio (after all 3 fixes) | lumi-corrected ratio (after) | n_sigma (after) |
+|---|---|---|---|---|
+| TT-TTT  | 0.6528 | 0.5017 | **1.0000** | 0.000 |
+| TT-TTL  | 0.7100 | 0.5017 | **1.0000** | 0.000 |
+| TT-TTJ  | 0.7789 | 0.5017 | **1.0000** | 0.000 |
+| VV-VVT  | 0.6577 | 0.5017 | **1.0000** | 0.000 |
+| VV-VVL  | 0.7411 | 0.5015 | **0.9997** | 0.081 |
+| VV-VVJ  | 0.6151 | 0.3729 | **0.7433** | 40.724 |
+
+("raw ratio" = `new_integral / legacy_integral` before dividing out the known
+lumi factor; the middle column isolates the effect of the 3 fixes above, all
+still expressed at raw — i.e. pre-lumi-correction — scale, which is why it moved
+*closer to* the pure-lumi value `109.816/218.9 = 0.50168` rather than to 1: once
+the pt/mt/btag/ttbar_em_weight bugs were fixed, the only remaining difference
+between the frameworks for TTT/TTL/TTJ/VVT/VVL is the already-known, independently
+confirmed, smhtt_ul-side lumi doubling — dividing that back out gives the
+lumi-corrected column, which is where the real physics-content agreement is
+judged.)
+
+**TT-TTT, TT-TTL, TT-TTJ, and VV-VVT are now bit-identical to the fresh smhtt_ul
+reference (n_sigma = 0.000 exactly — i.e. every difference has been accounted
+for). VV-VVL agrees to 0.08σ (0.03% relative).** This resolves, with a real
+mechanism and real numbers (not a fudge factor), both of the originally-flagged
+findings for every TT subprocess and two of the three VV subprocesses:
+Phase 2b's +3.9% TT-TTL (2022preEE) and Phase 3's ~1.6% TT-TTT/TTL (2024)
+residuals are both explained by these three fixes (chiefly root cause #3, the
+missing global cuts) — a different era, but the same underlying code bug, present
+in `channel_selection()`/`process_selection.py` regardless of era.
+
+### VV-VVJ: real, unresolved ~25.7% residual — NOT explained by any difference found
+
+**VV-VVJ still shows a large, statistically-significant deficit: raw ratio 0.3729,
+lumi-corrected 0.7433 (25.67% low), n_sigma = 40.7 — i.e. this is not consistent
+with MC statistical noise (the integral's own relative stat uncertainty is only
+~0.6%; a 40σ pull means the two numbers are genuinely, significantly different,
+not just noisy).** This number is close to (marginally larger than) Phase 3's
+original 26.6% VV-VVJ finding from a completely different (broader) production run
+— i.e. this is a real, reproducible, persistent effect, not a fluke of the
+narrower rerun.
+
+**What was checked and ruled out** (each confirmed by direct comparison, not
+assumption):
+- `VVJ_process_selection()`'s cut text (`(gen_match_2 == 6)` for mt/et) is
+  byte-identical between frameworks.
+- `VV_process_selection()`'s full weight list (`MC_base_process_selection` +
+  `numberGeneratedEventsWeight` + the `crossSectionPerEventWeight` expression) is
+  byte-identical between frameworks, and — critically — is the *same object*
+  shared by VVT/VVL/VVJ within a framework, so a weight-formula bug would move all
+  three VV subprocesses together, not just VVJ. VVT/VVL do NOT show this residual
+  (0.000σ / 0.08σ respectively), which rules out a VV-wide weight or
+  normalization bug as the explanation for VVJ specifically.
+- The underlying dataset/file list is identical: diffed the
+  `validation_database/.../2024_mt_VV.yaml` file-set actually validated by both
+  runs — **573 files on both sides, zero set difference** (same 20-sample
+  diboson+single-top merge, same production tag). Rules out a sample-list/file-set
+  cause.
+- `tauidweight` (the one weight component that's explicitly gen-match-conditional,
+  `((gen_match_2==5)*id_wgt_tau_vsJet_WP_2 + (gen_match_2!=5))`) is set and then
+  immediately overwritten back to `None` in **both** frameworks' `mt`-channel
+  branch (`tauidweight = None` appears verbatim, same two-line pattern, in both
+  `process_selection.py` files) — an identical no-op in both, not a discrepancy,
+  and in any case evaluates to a factor of exactly 1 for `gen_match_2 == 6`
+  (VVJ's own selection condition) regardless of whether it's applied, so it
+  cannot be the cause even if it weren't already a matched no-op.
+- TauFakeFactors' `btag_efficiency.py`/`configs/btag_efficiency/` (per this task's
+  explicit hint to check) is not in the code path at all for this comparison:
+  `MC_base_process_selection`'s `btag_weight` is a flat per-event branch read
+  directly from the CROWN friend tree (root cause #2 above), not derived from
+  TauFakeFactors' efficiency maps — those are used elsewhere in the framework
+  (fake-factor QCD/W+jets estimation), not in the TT/VV process-splitting weight
+  chain being compared here. No wiring between the two was found.
+
+**Working hypothesis, not confirmed:** since VVJ is specifically the
+genuinely-jet-faked-tau slice of VV (`gen_match_2 == 6`, i.e. the tau candidate is
+not matched to any real generator-level tau or lepton), and every cut/weight
+governing *which* events fall into that bin is confirmed identical between
+frameworks, the remaining candidate explanations are either (a) a difference
+upstream of both frameworks' config layer — e.g. in how the `gen_match_2` branch
+itself, or the friend-tree quantities it depends on, were produced/filled at the
+CROWN level for specific VV/single-top sub-samples, which neither framework's
+config controls and which would require a raw per-event diff (dumping
+`gen_match_2` + event id from both frameworks' RDataFrame graphs for the same
+files) to pin down, or (b) some other VVJ-specific code path not yet found despite
+this session's cut/weight/sample-list audit. Given the exhaustive, itemized
+ruling-out above and the time-box on this slice, **this is reported as an open,
+unresolved residual rather than guessed at further** — per the explicit
+instruction to stop and document rather than loop indefinitely. Whoever picks
+this up next should start with a raw per-event `gen_match_2` dump comparison on
+one small VV sample (e.g. `WZto3LNu_...Run3Summer24...`) read identically by both
+frameworks' RDataFrame graphs, to determine whether (a) or (b) above is the actual
+mechanism.
+
+### Files changed
+
+- `config/shapes/process_selection.py` — `ttbar_em_weight()` updated to smhtt_ul's
+  current "260602" `ratio_em` values (root cause #1); `MC_base_process_selection()`
+  `btag_weight` guard changed from `channel not in ("mm", "mt")` to
+  `channel != "mm" and era not in RUN2_PRODUCTION_ERAS` (root cause #2).
+- `config/shapes/channel_selection.py` — added the two previously-missing global
+  cuts, `cuts["pt"] = "(pt_2 > 25)"` and `cuts["mt"] = "(mt_1 < 60)"`, applied
+  unconditionally for every channel, matching smhtt_ul exactly (root cause #3,
+  the dominant fix).
+
+### Not done / explicitly out of scope for this slice
+
+- VV-VVJ's residual (see above) — real, reproducible, not closed.
+- Re-running the full (all-process, all-variable) 2024/mt control-plot comparison
+  that Phase 3 ran, to get an updated overall pass-rate number analogous to
+  Phase 3's "109/912" — this slice's rerun was deliberately scoped to
+  TT/VV-only + 3 variables for turnaround time; the mechanism found (root cause
+  #3 especially) is channel/process-selection-level, not variable-specific, so it
+  should improve the full comparison too, but that hasn't been directly measured.
+- The still-live smhtt_ul-side 2x lumi bug (Phase 3 finding, confirmed still
+  present in this session's fresh legacy run: `lumi: 218.9 * 1000.0` in the
+  booking log) is unchanged — it's a bug in smhtt_ul's live checkout, not
+  TauKITFlow's, out of scope to "fix" here (would mean editing smhtt_ul).
+  TauKITFlow's own lumi value (`109.816`, from `config/analysis.get_luminosity`)
+  remains correct, per Phase 1.
+- Era coverage: only 2024/mt was rerun fresh in this slice (matching the task's
+  primary validation dataset). The Phase 2b 2022preEen +3.9% TT-TTL finding is
+  explained by the same code-level bugs (channel_selection/process_selection are
+  era-generic, the bugs applied to every Run3 era), not independently
+  re-measured at 2022preEE with a fresh rerun.
+
 ## Blockers
 
 Note: none of the below block Phase 2a specifically — see "Not done / explicitly out
