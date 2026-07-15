@@ -11,6 +11,7 @@
 #   SHAPES-NOSYS  Produce nominal shapes only (fast)
 #   PLOT          Plot control shapes
 #   TRAIN-SHAPES  Produce shapes for NN training
+#   TRAIN-DATASET Build training feather folds from ROOT shapes (plain Python, no law/condor)
 #   CONFIGS       Collect ntuple_processor configs (YAML) — no histogram production
 #
 # ─────────────────────────────────────────────────────────────────────────────
@@ -195,6 +196,27 @@ TRAIN-SHAPES)
         "$@"
     ;;
 
+TRAIN-DATASET)
+    # Local (non-condor) entry point for the dataset-preparation step of the
+    # training pipeline. Plain Python, no law/luigi scheduler involved — see
+    # STATUS.md "Phase 6c" for why: trainings/create_training_dataset.py has
+    # never used law (confirmed via git history + grep), so this mode is just
+    # a discoverable run.sh wrapper around the script's existing plain-Python
+    # CLI, mirroring condor/submit_training.py's direct-condor equivalent
+    # (Phase 2c) for interactive/local use instead of batch submission.
+    conda activate taukiktflow
+    TRAIN_CONFIG=${TRAIN_CONFIG:?"TRAIN_CONFIG must be set to a per-(channel,era) training dataset config YAML (see trainings/create_training_dataset.py --config)."}
+    BASE_DATASET_DIR=${BASE_DATASET_DIR:-"/ceph/${USER}/smhtt_ul_new/training_datasets"}
+    COMMON_SETUP_CONFIG=${COMMON_SETUP_CONFIG:-""}
+    echo "[TRAIN-DATASET] Building training dataset from $TRAIN_CONFIG -> $BASE_DATASET_DIR"
+    export PYTHONPATH="${PYTHONPATH}:${PWD}"
+    nice -n 19 python trainings/create_training_dataset.py \
+        --config "$TRAIN_CONFIG" \
+        --base-dataset-directory "$BASE_DATASET_DIR" \
+        ${COMMON_SETUP_CONFIG:+--common-setup-config "$COMMON_SETUP_CONFIG"} \
+        "$@"
+    ;;
+
 CONFIGS)
     check_env
     source utils/setup_ul_samples.sh "$NTUPLETAG" "$ERA"
@@ -263,6 +285,18 @@ FF-CORR)
     ;;
 
 TRAIN)
+    # NOTE (Phase 6c submodule-boundary decision, see STATUS.md): this mode
+    # shells out to `law run`/`law index` inside trainings/uncertainty-aware-training/,
+    # which is that submodule's *own* task-graph scheduler for the NN training
+    # loop, defined entirely in its own _law_workflow_ff.py/_law_CENNT_workflow.py
+    # + law.cfg. TauKITFlow itself never imports law and authors no law.Task
+    # logic anywhere — this block just forwards user parameters to the
+    # submodule's own CLI entry point, the same way PRESEL/FF/FF-CORR above
+    # shell out to TauFakeFactors' own python CLIs. Removing law here would
+    # mean reimplementing the submodule's internal task dependency graph in
+    # TauKITFlow, which the framework's "modify submodule internals only as a
+    # last resort" philosophy (and Phase 2c's identical prior call) argues
+    # against; left untouched deliberately, not an oversight.
     TRAIN_TAG=${TRAIN_TAG:-"260507"}
     TRAIN_TASK=${TRAIN_TASK:-"RunAllCENNTConfusionMatrixWorkflow"}
     CUDA_DEVICE=${CUDA_DEVICE:-"0,1"}
@@ -303,6 +337,7 @@ TRAIN)
     echo "  SHAPES-NOSYS    Produce nominal shapes only (fast)"
     echo "  PLOT            Plot control shapes (mplhep)"
     echo "  TRAIN-SHAPES    Produce shapes for NN training"
+    echo "  TRAIN-DATASET   Build training feather folds locally (plain Python, no law) — see condor/submit_training.py for the condor equivalent"
     echo "  CONFIGS         Collect ntuple_processor YAML configs"
     echo "  GEN-TFF-CONFIGS Regenerate TFF per-channel YAMLs from unified config"
     echo "  PRESEL          Run TauFakeFactors preselection saving OUTPUT_FEATURES (per channel)"
@@ -331,6 +366,9 @@ TRAIN)
     echo "  WORKERS          law workers for training (default: 2)"
     echo "  DATASET_DIR      Base dir for training datasets (default: /ceph/sgiappic/Htt_training/cennt_folds/coarse)"
     echo "  UAT_CONFIG_DIR   Base dir for uncertainty-aware-training base configs"
+    echo "  TRAIN_CONFIG     Required for TRAIN-DATASET: per-(channel,era) dataset config YAML"
+    echo "  BASE_DATASET_DIR Output dir for TRAIN-DATASET (default: /ceph/\$USER/smhtt_ul_new/training_datasets)"
+    echo "  COMMON_SETUP_CONFIG  Optional common-setup YAML for TRAIN-DATASET"
     ;;
 esac
 
