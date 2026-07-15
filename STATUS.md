@@ -2249,3 +2249,245 @@ restored to empty placeholder directories before this final commit (confirmed vi
 Committed to branch `phase5.2-config-cleanup` in this worktree (two commits: the structural
 move/reconciliation, and this STATUS.md write-up). Not pushed, no force operations, no destructive
 git commands used, per the task's git-safety instructions.
+
+## Phase 6b — tauES: validate the samples + extract the measurement calculation into tau_es/
+
+Status: **DONE**, with one honest gap (no legacy numeric reference exists to diff the fit
+against — see below, same "does it run and produce sane output" standard Phase 4's GoF work
+used). Branch `phase6b-taues`, worked in an isolated git worktree
+(`.claude/worktrees/phase6b-taues-measurement`) after discovering mid-session that this task had
+initially been run directly in the shared main checkout (`/work/sgiappic/TauKITFlow`), where
+concurrent sibling Phase-6 agents were switching branches in place and one destructive operation
+(a `git reset`/checkout sequence visible in `git reflog`, not run by this agent) silently wiped
+several of this session's uncommitted edits there. Recovered by rebuilding the lost edits from
+scratch in a proper isolated worktree (this is now branch `phase6b-taues`'s actual, complete
+state) and leaving the shared main checkout exactly as found (no residual edits committed there).
+**Lesson for future sessions: `git worktree add .claude/worktrees/<name> <branch>` first, always
+— never work directly in `/work/sgiappic/TauKITFlow` itself when other Phase 6 slices are
+running concurrently.**
+
+### 1. Validating the tauES samples
+
+Re-ran (not re-derived from scratch — Phase 2a already did the heavy lifting) the
+`--special-analysis TauES` shape-production path against the real Run2 2018 validation dataset
+(`root://cmsdcache-kit-disk.gridka.de//store/user/jvoss/CROWN/ntuples/
+SFs_EMB_Run2_v15nanoAOD_29_06_26/CROWNRun`), specifically to confirm it **still works after
+Phase 5.2's `config/shapes/{channel_selection,category_selection,process_selection,variations}.py`
+-> `shapes/selection/*.py` move**, which happened after Phase 2a validated this path and touched
+every import in `shapes/produce_shapes.py`/`shapes/do_estimations.py`:
+
+- **Import correctness post-move**: `shapes.produce_shapes`, `shapes.do_estimations`,
+  `shapes.convert_to_synced_shapes` all import cleanly under the `taukiktflow` conda env with
+  `config.shapes.taues_measurement_binning` (mt-only categorization, unchanged location per Phase
+  5.2's own decision to leave binning-data modules in `config/shapes/`) resolving correctly.
+- **Real end-to-end run**: `shapes/produce_shapes.py --era 2018 --channels mt --vs-jet-wp Medium
+  --vs-ele-wp VVLoose --xrootd --directory
+  /store/user/jvoss/CROWN/ntuples/SFs_EMB_Run2_v15nanoAOD_29_06_26/CROWNRun --special-analysis
+  TauES --process-selection emb --skip-systematic-variations --collect-config-only` against the
+  live xrootd endpoint resolved DY/TT/VV/W/data/EMB datasets correctly and reached
+  `shape_utils.add_tauES_datasets`, which validated the **first real shift point
+  (`embminus12p0`, i.e. -12.0%) with zero differences / zero empty files** across all 4
+  `TauEmbedding-MuTauFinalState_Run2018[A-D]` run periods — the identical result Phase 2a
+  originally found, now re-confirmed against the post-Phase-5.2 import layout. (Per Phase 2a's
+  own precedent, the full 100-shift-point validation was time-boxed rather than re-run in full —
+  each shift point re-runs a ~2-3 min per-file xrootd validation pass, so 100 points is a
+  multi-hour run for no new evidence beyond what the first point + the direct per-shift branch
+  check (Phase 2a item 4, mean `pt_2` scaling linearly with shift fraction to <0.01%) already
+  established.)
+- **No legacy reference to validate against**: as recorded in Phase 2a, smhtt_ul's own
+  standalone `tauID_SFs_dev`-branch tauES pipeline (`shapes/produce_shapes_tauid_es.py`) was
+  never run to completion against this validation dataset by anyone (no output found under
+  `/work/sgiappic/smhtt_ul/output/` for a tauES-tagged run), so there is no legacy numeric shape
+  output to diff against — same situation Phase 2a already documented, unchanged by this slice.
+
+### 2. Extracting the tauES *calculation* into its own space: `tau_es/`
+
+**Naming decision**: `tau_es/` (not `taues_fit/` or `morphing_taues/`) — matches the existing
+`config/shapes/taues_measurement_binning.py` naming already used by shape production, and reads
+as "the tauES calculation", which is what the task asked to extract. Recorded here per the
+repo's established naming-decision convention (see `combine_datacards/` in Phase 2d).
+
+**What "the calculation" turned out to mean, and where it actually lives.** The task named
+smhtt_ul's `tauID_SFs_dev` branch as the source. That branch's own tauES shape-production script
+(`shapes/produce_shapes_tauid_es.py`) is what Phase 2a already extracted the reusable mechanism
+from (`add_tauES_datasets`/`book_tauES_histograms`, now in `shapes/utils.py`) — that is shape
+*production*, not the calculation itself. The actual measurement — a Combine datacard with a
+continuous `taues` RooMorphing parameter, fit via `combine -M MultiDimFit` — is built by a
+**compiled CMSSW binary**, `MorphingTauES_UL`, that `tauID_SFs_dev`'s own
+`embeddded_tauES_ul2018.sh` (`MODE=DATACARD`) calls. Its C++ source was **not found on
+`tauID_SFs_dev`, nor on `run3_htt`** (the branch Phase 2d already used for the main analysis's
+equivalent binary). It *was* found — structurally near-identical (same `taues` `RooRealVar`
+range, same background list, same systematics) — on a third remote branch of the
+CombineHarvester/SMRun2Legacy checkout at `/ceph/sgiappic/CMSSW_15_0_2/src/CombineHarvester/
+SMRun2Legacy`: **`origin/tauES`**, file `bin/MorphingSMRun2Legacy_tauES.cpp` (423 lines,
+`git log` shows recent, dedicated tauES-uncertainty commits on that branch, e.g. `a278b68 remove
+0.0 value for 2016, remove muonFake unc for TTL and adapt taues range`). This is the actual
+calculation the task asked to extract, and this slice ported it the same way Phase 2d ported
+`MorphingSMRun2Legacy.cpp` -> `combine_datacards/make_datacards.py`: via CombineHarvester's
+Python bindings, no new C++ build.
+
+**New files:**
+- **`tau_es/energy_scales.py`** — single source of truth for the tauES shift-point convention
+  (-12.0% to +8.0%, 0.2% step, 100 points, 0.0% excluded) Phase 2a validated against real data.
+  **Real bug found and fixed while wiring this up**: `shapes/convert_to_synced_shapes.py` — the
+  flat-histogram -> synced-file bridge that sits between shape production and datacard
+  construction, and that this slice's datacard step needs as its input — had its **own third,
+  independent hardcoded `tau_es_map` dict spanning only -4.0% to +4.0% in 0.1% steps (81
+  entries)**, i.e. the exact wrong range/step Phase 2a had already found and fixed in
+  `shapes/produce_shapes.py` and `shapes/do_estimations.py`, left unfixed here. Since
+  `produce_shapes.py` only ever produces shift points on the corrected -12.0/+8.0/0.2 grid, this
+  stale map would `KeyError` the first time `--special TauES` hit any shift point outside
+  +-4.0% — most of the real 100-point grid, including the widest, most fit-informative points.
+  Fixed by generating `tau_es_map` from `tau_es.energy_scales.build_tau_es_map()` instead of a
+  fourth hand-copied dict. `shapes/produce_shapes.py`'s `_es_shifts` and
+  `shapes/do_estimations.py`'s `tauESvariations` (previously two independent inline
+  list-comprehension copies of the identical corrected list) now both import
+  `tau_es.energy_scales` too — single-sourced, verified byte-identical output to both
+  pre-refactor inline definitions.
+- **`tau_es/make_taues_datacard.py`** — the Python port of `MorphingSMRun2Legacy_tauES.cpp`:
+  builds a `ch.CombineHarvester()` datacard with `ZL`/`TTL`/`VVL`/`jetFakes` backgrounds and one
+  `EMB` signal process per tauES shift point (using `tau_es.energy_scales` for the point list,
+  not the C++'s hand-copied ~44-point subset — a superset by default, restrictable via
+  `--shift-min`/`--shift-max`/`--shift-step`), the full lnN/shape systematics list ported 1:1
+  from the C++ (lumi, embnorm, vvlXsec/zlXsec/ttlXsec, `CMS_mFakeTau`, per-pT-bin
+  `CMS_eff_emb_t`, `emb_t`, `CMS_eff_m`, `CMS_3ProngEff`, `CMS_1ProngPi0Eff`, jetFakes shape
+  stats/syst), reuses `combine_datacards.tools.{fix_negative_bins, filter_zero_yield_processes,
+  filter_zero_yield_systs, replace_with_asimov}` (Phase 2d) rather than re-implementing them, and
+  builds the actual `taues` `RooRealVar` + `ch.BuildRooMorphing(...)` continuous template morph
+  — the part of the C++ that makes this a genuine shape-fit measurement rather than a plain
+  counting/lnN datacard.
+- **`tau_es/run_taues_fit.py`** — Python subprocess orchestration (T2W via `combineTool.py`, then
+  `combine -M MultiDimFit`) replacing `embeddded_tauES_ul2018.sh`'s `DATACARD`/`FIT`/`POSTFIT`
+  bash modes, per the framework's "prefer Python control scripts" law-decision precedent.
+  Combine/CMSSW stay external dependencies (`utils/setup_cmssw.sh`), same as
+  `combine_datacards/make_datacards.py` — no C++ vendored in.
+- **`tau_es/run_taues_category.py`** — single entry point chaining datacard-build -> T2W ->
+  MultiDimFit for one (era, category), the condor job unit (below).
+- **`condor/submit_taues_fit.py`** + a small, clearly-marked hook in `condor/common.py`
+  (`SubmissionPlan.env_mode: "conda" | "cmssw"`, default `"conda"` = unchanged existing
+  behavior) — this is the first condor stage needing the CMSSW/Combine environment rather than
+  the `taukiktflow` conda env every other stage (`submit_shapes.py`/`submit_plotting.py`/
+  `submit_training.py`) uses; `env_mode="cmssw"` sources `utils/setup_cmssw.sh` in the generated
+  wrapper instead of activating conda. One job per (era, category) — DM0/DM1/DM10_11/Inclusive
+  are independent datacard-build+fit units, same granularity principle
+  `condor/submit_shapes.py` already uses per (era, channel).
+
+### Two real bugs found and fixed while building `tau_es/make_taues_datacard.py`
+
+Both only surface once you actually try to run the ported code against a real-shaped input file
+— exactly why "does it run and produce sane output" validation (not just `ast.parse`/import
+checks) matters here, per the Phase 4 GoF precedent this slice is following:
+
+1. **`ExtractShapes(..., syst_rule)` resolves every shape systematic already registered on `cb`
+   at call time.** The initial port called `AddSyst(...)` for every systematic *before* the
+   nominal `ExtractShapes` call — this crashed immediately
+   (`ch::GetClonedTH1: TH1 ..._CMS_ff_qcd_njet0_mt_stat_Run2018Up not found`) because the shape
+   systematics don't have real templates in any tauES shape file (only the main analysis's
+   `do_estimations.py` produces some FF-related shapes, not the tauES measurement's own). Fixed
+   by reordering to nominal-`ExtractShapes` first, `AddSyst` second, then a local
+   `_load_taues_systematic_shapes()` helper (a `tau_es`-specific counterpart of
+   `combine_datacards.tools.load_systematic_shapes`, needed because that function hardcodes the
+   main analysis's no-underscore Higgs mass-token convention `f"{process}{mass}"`, while tauES's
+   own synced-file convention is `EMB_<shift>` with an underscore, matching the reference C++'s
+   own `"$BIN/$PROCESS_$MASS"` `ExtractShapes` rule) that filters out any systematic without a
+   real Up/Down histogram (logged, not silent) before re-extracting only what remains — same
+   two-pass pattern `combine_datacards/make_datacards.py` already uses for the main analysis.
+2. **`CardWriter.WriteCards(...)` silently wrote zero cards** the first time the full pipeline
+   ran end-to-end (empty output directory, `rc=0`, no error). Root cause: this measurement's
+   background processes are added with a wildcard mass (`AddProcesses(["*"], ...)`, same as the
+   reference C++), and without `writer.SetWildcardMasses([])`, CombineHarvester's `CardWriter`
+   treats `"*"` as a literal per-object mass value and skips writing anything for it — a known
+   CombineHarvester gotcha the reference C++ handles explicitly
+   (`writer.SetWildcardMasses({})`) that was missed in the initial port. `combine_datacards/
+   make_datacards.py` never needed this because it uses real mass `"125"`, not a wildcard, for
+   its (Higgs) signals. Fixed: added the identical `writer.SetWildcardMasses([])` call.
+
+### Validation: full chain against a synthetic synced shape file (real Combine binaries, synthetic physics content — same standard as Phase 2d's first datacard validation)
+
+**Why synthetic, not real, shape content**: producing a real 100-shift-point tauES shape file
+from the live 2018 xrootd production would need a multi-hour real run (each of the 100 shift
+points is its own booked dataset with its own ~2-3 min xrootd validation pass, per Phase 2a's own
+timing note) for evidence this slice's item 1 above already establishes differently (the
+mechanism that produces those templates is unchanged from Phase 2a, and Phase 2a already
+confirmed the physics of the shift branches directly, to <0.01%, against real data). What hadn't
+been validated by anyone before this slice is whether the **datacard-construction and fit code
+itself** — new in this slice — actually runs to completion and produces something sane. That's
+what this validation targets, exactly the same reasoning Phase 2d used when a real 2024 shape
+production was blocked and a hand-built synthetic file was used instead to prove the relocated
+Combine code path worked.
+
+Built a structurally-faithful synthetic synced shape file by hand
+(`mt_Inclusive/{ZL,TTL,VVL,jetFakes,data_obs}` flat Gaussian-ish templates + `mt_Inclusive/
+EMB_<shift>` for 24 shift points from -2.4% to +2.4% in 0.2% steps, each shifted Gaussian peak
+position scaled with the shift fraction, matching `taues_measurement_binning.py`'s real `m_vis`
+binning `np.arange(35, 85, 2.5)`), then ran the full real pipeline against it under CMSSW_15_0_2
+(`utils/setup_cmssw.sh`):
+
+1. **`tau_es/make_taues_datacard.py`** built a real Combine datacard
+   (`htt_mt_1_Run2018.txt` + `common/htt_input_2018.root`): **1 bin, 5 processes** (`imax 1 jmax
+   4`) — `ZL`, `TTL`, `VVL`, `jetFakes` backgrounds + `EMB` signal with `rate=1` and a
+   `shapes EMB htt_mt_1_Run2018 common/htt_input_2018.root
+   htt:htt_mt_1_Run2018_EMB_morph` line (the RooMorphing-based signal reference, not a flat
+   histogram — confirming the continuous `taues` template morph was actually built, not just a
+   discrete-shift datacard). **7 lnN nuisances survived** (`CMS_eff_m`, `CMS_mFakeTau_Run2018`,
+   `emb_t_mt_Run2018`, `embnorm`, `lumi`, `ttlXsec`, `vvlXsec`, `zlXsec`) — every shape-type
+   systematic (`CMS_eff_emb_t_*`, `CMS_3ProngEff`, `CMS_1ProngPi0Eff`, jetFakes stats/syst) was
+   correctly dropped since the synthetic file provides no Up/Down templates for them, logged as
+   `WARNING ... Removing systematic ... with missing shape` for every one, not silently.
+2. **`tau_es/run_taues_fit.py workspace`** (`combineTool.py -M T2W`) built a real
+   `workspace.root` from that datacard with no errors.
+3. **`tau_es/run_taues_fit.py fit`** (`combine -M MultiDimFit`, real Combine v10.6.0 binary) ran
+   both the initial best-fit and the 10-point profile-likelihood scan to completion:
+   **best-fit `taues = +0.003 (-0.027/+0.016, 68%)`** — consistent with zero true injected
+   shift, exactly as expected since the synthetic `data_obs` was built independently of any
+   specific shift point (Asimov replacement further ties the fit toward the background+nominal-
+   ish signal composition). This is a sanity-check result (no real physics to recover), not a
+   measurement — recorded honestly as such, not framed as a physics result.
+4. **`tau_es/run_taues_category.py`** (the condor job entry point) ran the full chain
+   end-to-end in one process for category `Inclusive`: datacard -> workspace -> 5-point scan,
+   producing `higgsCombine2018_Inclusive_taues.MultiDimFit.mH0.root`, confirming the per-category
+   condor unit of work is self-contained and correct.
+5. **`condor/submit_taues_fit.py --dry-run`**: 4 jobs (one per DM0/DM1/DM10_11/Inclusive),
+   correct `env_mode="cmssw"` wrapper (verified: sources `utils/setup_cmssw.sh`, not
+   `conda activate`), valid classads confirmed via a real `condor_submit -dry-run` call.
+
+**Not done / explicitly out of scope for this slice:**
+- No real 100-shift-point tauES shape file was produced (see "why synthetic" above) — so no
+  numeric fit result against real 2018 embedded data exists yet. This is the same kind of gap
+  Phase 2b/2d flagged for Run2 styling/datacard validation when no legacy reference existed:
+  reported honestly, not silently skipped. Whoever next runs a real tauES measurement should
+  start from `shapes/produce_shapes.py --special-analysis TauES` (already validated, Phase 2a +
+  this slice) -> `shapes/do_estimations.py --special TauES` -> `shapes/convert_to_synced_shapes.py
+  --special TauES` (fixed in this slice) -> `tau_es/run_taues_category.py` per DM category (or
+  `condor/submit_taues_fit.py` for all four at once).
+- A real condor submission of `submit_taues_fit.py` (not `--dry-run`) against the KIT-ETP pool
+  was not performed in this slice (would need a real synced shape file per item above) — the
+  dry-run classad validation + Phase 2c's own precedent (a real condor probe job already
+  confirmed `/work/sgiappic`/`/cvmfs` mount + argument-passing correctness for this same
+  `condor/common.py` machinery) is the evidence relied on here.
+- `--with-r` (co-floating a signal-strength POI alongside `taues`, matching the reference
+  script's default) was added but not itself exercised in this validation — this measurement's
+  datacard has no independent Higgs-signal process, so `taues`-only is the more physically
+  correct default; `--with-r` exists for exact reproduction of the reference script's behavior if
+  ever needed.
+- et/tt/em channels, 2016/2017 eras: unchanged from Phase 2a's scope note — no tauES validation
+  data exists for them.
+
+### Files changed / added
+
+- New: `tau_es/__init__.py`, `tau_es/energy_scales.py`, `tau_es/make_taues_datacard.py`,
+  `tau_es/run_taues_fit.py`, `tau_es/run_taues_category.py`, `condor/submit_taues_fit.py`.
+- `condor/common.py` — added `SubmissionPlan.env_mode` ("conda"/"cmssw") hook + the
+  corresponding wrapper-script branch, default unchanged.
+- `shapes/produce_shapes.py` — `_es_shifts` now sourced from `tau_es.energy_scales`; fixed the
+  stale `--special-analysis` help text (still said the old wrong -2.5%/0.1% range).
+- `shapes/do_estimations.py` — `tauESvariations`/`tauES_names` now sourced from
+  `tau_es.energy_scales`.
+- `shapes/convert_to_synced_shapes.py` — `tau_es_map` now generated from
+  `tau_es.energy_scales.build_tau_es_map()` instead of a stale, wrong-range hardcoded dict (real
+  bug fix, see above).
+
+Committed to branch `phase6b-taues` in an isolated worktree
+(`.claude/worktrees/phase6b-taues-measurement`). Not pushed, no force operations, no destructive
+git commands run by this agent (see the worktree-recovery note at the top of this section for
+what a *different*, concurrent process did to the shared main checkout mid-session).

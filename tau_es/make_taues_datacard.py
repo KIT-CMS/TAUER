@@ -248,7 +248,9 @@ def build_datacard(args, logger):
     ws = ROOT.RooWorkspace("htt", "htt")
     for bin_name in cb.cp().bin_set():
         for process in cb.cp().bin([bin_name]).signals().process_set():
-            ROOT.ch.BuildRooMorphing(ws, cb, bin_name, process, taues, "norm", True, True, False, None)
+            # Trailing `file` arg omitted (defaults to nullptr in C++) --
+            # cppyy cannot convert Python None to TFile* for this overload.
+            ROOT.ch.BuildRooMorphing(ws, cb, bin_name, process, taues, "norm", True, True, False)
     ws.var("taues").setVal(args.taues_init)
 
     cb.AddWorkspace(ws)
@@ -263,6 +265,15 @@ def build_datacard(args, logger):
         os.path.join(args.output_folder, "$BIN.txt"),
         os.path.join(args.output_folder, f"common/htt_input_{args.era}.root"),
     )
+    # Real bug found + fixed during Phase 6b validation: backgrounds here are
+    # added with a wildcard mass ("*", via AddProcesses(["*"], ...)), same as
+    # the reference C++. Without telling CardWriter to NOT treat "*" as a
+    # real mass identifier, it silently writes zero cards (every object
+    # appears to have mass "*", which CardWriter's default wildcard handling
+    # skips) -- reproduced: the exact same code minus this line wrote an
+    # empty output folder with no error. The reference C++ already calls
+    # this (`writer.SetWildcardMasses({})`); missing here was the actual bug.
+    writer.SetWildcardMasses([])
     writer.WriteCards("", cb)
 
     if args.bbb:
