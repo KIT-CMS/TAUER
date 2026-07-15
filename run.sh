@@ -12,6 +12,7 @@
 #   PLOT          Plot control shapes
 #   TRAIN-SHAPES  Produce shapes for NN training
 #   CONFIGS       Collect ntuple_processor configs (YAML) — no histogram production
+#   FF-MEASURE    Run the full TauFakeFactors FF measurement (GEN-TFF-CONFIGS+PRESEL+FF+FF-CORR)
 #
 # ─────────────────────────────────────────────────────────────────────────────
 set -e
@@ -236,29 +237,68 @@ PRESEL)
     IFS=',' read -ra CHANNEL_LIST <<< "$CHANNELS"
     for CH in "${CHANNEL_LIST[@]}"; do
         echo "[PRESEL] Processing channel $CH"
+        # Phase 6e note: this used to also pass `--columns "${OUTPUT_FEATURES[@]}"`,
+        # an argument preselection.py's argparse doesn't define at all (it reads
+        # output_features from the config file itself) -- that made every real
+        # PRESEL invocation fail with "unrecognized arguments". Removed; see
+        # STATUS.md Phase 6e.
         nice -n 19 python TauFakeFactors/preselection.py \
             --config-file "TauFakeFactors/configs/smhtt_ul/${ERA}/preselection_${CH}.yaml" \
             --nthreads "$NTHREADS" \
-            --columns "${OUTPUT_FEATURES[@]}" \
             "$@"
     done
     ;;
 
 FF)
-    FF_CONFIG=${FF_CONFIG:-"TauFakeFactors/configs/smhtt_ul/${ERA}/fake_factors_${CHANNELS}.yaml"}
-    echo "[FF] Running TauFakeFactors fake factor calculation: era=$ERA"
+    echo "[FF] Running TauFakeFactors fake factor calculation: era=$ERA channels=$CHANNELS"
     export PYTHONPATH="${PYTHONPATH}:${PWD}/TauFakeFactors"
-    nice -n 19 python TauFakeFactors/ff_calculation.py \
-        --config-file "$FF_CONFIG" \
-        "$@"
+    # Phase 6e note: TauFakeFactors/configs/smhtt_ul/{era}/ ships one config
+    # PER CHANNEL (fake_factors_et.yaml, fake_factors_mt.yaml, ...), never a
+    # joined-multi-channel file -- the old default here
+    # (`fake_factors_${CHANNELS}.yaml`, CHANNELS defaulting to "et,mt,tt")
+    # only ever matched a real file when $CHANNELS was a single channel. Now
+    # loops per channel, same as PRESEL. $FF_CONFIG (if set) still overrides
+    # for a single explicit config file, unchanged.
+    if [[ -n "$FF_CONFIG" ]]; then
+        nice -n 19 python TauFakeFactors/ff_calculation.py --config-file "$FF_CONFIG" "$@"
+    else
+        IFS=',' read -ra CHANNEL_LIST <<< "$CHANNELS"
+        for CH in "${CHANNEL_LIST[@]}"; do
+            nice -n 19 python TauFakeFactors/ff_calculation.py \
+                --config-file "TauFakeFactors/configs/smhtt_ul/${ERA}/fake_factors_${CH}.yaml" \
+                "$@"
+        done
+    fi
     ;;
 
 FF-CORR)
-    FF_CORR_CONFIG=${FF_CORR_CONFIG:-"TauFakeFactors/configs/smhtt_ul/${ERA}/ff_corrections_${CHANNELS}.yaml"}
-    echo "[FF-CORR] Running TauFakeFactors fake factor corrections: era=$ERA"
+    echo "[FF-CORR] Running TauFakeFactors fake factor corrections: era=$ERA channels=$CHANNELS"
     export PYTHONPATH="${PYTHONPATH}:${PWD}/TauFakeFactors"
-    nice -n 19 python TauFakeFactors/ff_corrections.py \
-        --config-file "$FF_CORR_CONFIG" \
+    # Phase 6e note: same per-channel-file issue as FF above, plus the old
+    # default filename prefix was wrong (`ff_corrections_{ch}.yaml` -- the
+    # real files are named `corrections_{ch}.yaml`), so this mode's default
+    # never pointed at a file that exists. Fixed; $FF_CORR_CONFIG still
+    # overrides for a single explicit config file.
+    if [[ -n "$FF_CORR_CONFIG" ]]; then
+        nice -n 19 python TauFakeFactors/ff_corrections.py --config-file "$FF_CORR_CONFIG" "$@"
+    else
+        IFS=',' read -ra CHANNEL_LIST <<< "$CHANNELS"
+        for CH in "${CHANNEL_LIST[@]}"; do
+            nice -n 19 python TauFakeFactors/ff_corrections.py \
+                --config-file "TauFakeFactors/configs/smhtt_ul/${ERA}/corrections_${CH}.yaml" \
+                "$@"
+        done
+    fi
+    ;;
+
+FF-MEASURE)
+    check_env
+    echo "[FF-MEASURE] Running the full TauFakeFactors FF measurement chain: era=$ERA channels=$CHANNELS"
+    echo "[FF-MEASURE] (GEN-TFF-CONFIGS -> PRESEL -> FF -> FF-CORR, see run_fake_factor_measurement.py)"
+    nice -n 19 python run_fake_factor_measurement.py \
+        --era "$ERA" \
+        --channels "$CHANNELS" \
+        --nthreads "$NTHREADS" \
         "$@"
     ;;
 
@@ -305,9 +345,11 @@ TRAIN)
     echo "  TRAIN-SHAPES    Produce shapes for NN training"
     echo "  CONFIGS         Collect ntuple_processor YAML configs"
     echo "  GEN-TFF-CONFIGS Regenerate TFF per-channel YAMLs from unified config"
-    echo "  PRESEL          Run TauFakeFactors preselection saving OUTPUT_FEATURES (per channel)"
-    echo "  FF              Run TauFakeFactors fake factor calculation"
-    echo "  FF-CORR         Run TauFakeFactors fake factor corrections"
+    echo "  PRESEL          Run TauFakeFactors preselection (per channel)"
+    echo "  FF              Run TauFakeFactors fake factor calculation (per channel)"
+    echo "  FF-CORR         Run TauFakeFactors fake factor corrections (per channel)"
+    echo "  FF-MEASURE      Run the full FF measurement chain: GEN-TFF-CONFIGS -> PRESEL -> FF -> FF-CORR"
+    echo "                  (the four modes above still exist for single-step reruns)"
     echo "  TRAIN           Run NN training via law (uncertainty-aware-training)"
     echo ""
     echo "Required environment variables (for shape production):"
