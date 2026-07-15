@@ -2249,3 +2249,248 @@ restored to empty placeholder directories before this final commit (confirmed vi
 Committed to branch `phase5.2-config-cleanup` in this worktree (two commits: the structural
 move/reconciliation, and this STATUS.md write-up). Not pushed, no force operations, no destructive
 git commands used, per the task's git-safety instructions.
+
+## Phase 6d — Convert remaining bash scripts to Python control scripts
+
+Status: **DONE.** Branch: `phase6d-bash-to-python` (own worktree,
+`.claude/worktrees/phase6d-bash-to-python`, based off `a61a3b4`, the same
+commit Phase 5.1/5.2 landed at). Runs in parallel with sibling agents on 6a
+(Run2 validation), 6b (tauES extraction), 6c (law removal from `trainings/`),
+6e (TauFakeFactors slimdown) -- per the scoping instructions this slice
+touched only `datacards/`, `run.sh`/`run.py`, `utils/`, and a few doc-comment
+references in `condor/common.py`/`condor/submit_shapes.py`/`config/analysis.py`;
+nothing under `trainings/` or inside `TauFakeFactors/` was touched.
+
+### Scope: every in-scope `.sh` file found and its disposition
+
+`find . -name "*.sh" -not -path "./TauFakeFactors/*" -not -path "./trainings/*"
+-not -path "./ntuple_processor/*" -not -path "./.git/*"` found 9 files at the
+start of this slice. All 9 were converted; the repo now has exactly the 2
+pre-approved environment-sourcing shims left as bash (see "What was
+deliberately left as bash" below):
+
+| Old bash script | Replacement | Notes |
+|---|---|---|
+| `datacards/produce_datacard.sh` | `datacards/produce_datacard.py` | same 3 positional args + optional `NTUPLE_TAG`; env-sourcing moved into `common/cmsenv.py` |
+| `datacards/produce_gof_datacard.sh` | `datacards/produce_gof_datacard.py` | positional args unchanged (era/channel/variable/ntuple_tag); the trailing `USE_ASIMOV`/`EMBEDDING`/`JETFAKES` 0/1 positionals became `--use-asimov`/`--embedding`/`--jetfakes` flags (CLI improvement, documented, only caller is `run_gof.py` which was updated to match) |
+| `datacards/produce_workspace.sh` | `datacards/produce_workspace.py` | same args (`ERA[,ERA...] ANALYSIS [CORES]`) |
+| `datacards/produce_gof_workspace.sh` | `datacards/produce_gof_workspace.py` | same args (`ERA CHANNEL VARIABLE [CORES]`) |
+| `datacards/run_gof.sh` | `datacards/run_gof.py` | same args; parallel toy-throwing (`... & ... wait`) reimplemented with `subprocess.Popen`/`.wait()` per seed, same seed numbering (1230+i) |
+| `datacards/run_impacts.sh` | `datacards/run_impacts.py` | same args |
+| `run.sh` | `run.py` | same MODE dispatch, same flags, same env-var-first-then-default precedence (`ERA=${ERA:-default}` semantics reproduced exactly -- see below) |
+| `utils/setup_ul_samples.sh` | `common/sample_paths.py` (`build_ul_sample_paths()`) | pure path-string construction, not environment sourcing -- no reason to stay bash (see reasoning below) |
+| `utils/setup_cmssw.sh` | **left as bash** (unchanged) | pre-approved exception: sources `cmsenv` |
+| `utils/setup_root.sh` | **left as bash** (unchanged) | same class of exception: sources the CVMFS LCG view |
+
+### New Python modules (shared machinery, `common/`)
+
+- **`common/cmsenv.py`** — `get_fitdir()` / `run_in_cmsenv(cmd_args, ...)`. The
+  single place any datacards/*.py script shells out to `bash -c "source
+  utils/setup_cmssw.sh && ..."` — one line, not re-implemented per script.
+  Supports `unlimited_stack=True` (replaces every script's `ulimit -s
+  unlimited`) and `background=True` (returns a live `Popen` instead of
+  waiting, for `run_gof.py`'s parallel toy jobs).
+- **`common/conda_env.py`** — `run_in_conda(cmd_args, ...)`, the `run.py`
+  analogue of `common/cmsenv.py`: sources `conda.sh` + `conda activate
+  taukiktflow` in a throwaway bash subshell, then runs the given command.
+  Same conda base/env/activation sequence `condor/common.py`'s generated
+  wrapper already uses (kept consistent, not re-derived).
+- **`common/lcg_env.py`** — `get_output_features()`: sources
+  `utils/setup_root.sh`, then runs `config.analysis.get_output_features()`
+  under the LCG view's Python (needed for `pyyaml` availability, per the old
+  script's own comment). Made **lazy** (only called by `run.py`'s PRESEL
+  mode) rather than run.sh's original unconditional-every-mode sourcing --
+  this changes nothing observable about any mode's output (the only
+  consumer was PRESEL's `--columns`), it just avoids paying the LCG
+  env-sourcing cost for XSEC/SHAPES/PLOT/etc., which never used the result.
+  Documented in the module's own docstring as a deliberate, harmless
+  behavior refinement, not a silent scope change.
+- **`common/sample_paths.py`** — `build_ul_sample_paths(ntupletag, era, user=None)`.
+  Byte-for-byte port of `utils/setup_ul_samples.sh`'s
+  NTUPLETAG/ERA→path-string derivation (same `/store/user/<user>/CROWN/ntuples/...`
+  convention, same Run3-only era whitelist, same "Unsupported era" failure
+  message). This one genuinely didn't need to stay bash: it's pure
+  string-building, no environment sourcing, no PATH/PYTHONHOME mutation --
+  unlike `setup_cmssw.sh`/`setup_root.sh`, there's no reason a plain Python
+  function can't do exactly what it did.
+
+### What was deliberately left as bash, and why (per the task's explicit exception)
+
+Exactly two files, both real environment-sourcing shims whose entire job is
+mutating the calling shell's `PATH`/`PYTHONHOME`/`LD_LIBRARY_PATH` — something
+`subprocess.run(...)` cannot do to its own parent process, so there is no
+portable all-Python way to eliminate them without still shelling out to bash
+for that one step (which is exactly what `common/cmsenv.py`/`common/lcg_env.py`
+do -- the *logic* around them is Python, only the sourcing itself is bash):
+
+1. **`utils/setup_cmssw.sh`** — sources `cmsset_default.sh` + `scramv1 runtime
+   -sh` (CMSSW `cmsenv`). Already an established exception from Phase 2d;
+   unchanged in this slice except that it's now invoked exclusively through
+   `common/cmsenv.py` rather than being `source`d ad hoc from each `datacards/*.sh`.
+2. **`utils/setup_root.sh`** — sources a CVMFS LCG view (`LCG_102`/`LCG_106`
+   depending on hostname). Same class of exception; now invoked exclusively
+   through `common/lcg_env.py`.
+
+`run.py`'s TRAIN mode still shells out to `law index`/`law run ...` inside
+`trainings/uncertainty-aware-training/` -- ported byte-for-byte from `run.sh`
+(same task name, same flags) since `trainings/` itself is explicitly out of
+scope for this slice (Phase 6c owns removing `law` from the training setup).
+This is **not** a bash-script left-behind (it was never a `.sh` file --
+`run.sh`'s TRAIN case block called `law` directly, and `run.py`'s
+`mode_train()` does the same via `subprocess.run(["law", ...])`), but it's
+flagged here because Phase 6c will need to update `run.py`'s `mode_train()`
+once `law` is removed from `trainings/`'s workflow -- noted as a known,
+expected follow-up merge conflict/rework, not a bug.
+
+### Env-var/flag precedence fidelity (a real bug caught during self-review, before any real run)
+
+`run.sh`'s bash implementation reads `ERA`/`CHANNELS`/`NTUPLETAG`/`TAG`/
+`VS_JET_WP`/`VS_ELE_WP`/`NTHREADS`/`NPROCS`/`OUTPUT_DIR`/`PRESEL_DIR` as **plain
+shell variables** with `${VAR:-default}` fallback -- meaning an inherited
+environment variable (e.g. `NTHREADS=16 python3 ...` / `NTHREADS=16 source
+run.sh SHAPES`, both supported historically, and documented in this repo's
+own README: `NPROCS=4 NTHREADS=8 source run.sh SHAPES`) silently wins over the
+hardcoded default whenever no `--flag` override is given. The first draft of
+`run.py` only checked `args.X or "<hardcoded default>"`, silently dropping
+environment-variable-based configuration entirely -- a real behavior
+regression that would have broken any existing caller/cron job driving
+`run.sh` via exported env vars rather than flags. Caught via careful
+comparison against the bash source (not by a failing test — there was no
+existing test for this), fixed by routing every one of these ten values
+through a small `env_or(flag_value, ENV_NAME, default)` helper that
+reproduces the exact `flag > inherited env var > hardcoded default`
+precedence. Verified with a mocked-`subprocess.run` harness: `ERA=2024
+NTUPLETAG=htt_env NTHREADS=16 CHANNELS=tt python3 run.py XSEC` (no flags at
+all) produces the same `--basepath`/`--outputpath`/`--nthreads 16` as passing
+those as `--era 2024 --ntupletag htt_env ...` explicitly.
+
+### Validation performed
+
+Environment: `taukiktflow` conda env is not needed for `--help`/argument-parsing
+validation; for the real end-to-end datacard/GoF/Impacts run below,
+`CMSSW_15_0_2` at `/ceph/sgiappic/CMSSW_15_0_2` (`utils/setup_cmssw.sh`,
+unchanged from Phase 2d/3/4) plus `TauFakeFactors`/`ntuple_processor`
+symlinked in from the main checkout for the session (the same one-time
+worktree-submodule-gap workaround Phase 3/4/4b/5.2 documented — restored to
+empty placeholder directories before every commit, confirmed via `git status
+--short` showing no submodule-pointer changes staged).
+
+1. **`--help` / argument-parsing, every converted script:** `run.py`,
+   `datacards/{produce_datacard,produce_gof_datacard,produce_workspace,
+   produce_gof_workspace,run_gof,run_impacts}.py` all exit 0 with no
+   traceback under `python3 <script> --help`.
+2. **`ast.parse()`** over every new/changed file (`run.py`, all six
+   `datacards/*.py`, `common/{cmsenv,conda_env,lcg_env,sample_paths}.py`,
+   `condor/common.py`) — all parse cleanly.
+3. **Mocked-subprocess command-construction check (`run.py`, all 9 modes):**
+   monkeypatched `subprocess.run` and drove every mode
+   (`XSEC`/`SHAPES`/`SHAPES-NOSYS`/`PLOT`/`TRAIN-SHAPES`/`CONFIGS`/
+   `GEN-TFF-CONFIGS`/`PRESEL`/`FF`/`FF-CORR`) with representative
+   flags/env-vars, and diffed the constructed argv/PYTHONPATH/conda-activation
+   string against the equivalent bash logic by hand — all matched, including
+   the `${CHANNELS/,/-}` bash quirk of replacing only the **first** comma
+   (reproduced via `channels.replace(',', '-', 1)`, not `.replace(',', '-')`),
+   the `et`→`Tight`/other→`VVLoose` VS_ELE_WP default, and FF-friends-dir/
+   `--ff-type fake_factor`/`--presel-dir`/`--skip-systematic-variations`/
+   `--no-dnn-categorization` conditional flag assembly in SHAPES/SHAPES-NOSYS.
+4. **Real (not mocked) `GEN-TFF-CONFIGS` run** through `run.py` with
+   `TauFakeFactors` symlinked in: produced a real regenerated
+   `TauFakeFactors/configs/smhtt_ul/2024/preselection_mt.yaml` — confirming
+   `common/conda_env`-free plain-subprocess dispatch, `config/generate_tff_configs.py`
+   import path, and PYTHONPATH wiring all work end-to-end. **This is a
+   real submodule side effect** (the regenerated YAML is semantically
+   equivalent but not byte-identical to the checked-in one, since the
+   generator recomputed it from current `config/*.yaml`), so it was
+   immediately reverted (`git checkout -- configs/smhtt_ul/2024/preselection_mt.yaml`
+   in the actual `/work/sgiappic/TauKITFlow/TauFakeFactors` checkout, confirmed
+   clean via `git status --short`) rather than left as an unintended change to
+   another worktree/agent's shared submodule checkout.
+5. **Real, non-synthetic-in-name-only end-to-end Combine chain through the new
+   `datacards/*.py` scripts** (the most important validation — this is the
+   part of the pipeline most likely to silently break from an env-sourcing
+   mistake): built a structurally-real synthetic shape ROOT file (`mt_gof`
+   TDirectory, `data_obs` + the exact 10 backgrounds `get_backgrounds("mt",
+   embedding=False, jetfakes=False)` returns + `ggH_htt125`/`qqH_htt125`
+   signals, matching Phase 2d's validation methodology) and ran, for real,
+   against the live CMSSW/Combine environment:
+   - `python3 datacards/produce_gof_datacard.py 2024 mt gof htt_260602_2024-25_v5`
+     → real Combine datacard written (`htt_mt_gof_2024.txt` + `combined.txt`),
+     log shows the expected `filter_zero_yield_systs`/`load_systematic_shapes`
+     drops for systematics with no matching shape (same behavior class as
+     Phase 2d), `combineCards.py` (external CMSSW binary via `cmsenv`) ran
+     successfully.
+   - `python3 datacards/produce_gof_workspace.py 2024 mt gof` → real
+     `text2workspace.py` run, real `ws.root` written; independently confirmed
+     valid by running `combine -M GoodnessOfFit --algo=saturated
+     --fixedSignalStrength=0` against it directly (`combine` binary via
+     `cmsenv`), which returned a real best-fit test statistic
+     (`Best fit test statistic: 17.9433`), not an error.
+   - **`python3 datacards/run_gof.py 2024 mt gof <synced-file> saturated 20
+     htt_260602_2024-25_v5 0 4`** → full pipeline run through the new Python
+     entrypoint end-to-end: real observed GoF fit, **4 real parallel toy jobs**
+     (`subprocess.Popen`/`.wait()` fan-out, seeds 1230-1233, 5 toys each),
+     real `combineTool.py -M CollectGoodnessOfFit` collection into
+     `gof_saturated.json`, and the Python-side p-value summary printed
+     correctly (`observed test statistic: 17.9433`, `n_toys: 20`, `p-value:
+     0.0000` — expected, since the synthetic background model doesn't
+     actually fit the synthetic "data" well; the point of this run is
+     confirming the *mechanics*, not a physics result).
+   - **`python3 datacards/run_impacts.py 2024 mt gof 4`** → full Impacts
+     pipeline through the new Python entrypoint against the same real
+     workspace: real `--doInitialFit`, real per-nuisance `--doFits` (12
+     nuisances, `--parallel 4`), real `-o impacts.json` collection, real
+     `plotImpacts.py` tornado PDF, and the Python-side ranked-nuisance summary
+     printed 12 real nuisances in descending impact order (`lumi_13.6TeV_correlated`,
+     `CMS_eff_m`, `CMS_eff_t_wp_Run2024`, ... down to `BR_htt_PU_alphas`).
+   - This confirms `common/cmsenv.py`'s `run_in_cmsenv()`/`get_fitdir()`
+     (including `unlimited_stack=True` and `background=True` for the parallel
+     toy jobs) work correctly against the real CMSSW/Combine environment, not
+     just in a mock — the same level of rigor Phase 2d/3/4 used to validate
+     the original bash scripts.
+6. **Repo-wide grep for stale references** to every renamed/deleted script
+   (`run\.sh`, `produce_datacard\.sh`, `produce_gof_datacard\.sh`,
+   `produce_workspace\.sh`, `produce_gof_workspace\.sh`, `run_gof\.sh`,
+   `run_impacts\.sh`, `setup_ul_samples`) across the non-submodule, non-`trainings/`
+   repo — zero remaining after this slice's README.md/`config/generate_tff_configs.py`/
+   `shapes/preselect.py`/`shapes/produce_shapes.py`/`condor/common.py`/
+   `condor/submit_shapes.py`/`config/analysis.py` doc-comment updates.
+
+### Files changed / added (full list for this slice)
+
+- **New:** `common/cmsenv.py`, `common/conda_env.py`, `common/lcg_env.py`,
+  `common/sample_paths.py`, `run.py`, `datacards/produce_datacard.py`,
+  `datacards/produce_gof_datacard.py`, `datacards/produce_workspace.py`,
+  `datacards/produce_gof_workspace.py`, `datacards/run_gof.py`,
+  `datacards/run_impacts.py`.
+- **Deleted:** `run.sh`, `utils/setup_ul_samples.sh`, `datacards/produce_datacard.sh`,
+  `datacards/produce_gof_datacard.sh`, `datacards/produce_workspace.sh`,
+  `datacards/produce_gof_workspace.sh`, `datacards/run_gof.sh`,
+  `datacards/run_impacts.sh`.
+- **Updated (doc-comments / invocation examples only, no logic changes):**
+  `README.md` (all `run.sh`/`datacards/*.sh` invocation examples and the
+  repository-structure tree), `config/generate_tff_configs.py` (module
+  docstring usage example), `shapes/preselect.py` (error-message hint),
+  `shapes/produce_shapes.py` (`--directory` help text reference),
+  `condor/common.py` (module docstring + generated-wrapper comments),
+  `condor/submit_shapes.py` (module docstring + `--vs-ele-wp` help text),
+  `config/analysis.py` (module docstring consumer list + `get_columns()`
+  comment).
+
+### Not touched (explicitly out of scope, per the task's coordination instructions)
+
+- `trainings/` — owned by Phase 6c (law removal + bash→python conversion
+  there). `run.py`'s TRAIN mode still calls `law` (see above), unchanged from
+  `run.sh`'s behavior; flagged as Phase 6c's future follow-up.
+- `TauFakeFactors/` (submodule) and any TauFakeFactors-wiring files 6e is
+  expected to touch — not modified (the one real write during validation,
+  `configs/smhtt_ul/2024/preselection_mt.yaml`, was immediately reverted; see
+  Validation item 4 above).
+- `shapes/*.sh` — none exist (`shapes/` was already all-Python from prior
+  phases; the `find` command at the start of this slice confirmed this).
+- `CROWN`/`KingMaker`, CMSSW/Combine/CombineHarvester binaries themselves —
+  out of scope per the task description; only the glue calling them changed.
+
+Committed to branch `phase6d-bash-to-python` in this worktree (one commit so
+far covering the full conversion + doc updates; this STATUS.md write-up is a
+second commit). Not pushed, no force operations, no destructive git commands
+used, per the task's git-safety instructions.
