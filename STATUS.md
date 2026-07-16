@@ -4031,3 +4031,60 @@ Real environment, this worktree, not guessed:
 Committed to branch `phase7.2-readme-rewrite` in this worktree. Not pushed,
 no force operations, no destructive git commands used, per the task's
 git-safety instructions.
+
+## Post-Phase-7 addendum (2026-07-16) — naming cleanup + embedding robustness
+
+Done directly (mechanical, low-risk, no agent dispatch needed):
+
+- **`TauHarvest` -> `TauKITFlow` branding removed** repo-wide (run.py,
+  README.md, shapes/produce_shapes.py, plotting/plot_shapes_control.py,
+  common/sample_paths.py). The framework no longer has a second internal
+  name — it's `TauKITFlow` everywhere, matching the repo name.
+- **Fixed the `taukiktflow` conda-env-name typo** flagged (not fixed) in
+  Phase 7.2: the real installed conda env was literally spelled
+  `taukiktflow` (transposed letters) everywhere in code, while
+  `environment.yml` separately said `tauharvest` -- neither matched the
+  other. Cloned the real env to a correctly-spelled `taukitflow`
+  (`conda create -n taukitflow --clone taukiktflow`), verified `import ROOT`
+  + `from XRootD import client` both work in the clone, removed the old
+  `taukiktflow` env, and updated every code/doc reference
+  (`common/conda_env.py`, `common/lcg_env.py`, `condor/common.py`,
+  `condor/submit_taues_fit.py`, `shapes/selection/category_selection.py`,
+  `environment.yml`, `environment-plotting.yml` (`tauharvest-plotting` ->
+  `taukitflow-plotting`), `README.md`).
+- **`friends/` renamed to `xsec/`** (`git mv`, updated `run.py`/`README.md`
+  references) -- the directory only ever built cross-section friend trees,
+  so the generic name was never descriptive; STATUS.md's historical
+  narrative left as-is (old commands referencing `friends/build_friend_tree.py`
+  describe what was actually run at the time).
+- **Real embedding bug fixed**: `tt` channel's tau-ID weight entry in
+  `ZTT_embedded_process_selection` was a malformed 1-element tuple
+  (`(expr,)` with a trailing comma, no weight name) -- every other weight
+  entry is a `(expr, name)` pair; this one would have broken downstream
+  weight-naming the first time `tt`-channel embedding with `apply_wps=True`
+  was actually exercised. Fixed to `(expr, "taubyIsoIdWeight")`, matching the
+  naming convention already used for `mt`.
+- **Real embedding gap fixed**: `et` channel had no tau-ID weight term at
+  all (unlike `mt`/`tt`, which both have one), despite `et` also having
+  exactly one hadronic tau leg (leg 2) needing the same
+  `id_wgt_tau_vsJet_{wp}_2`-based correction `mt` uses. Added, using the
+  same era-guard as `mt`.
+- **Era-guard generalized**: the `RUN2_PRODUCTION_ERAS`-conditional exclusion
+  of the tau-ID weight (needed because the 2018 embedded ntuples don't ship
+  an `id_wgt_tau_vsJet_*` branch at all -- Phase 6a's finding) previously
+  only applied inside the `mt` branch. Now applies uniformly to `mt`/`et`/`tt`
+  via one shared `apply_tau_id_weight` flag computed once at the top of the
+  function, so embedding is a safe, available code-wise option for every
+  channel/era combination -- not just the one combination (`mt`/2018) that
+  happened to be validated so far. No new validation was performed for the
+  other channel/era combinations (user confirmed existing validation is
+  sufficient); this is a correctness/availability fix, not a new physics
+  validation.
+- Verified: real construction of `ZTT_embedded_process_selection` for every
+  (channel, era) pair in `{mt,et,tt,em} x {2018,2024}` succeeds and produces
+  the expected weight names (checked via direct call + log inspection, not
+  just import).
+
+Not committed via a dispatched agent -- done directly in the main checkout
+since these were small, mechanical, low-risk changes plus one narrowly-scoped
+real bug fix, not requiring parallel/isolated-worktree agent dispatch.
