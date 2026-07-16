@@ -3885,3 +3885,149 @@ commits: the main sweep, and the `friends/build_friend_tree.py` follow-up
 found on a repo-wide `pyflakes .` pass after the first commit). Not pushed,
 no force operations, no destructive git commands used, per the task's
 git-safety instructions.
+
+## Phase 7.2 — README rewrite
+
+Status: **DONE.** Branch `phase7.2-readme-rewrite`, this worktree
+(`.claude/worktrees/agent-a36548bdb378df0d4`), based on `master` at `7602e2c`
+(the Phase 7.1 merge commit). The last item in the addendum plan, done last
+on purpose per its own note so it documents the settled post-Phase-6/7.1
+structure rather than a moving target.
+
+**Process note (self-correction, not a change to any shared history):** this
+session's first attempt at `git checkout -b` accidentally ran in the shared
+main checkout (`/work/sgiappic/TauKITFlow`, not this worktree) after a `cd`
+inside a `Bash` call — a pure branch switch, no file edits happened there.
+Caught before any real work landed on it; the shared checkout was switched
+back to `master` and the accidentally-created branch deleted there
+immediately. All actual work for this phase was then done correctly in this
+worktree, on its own branch, per the task's instructions. Recorded here as
+the same class of "lesson for future sessions" Phase 6b already logged
+(never do real work in the shared main checkout while other sessions may be
+using it) — this session avoided repeating the mistake past the branch
+switch itself.
+
+### What was done
+
+Rewrote `README.md` from scratch (the old version was Run3-only-framed,
+titled "TauHarvest", and — per Phase 7.1's explicit flag — still showed
+`config/shapes/{channel_selection,process_selection,variations,
+category_selection}.py` and `config/{helper_collection,
+ntuple_processor_config_helper}.py`, both moved by Phase 5.2 to
+`shapes/selection/`/`common/` respectively). The new README:
+
+1. **Repository layout** — a directory tree built from actually listing
+   every top-level directory in this worktree (`ls`/`find`), not copied from
+   any prior version. Covers `config/` (+ `config/shapes/` data-table/adapter
+   residual), `shapes/` (+ `shapes/selection/`, `shapes/estimations/`),
+   `plotting/`, `combine_datacards/` vs. `datacards/`, `btag_efficiencies/`,
+   `tau_es/`, `condor/`, `common/`, `friends/`, `trainings/` (+ the
+   `uncertainty-aware-training` submodule), `utils/`, both submodules
+   (`TauFakeFactors/`, `ntuple_processor/`), and the generated/gitignored
+   working directories. Explicitly calls out three placement decisions that
+   weren't obvious on first read (`shapes/selection/` vs. `config/shapes/`,
+   `common/` vs. `utils/` — including the `sys.path`-shadowing reason it's
+   not `utils/` — and `combine_datacards/` vs. `datacards/`).
+2. **Environment setup** — documents all four environments actually in use,
+   with the *why*, sourced from the modules' own docstrings rather than
+   guessed: `taukiktflow` conda env (`common/conda_env.py`),
+   `environment-plotting.yml`/`tauharvest-plotting` (PLOT mode only, per
+   `run.py`'s own module docstring), CMSSW/`cmsenv`
+   (`common/cmsenv.py`/`utils/setup_cmssw.sh`) for Combine/datacards/tauES,
+   `utils/setup_root.sh`/`common/lcg_env.py` (lazy, PRESEL-only), and the
+   separate `fake_factors` conda env TauFakeFactors' own scripts need
+   (`ruamel.yaml`, confirmed via `TauFakeFactors/environment.yml` and Phase
+   6e's own environment note). Flags the `environment.yml`
+   name-vs-actual-env-name mismatch (`tauharvest` in the yml, `taukiktflow`
+   as actually created/used on the KIT cluster) explicitly rather than
+   silently picking one.
+3. **Pipeline entry points, in run order** — every `run.py` mode
+   (`XSEC, SHAPES, SHAPES-NOSYS, PLOT, TRAIN-SHAPES, CONFIGS,
+   GEN-TFF-CONFIGS, PRESEL, FF, FF-CORR, FF-MEASURE, TRAIN, TRAIN-DATASET`)
+   plus the standalone entry points outside `run.py`
+   (`run_fake_factor_measurement.py`, `datacards/produce_datacard.py` +
+   siblings, `datacards/run_gof.py`/`run_impacts.py`,
+   `btag_efficiencies/run_btag_efficiency.py`,
+   `tau_es/run_taues_category.py`/`run_taues_fit.py`). Every example command
+   was checked against a real `--help` run of that exact script in this
+   worktree (see Validation below) — none of the flags/positional-argument
+   orders were guessed or remembered from an earlier phase's writeup.
+4. **HTCondor submission** — the current 5 `condor/submit_*.py` scripts
+   (`shapes`, `plotting`, `training`, `btag_efficiency`, `taues_fit`), each
+   with a real example invocation checked against its own `--help`, plus the
+   `env_mode="cmssw"` vs. default-conda distinction for `submit_taues_fit.py`.
+5. **Run2/tauES/embedding scope** — states plainly what's validated (2018/mt
+   control-shape comparison, 36/36 histograms within 3σ, per Phase 6a's
+   table) vs. not (et/tt/em channels, 2016/2017 eras, and — per Phase 6b's
+   own honest gap — no full 100-shift-point real tauES fit exists yet, only
+   a synthetic-shape-file mechanism validation). No aspirational claims.
+6. Deliberately practical/reference-toned, not a changelog — no phase
+   narrative copied in from `STATUS.md`; it points to `STATUS.md` at the end
+   for "why," not "how."
+
+### Validation performed
+
+Real environment, this worktree, not guessed:
+
+- `python3 run.py --help` (plain `taukiktflow` conda env) — confirmed the
+  exact current MODE list (`XSEC, SHAPES, SHAPES-NOSYS, PLOT, TRAIN-SHAPES,
+  CONFIGS, GEN-TFF-CONFIGS, PRESEL, FF, FF-CORR, FF-MEASURE, TRAIN,
+  TRAIN-DATASET`) and its env-var epilog text, and read `run.py`'s full
+  source (every `mode_*` function) to get each mode's actual constructed
+  command right, not just its flags.
+- `--help` run for real, `taukiktflow` env (`PYTHONPATH=.:TauFakeFactors`):
+  `run_fake_factor_measurement.py`, `btag_efficiencies/run_btag_efficiency.py`,
+  `btag_efficiencies/generate_configs.py`, `shapes/produce_shapes.py`,
+  `shapes/do_estimations.py`, `shapes/convert_to_synced_shapes.py`,
+  `plotting/compare_control_shapes.py`, `friends/build_friend_tree.py`,
+  `condor/submit_{shapes,plotting,training,btag_efficiency,taues_fit}.py`.
+- `--help` run for real under `cmsenv` (`source utils/setup_cmssw.sh`,
+  `PYTHONPATH=.:TauFakeFactors`, real CMSSW_15_0_2 at
+  `/ceph/sgiappic/CMSSW_15_0_2`): `combine_datacards/make_datacards.py`,
+  `tau_es/make_taues_datacard.py`, `tau_es/run_taues_fit.py`,
+  `tau_es/run_taues_category.py`, and all six `datacards/*.py` scripts
+  (`produce_datacard`, `produce_gof_datacard`, `produce_workspace`,
+  `produce_gof_workspace`, `run_gof`, `run_impacts`) — confirmed the exact
+  positional-argument order/flags documented in the README for each (they
+  are not all the same shape, e.g. `produce_gof_datacard.py` takes
+  `--use-asimov`/`--embedding`/`--jetfakes` flags that the others don't).
+- `ls`/`find` over every top-level directory named in the README's tree, in
+  this worktree, to confirm it still exists and holds what the README
+  claims (not copied from an earlier phase's file-move writeup).
+- Cross-checked the Run2/tauES numeric claims (36/36 histograms, 0.21 max
+  n_sigma, 3.02% max rel_diff; the "no full 100-shift-point tauES fit"
+  gap) directly against Phase 6a's/6b's own recorded validation sections
+  above, not from memory.
+
+### Known doc gaps left open (deliberately, not silently)
+
+- **`environment.yml`'s `name: tauharvest` vs. the actual `taukiktflow` conda
+  env used everywhere else in this repo (condor wrappers, `run.py`,
+  STATUS.md's every phase)** was not reconciled — this phase's scope is
+  documentation, not fixing a pre-existing packaging inconsistency; flagged
+  explicitly in the README's Environment setup section instead of silently
+  picking one name and hiding the mismatch. A future slice could rename the
+  yml's `name:` field to `taukiktflow` to remove the discrepancy for good.
+- **No real end-to-end run of `run_fake_factor_measurement.py --steps
+  gen-configs` (or any other real step) was performed in this session** —
+  its `--help` output and full module docstring (which includes its own
+  worked example) were used to write the README's example, consistent with
+  Phase 6e's own prior real validation of the equivalent chained commands;
+  not re-validated end-to-end here since this phase's job is documentation,
+  not re-running physics.
+- The exact real-world invocation of `datacards/run_gof.py`/`run_impacts.py`
+  against a genuine (non-synthetic) 2024 shape file was not re-verified in
+  this session (that would require the real synced-shape production this
+  repo's own Phase 2d/6d already flagged as blocked by the `Jet_vetomap`
+  CROWN-schema gap for that specific production tag) — the README's example
+  invocations match the real, validated synthetic-shape run Phase 6d
+  recorded (`datacards/run_gof.py 2024 mt gof <synced-file> saturated 20
+  htt_260602_2024-25_v5 0 4`), with `gof`/`m_vis` interchanged in the README
+  to also show the `produce_gof_datacard.py`/`_workspace.py` pair used with
+  a real variable name rather than the GoF category placeholder — flagged
+  here in case anyone expects byte-for-byte copy of the exact validated
+  command instead.
+
+Committed to branch `phase7.2-readme-rewrite` in this worktree. Not pushed,
+no force operations, no destructive git commands used, per the task's
+git-safety instructions.
