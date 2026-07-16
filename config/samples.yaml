@@ -14,14 +14,20 @@ luminosity:
   2016preVFP: 19.5
   2016postVFP: 16.8
   '2017': 41.5
-  '2018': 59.8
+  # Phase 6a (2026-07-15): this key used to appear twice in this map -- a
+  # second '2018': 59.8 entry (Phase 2b's smhtt_ul DrawLumi() plotting value)
+  # was silently shadowed by this one (Phase 2a's production-side value,
+  # matching smhtt_ul's live lumi_weight()) since YAML keeps only the last
+  # duplicate key. Both get_luminosity() call sites (production weight AND
+  # the CMS plot label) already read this single surviving value -- removed
+  # the dead duplicate rather than leaving two numbers for the same key.
+  '2018': 59.83
   2022preEE: 8.086
   2022postEE: 26.679
   2023preBPix: 17.964
   2023postBPix: 9.677
   '2024': 109.816
   '2025': 109.898
-  '2018': 59.83
 
 backgrounds:
   '2018':
