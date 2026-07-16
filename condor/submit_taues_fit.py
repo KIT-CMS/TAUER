@@ -7,7 +7,7 @@ independent unit of work" granularity condor/submit_shapes.py already uses
 for (era, channel).
 
 Unlike condor/submit_{shapes,plotting,training}.py, this stage runs inside
-the CMSSW/Combine environment, not the taukiktflow conda env -- see
+the CMSSW/Combine environment, not the taukitflow conda env -- see
 condor/common.py's SubmissionPlan.env_mode ("cmssw") hook, added in Phase 6b
 specifically for this.
 

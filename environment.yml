@@ -1,4 +1,4 @@
-name: tauharvest
+name: taukitflow
 channels:
   - conda-forge
   - defaults

@@ -1,4 +1,4 @@
-name: tauharvest-plotting
+name: taukitflow-plotting
 channels:
   - conda-forge
   - defaults

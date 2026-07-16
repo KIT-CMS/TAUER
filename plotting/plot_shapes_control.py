@@ -407,7 +407,7 @@ def plot_control(
 
 
 def parse_arguments():
-    parser = argparse.ArgumentParser(description="Plot control shapes for TauHarvest.")
+    parser = argparse.ArgumentParser(description="Plot control shapes for TauKITFlow.")
     parser.add_argument("--input",    required=True, type=str, help="Input ROOT shapes file.")
     parser.add_argument("--output",   required=True, type=str, help="Output directory.")
     parser.add_argument("--era",      required=True, type=str, help="Era.")

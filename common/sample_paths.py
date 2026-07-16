@@ -48,7 +48,7 @@ def build_ul_sample_paths(ntupletag: str, era: str, user: str | None = None) -> 
 
     if not any(supported in era for supported in RUN3_ERAS_SUPPORTED):
         raise ValueError(
-            f"Unsupported era: {era} (TauHarvest is Run3-only: "
+            f"Unsupported era: {era} (TauKITFlow is Run3-only: "
             f"{', '.join(RUN3_ERAS_SUPPORTED)})"
         )
     # All supported eras use the same bare CROWNRun directory (no per-era

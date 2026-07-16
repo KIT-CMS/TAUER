@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-Shape production for the TauHarvest SM H→ττ analysis.
+Shape production for the TauKITFlow SM H→ττ analysis.
 
 Background sample names and base event selections are sourced from
 TauFakeFactors preselection configs via config/shapes/tff_adapter.
@@ -32,7 +32,7 @@ from ntuple_processor import GraphManager, RunManager, UnitManager
 
 def parse_arguments():
     parser = argparse.ArgumentParser(
-        description="Produce shapes for the TauHarvest SM H→ττ analysis."
+        description="Produce shapes for the TauKITFlow SM H→ττ analysis."
     )
     parser.add_argument("--era", required=True, type=str, help="Experiment era.")
     parser.add_argument(

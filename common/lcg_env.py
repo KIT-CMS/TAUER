@@ -6,7 +6,7 @@ Phase 6d note (STATUS.md "## Phase 6d"): run.sh's bash version sourced
 utils/setup_root.sh unconditionally, up front, for every mode, purely to run
 `nice -n 19 python -c "from config.analysis import get_output_features; ..."`
 under the LCG view's Python (which has pyyaml available) rather than the
-`taukiktflow` conda env's -- the *only* consumer of the result,
+`taukitflow` conda env's -- the *only* consumer of the result,
 OUTPUT_FEATURES, is PRESEL mode's `--columns` flag. This module makes that
 lazy (only called by run.py's PRESEL mode) instead of unconditional, which
 changes nothing observable about any mode's output but avoids paying the LCG

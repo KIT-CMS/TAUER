@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-TauHarvest -- SM H->tautau analysis framework, main entry point.
+TauKITFlow -- SM H->tautau analysis framework, main entry point.
 
 Python control-script replacement for the former run.sh (Phase 6d, see
 STATUS.md "## Phase 6d"). Same modes, same flags, same defaults, same
@@ -29,11 +29,11 @@ Modes:
 Note on conda activation (see common/conda_env.py's module docstring for the
 reasoning): only the modes that used `check_env()` in the bash version --
 XSEC, SHAPES/SHAPES-NOSYS, TRAIN-SHAPES, CONFIGS, PRESEL -- activate the
-`taukiktflow` conda env before running their python command, exactly as
+`taukitflow` conda env before running their python command, exactly as
 before. PLOT/GEN-TFF-CONFIGS/FF/FF-CORR/TRAIN do not (same as the bash
 version -- they run in whatever environment this script itself is invoked
 under; PLOT in particular is expected to run under the separate
-`environment-plotting.yml` env, not `taukiktflow`).
+`environment-plotting.yml` env, not `taukitflow`).
 """
 from __future__ import annotations
 
@@ -95,7 +95,7 @@ underlying python script, exactly like the old run.sh's trailing "$@".
 def make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="run.py",
-        description="TauHarvest -- SM H->tautau analysis framework",
+        description="TauKITFlow -- SM H->tautau analysis framework",
         epilog=HELP_EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -158,7 +158,7 @@ def mode_xsec(cfg, extra):
 
     cmd = [
         "python",
-        "friends/build_friend_tree.py",
+        "xsec/build_friend_tree.py",
         "--basepath",
         paths.kingmaker_basedir_xrootd,
         "--outputpath",

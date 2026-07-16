@@ -2,7 +2,7 @@ import numpy as np
 
 # ntuple_processor is only needed for shape *production* (the `categorization`
 # Selection/Histogram objects at the bottom of this module), which runs in the
-# `taukiktflow` conda env. It is NOT available in the CMSSW/cmsenv session used
+# `taukitflow` conda env. It is NOT available in the CMSSW/cmsenv session used
 # for datacard construction (utils/setup_cmssw.sh) -- and that session needs to
 # import DNN_CLASS_MAPPING from this module (combine_datacards/categories.py's
 # stxs_stage0_run3 path). So the import is guarded: DNN_CLASS_MAPPING /

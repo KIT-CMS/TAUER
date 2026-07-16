@@ -1,8 +1,8 @@
 # TauKITFlow
 
-SM H→ττ analysis framework (internal name `TauHarvest`, see `run.py --help`). It runs the
-full shape-based analysis chain — CROWN ntuples → shapes → estimations → control plots /
-Combine datacards / DNN training — for the KIT-CMS H→ττ measurement.
+SM H→ττ analysis framework. It runs the full shape-based analysis chain — CROWN ntuples →
+shapes → estimations → control plots / Combine datacards / DNN training — for the
+KIT-CMS H→ττ measurement.
 
 TauKITFlow is **not** a fork of `smhtt_ul` or a wrapper around it: every analysis-specific
 step that used to live in a sibling repo or a compiled CMSSW binary (shape production
@@ -44,7 +44,7 @@ supported).
 TauKITFlow/
 ├── run.py                        # Main pipeline entry point (all MODEs, see below)
 ├── run_fake_factor_measurement.py # Chains GEN-TFF-CONFIGS -> PRESEL -> FF -> FF-CORR
-├── environment.yml                # `taukiktflow` conda env (shape production/training)
+├── environment.yml                # `taukitflow` conda env (shape production/training)
 ├── environment-plotting.yml       # Separate env for PLOT (adds ROOT to the plotting stack)
 │
 ├── config/                        # Central, single-sourced analysis config
@@ -120,7 +120,7 @@ TauKITFlow/
 ├── common/                           # Generic utilities (not analysis config, not selection logic)
 │   ├── cmsenv.py                     #   run_in_cmsenv()/get_fitdir() -- shells out to
 │   │                                 #   utils/setup_cmssw.sh once, for datacards/*.py & tau_es/
-│   ├── conda_env.py                  #   run_in_conda() -- activates `taukiktflow`, for run.py
+│   ├── conda_env.py                  #   run_in_conda() -- activates `taukitflow`, for run.py
 │   ├── lcg_env.py                    #   get_output_features() under the CVMFS LCG view (PRESEL)
 │   ├── sample_paths.py               #   Run3 CROWN ntuple/friend-tree path construction
 │   ├── helper_collection.py          #   ObjBuildingDict/NestedDefaultDict/STXS helpers
@@ -176,14 +176,11 @@ ROOT view sets `PYTHONHOME` to the LCG interpreter, and a subsequent `conda acti
 conda's Python first on `PATH` without clearing `PYTHONHOME` — the mismatch crashes Python at
 startup with `Fatal Python error: init_fs_encoding`).
 
-### 1. `taukiktflow` conda env — shape production, training, condor submission
+### 1. `taukitflow` conda env — shape production, training, condor submission
 
 ```bash
-conda env create -f environment.yml   # yml names the env "tauharvest"; the validated
-                                       # env on the KIT cluster is called "taukiktflow" --
-                                       # `conda env create -n taukiktflow -f environment.yml`
-                                       # to match existing invocations/docs below
-conda activate taukiktflow
+conda env create -f environment.yml   # creates the "taukitflow" env
+conda activate taukitflow
 ```
 
 Includes ROOT + XRootD bindings, `numpy`/`scipy`/`pandas`/`uproot`/`awkward`/`mplhep`/
@@ -197,13 +194,13 @@ directly.
 
 ```bash
 conda env create -f environment-plotting.yml
-conda activate tauharvest-plotting
+conda activate taukitflow-plotting
 ```
 
-Same scientific-Python stack as `taukiktflow` plus `root` (needed because
+Same scientific-Python stack as `taukitflow` plus `root` (needed because
 `plotting/plot_shapes_control.py` reads histograms via `ROOT` directly), kept as a **separate**
-env from `taukiktflow` on purpose (see `run.py`'s module docstring) — `run.py PLOT` does not
-auto-activate any conda env; activate `tauharvest-plotting` yourself first.
+env from `taukitflow` on purpose (see `run.py`'s module docstring) — `run.py PLOT` does not
+auto-activate any conda env; activate `taukitflow-plotting` yourself first.
 
 ### 3. CMSSW / `cmsenv` — Combine, datacards, GoF/Impacts, tauES fit
 
@@ -230,7 +227,7 @@ interpreter that has `pyyaml`. You should not normally need to source it yoursel
 
 `TauFakeFactors/preselection.py`/`ff_calculation.py`/`ff_corrections.py` (and
 `btag_efficiencies/calculate_efficiency.py`, which reuses TFF's `helper` package) import
-`ruamel.yaml`, which is **not** in `taukiktflow`. A separate `fake_factors` conda env (see
+`ruamel.yaml`, which is **not** in `taukitflow`. A separate `fake_factors` conda env (see
 `TauFakeFactors/environment.yml`) has the right dependencies. `run.py`'s PRESEL/FF/FF-CORR/
 FF-MEASURE modes invoke these scripts via a plain `subprocess.run` with whatever Python is on
 `PATH` — activate `fake_factors` yourself before running them (this is a pre-existing
@@ -268,7 +265,7 @@ ERA=2024 NTUPLETAG=htt_260602_2024-25_v5 CHANNELS=mt python3 run.py SHAPES
 NTUPLETAG=htt_260602_2024-25_v5 ERA=2024 python3 run.py XSEC
 ```
 
-Runs `friends/build_friend_tree.py` (needs `taukiktflow`, auto-activated) against the CROWN
+Runs `xsec/build_friend_tree.py` (needs `taukitflow`, auto-activated) against the CROWN
 production, writing `crossSectionPerEventWeight`/`negative_events_fraction`/
 `numberGeneratedEventsWeight` friend trees under `.../CROWNFriends/xsec/`. Required before any
 real MC shape production — these branches are not present on the bare CROWN ntuple.
@@ -310,7 +307,7 @@ as Run3.)
 ### 3. PLOT — control plots
 
 ```bash
-conda activate tauharvest-plotting
+conda activate taukitflow-plotting
 ERA=2024 CHANNELS=mt VARIABLES=m_vis,pt_1,pt_2 python3 run.py PLOT
 ```
 
@@ -451,7 +448,7 @@ python3 condor/submit_taues_fit.py --era 2018 --input-file output/2018-mt-taues-
 ```
 
 `submit_shapes.py`/`submit_plotting.py`/`submit_training.py`/`submit_btag_efficiency.py`
-(`--step preselect/calculate`) run inside the `taukiktflow` conda env (the generated wrapper
+(`--step preselect/calculate`) run inside the `taukitflow` conda env (the generated wrapper
 activates it directly — deliberately does **not** also source `utils/setup_root.sh`, which
 crashes the interpreter, see Environment setup above). `submit_taues_fit.py` is the one
 exception: it needs the CMSSW/Combine environment, selected via

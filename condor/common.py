@@ -23,7 +23,7 @@ Python condor submitter, not a law/luigi HTCondorWorkflow.
   *containerized* CROWN production jobs (universe = container, a specific
   cvmfs-unpacked docker image, law's own job-wrapper/bootstrap scripts) — not
   a natural fit for shapes/plotting/training, which run in the existing
-  `taukiktflow` conda env against a CVMFS LCG view, exactly like run.py
+  `taukitflow` conda env against a CVMFS LCG view, exactly like run.py
   already invokes them (converted from bash to Python in Phase 6d, same design).
 - Conclusion: a lightweight, standalone Python classad generator + `condor_submit`
   subprocess call is the right tool for this slice. All fan-out / job-spec logic
@@ -56,7 +56,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-DEFAULT_CONDA_ENV = "taukiktflow"
+DEFAULT_CONDA_ENV = "taukitflow"
 DEFAULT_CONDA_BASE = "/work/sgiappic/MiniForge"
 DEFAULT_ACCOUNTING_GROUP = "cms.higgs"
 
@@ -90,7 +90,7 @@ class SubmissionPlan:
     conda_env: str = DEFAULT_CONDA_ENV
     # Phase 6b hook (small, clearly marked -- see STATUS.md "## Phase 6b"):
     # tau_es/make_taues_datacard.py + run_taues_fit.py need the CMSSW/Combine
-    # environment (utils/setup_cmssw.sh), not the taukiktflow conda env every
+    # environment (utils/setup_cmssw.sh), not the taukitflow conda env every
     # other stage uses -- this is the first condor stage that isn't a plain
     # shapes/plotting/training conda job. "conda" (default) is the unchanged
     # existing behavior; "cmssw" sources utils/setup_cmssw.sh instead of
@@ -127,14 +127,14 @@ def write_wrapper_script(plan: SubmissionPlan) -> Path:
         # Phase 6b: tau_es/make_taues_datacard.py + run_taues_fit.py need
         # CombineHarvester/Combine's Python bindings and the `combine`/
         # `combineTool.py`/`text2workspace.py` binaries, i.e. the CMSSW
-        # environment (utils/setup_cmssw.sh), not the taukiktflow conda env.
+        # environment (utils/setup_cmssw.sh), not the taukitflow conda env.
         # This mirrors combine_datacards/make_datacards.py's own environment
         # requirement (Phase 2d) -- just now reachable from a condor job too.
         env_block = f"""source {REPO_ROOT}/utils/setup_cmssw.sh
 export PYTHONPATH="{REPO_ROOT}:${{PYTHONPATH:-}}\""""
     else:
         # NOTE: deliberately does NOT `source utils/setup_root.sh` (the CVMFS LCG view
-        # setup). The `taukiktflow` conda env is self-contained (ROOT + XRootD
+        # setup). The `taukitflow` conda env is self-contained (ROOT + XRootD
         # bindings included, per STATUS.md Phase 1 validation) and sourcing the LCG
         # view *before* `conda activate` leaves PYTHONHOME pointed at the LCG
         # interpreter while PATH now resolves to conda's python -- a mismatched
@@ -142,7 +142,7 @@ export PYTHONPATH="{REPO_ROOT}:${{PYTHONPATH:-}}\""""
         # ("Fatal Python error: init_fs_encoding ... No module named 'encodings'").
         # Confirmed reproducible while building this wrapper; conda-only activation
         # (this block) is the environment run.py's own SHAPES/PLOT/etc. modes end up
-        # using in practice (LCG is redundant once TauFakeFactors's `taukiktflow` env
+        # using in practice (LCG is redundant once TauFakeFactors's `taukitflow` env
         # provides ROOT). If a future stage genuinely needs the LCG view instead of
         # this conda env, `unset PYTHONHOME` immediately before `conda activate` here.
         env_block = f"""source {DEFAULT_CONDA_BASE}/etc/profile.d/conda.sh
