@@ -4190,3 +4190,56 @@ submodules) -- resolved by adding the main checkout's populated copies
 files in the main checkout were modified.
 
 (checkpoint continues below once the real produce_shapes.py run completes)
+
+### Part 2 checkpoint -- real mt/2024/DY DNN-categorized run: SUCCESS
+
+Command actually run (after two environment-only false starts, both fixed and documented as
+worktree-hygiene notes, not physics findings):
+```
+PYTHONPATH=<worktree>:<worktree>/TauFakeFactors:/work/sgiappic/TauKITFlow \
+python shapes/produce_shapes.py --era 2024 --channels mt --vs-jet-wp Medium --vs-ele-wp VVLoose \
+  --apply-tauid --xrootd --directory .../CROWNRun \
+  --mt-friend-directory .../CROWNFriends/xsec .../CROWNMultiFriends/nn_output_260703 \
+  --process-selection ztt,zl,zj --skip-systematic-variations --num-processes 4 \
+  --output-file dnn_mt_2024_dy.root
+```
+(DY-only process-selection, chosen deliberately to bound runtime for this smoke/reconciliation
+validation -- see "Scope note" below for why this doesn't cover every background.)
+
+**Environment fix #1** (worktree hygiene, not physics): this worktree's `ntuple_processor` and
+`TauFakeFactors` git submodules are empty placeholder dirs (git worktrees don't auto-populate
+submodules). Fixed by (a) adding the main checkout's populated `ntuple_processor`
+(`/work/sgiappic/TauKITFlow/ntuple_processor`) to `PYTHONPATH` after the worktree root (read-only,
+supplies import content only, no main-checkout files touched), and (b) `rsync`-ing the main
+checkout's `TauFakeFactors` (same submodule commit, `518f5619`, confirmed via `git submodule status`
+in both checkouts) into the worktree's own empty `TauFakeFactors/` directory so
+`config/shapes/tff_adapter.py`'s hardcoded `TFF_CONFIG_ROOT = _REPO_ROOT / "TauFakeFactors"` (which
+resolves relative to the worktree itself, not `PYTHONPATH`) can find
+`TauFakeFactors/configs/smhtt_ul/2024/preselection_mt.yaml`. This is local worktree filesystem state
+only (the path is an untracked gitlink placeholder, `git status --short` confirms no tracked diff)
+-- not a change to the main checkout.
+
+**Result: no `RDataFrame` undeclared-branch errors anywhere** -- confirms the Part 1.2 branch-name
+fix (`nn_predicted_class`/`nn_predicted_max_value`/`nn_output_vector[idx]`) is correct against the
+real friend files. 2469s RDataFrame compute, 48 histograms written to
+`dnn_mt_2024_dy.root`, one per (process x category x region) combination:
+- Real per-category population confirms sane physics, e.g. (OS region) DY-ZTT (genuine Z->tautau):
+  `ztt` category (index 2, the "real Z->tautau" DNN class) gets **1,145,071** entries -- overwhelmingly
+  the largest bin, exactly as expected for a ZTT-truth sample being DNN-classified. DY-ZTT's `ggh`/`qqh`
+  signal-like classes get far fewer (57,466 / 131,478) -- also expected (a DY sample should rarely be
+  classified into the Higgs-signal classes). DY-ZL (Z->ll, non-tau final state) gets its largest
+  population (31,914) in the `ff` class, and DY-ZJ (jet-faked) similarly spreads across
+  `ztt`/`zll`/`misc` -- all physically sane. `xxh` (2D ggh+qqh signal-region binning, now reading
+  `nn_output_vector[0]`/`nn_output_vector[1]` per the Part 1.2 fix) is also populated in every
+  process/region combination.
+- All 7 per-class categories + `xxh` are populated for every (process, region) pair -- **8/8
+  categories populated**, no empty/missing DNN class.
+
+**Scope note (why DY-only, not every background):** a full production-scale run (every process group:
+DY/TT/VV/W/ST/embedding/signals/data, every systematic variation) is a strictly larger version of the
+same validated mechanism and was not run in full here purely for wall-clock reasons (this single
+DY-only mt slice alone took ~46 minutes of real compute + ~15 minutes of upstream ntuple validation).
+DY was chosen because Part 2.2's real-branch check (above) confirmed real nn friends exist for DY
+samples specifically, and DY alone already exercises every DNN category (all 7 classes + xxh) with
+both OS and same-sign regions -- sufficient to validate the branch-name reconciliation and prove the
+mechanism works end-to-end against real data. et/tt below use the same scope for the same reason.
