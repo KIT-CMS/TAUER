@@ -5,7 +5,7 @@ import os
 import glob
 import shutil
 from tqdm import tqdm
-from multiprocessing import Pool, current_process, RLock
+from multiprocessing import Pool, RLock
 import XRootD.client.glob_funcs as xrdglob
 import XRootD.client as client
 from XRootD.client.flags import DirListFlags
