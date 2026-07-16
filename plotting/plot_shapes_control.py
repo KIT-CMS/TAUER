@@ -176,7 +176,7 @@ def plot_control(
     data_hist  = None
 
     # ── Collect background histograms ────────────────────────────────────────
-    from shapes.estimations.defaults import _name_string, _process_map, _dataset_map
+    from shapes.estimations.defaults import _process_map, _dataset_map
 
     bkg_processes = process_config()
 
@@ -331,7 +331,6 @@ def plot_control(
             ax=ax_top_ol,
         )
         # Highlight the selected process
-        idx = stack_order.index(highlight_proc)
         _, y_highlight, _ = _th1_to_numpy(bkg_hists[highlight_proc])
         ax_top_ol.step(
             x_centers, y_highlight, where="mid",

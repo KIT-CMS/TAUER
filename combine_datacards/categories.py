@@ -20,7 +20,6 @@ The ``gof`` and ``stxs_stage0`` paths do not depend on this and are fully
 functional today -- that's what Phase 2d's build/run validation exercises.
 """
 import logging
-import sys
 from itertools import count
 
 from config.logging_setup_configs import setup_logging

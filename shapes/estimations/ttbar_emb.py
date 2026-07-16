@@ -1,5 +1,4 @@
 import logging
-import ROOT
 from .defaults import _name_string, _process_map, _dataset_map
 
 from config.logging_setup_configs import setup_logging

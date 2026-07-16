@@ -1,9 +1,8 @@
 import functools
 import logging
-import os
 import pathlib
 from dataclasses import dataclass
-from typing import Any, Callable, Iterable, List, Tuple, Union
+from typing import Any, Callable, List, Union
 
 import yaml
 
@@ -943,72 +942,6 @@ def qqH125_process_selection(channel, era, vs_jet_wp, vs_ele_wp, weight_stitchin
     return Selection(name="qqH125", weights=qqH125_weights, cuts=qqH125_cuts)
 
 
-def FF_training_process_selection(channel, era, **kwargs):
-    cuts = []
-    weights = []
-    if channel == "et" or channel == "mt":
-        cuts = [
-            (f"id_tau_vsJet_{vs_jet_wp}_2<0.5&&id_tau_vsJet_{vs_jet_wp}_2>0.5", "tau_anti_iso"),
-        ]
-        weights = [("fake_factor", "fake_factor")]
-    elif channel == "tt":
-        Cut(
-            f"""(
-                    (
-                        (id_tau_vsJet_Medium_1 < 0.5) &&
-                        (id_tau_vsJet_Medium_2 > 0.5) &&
-                        (id_tau_vsJet_VVVLoose_1 > 0.5)
-
-                    ) ||
-                    (
-                        (id_tau_vsJet_Medium_1 > 0.5) &&
-                        (id_tau_vsJet_Medium_2 < 0.5) &&
-                        (id_tau_vsJet_VVVLoose_2 > 0.5)
-                    )
-                )""",
-            "tau_anti_iso"
-        ),
-        Weight(
-            f"""(
-                (0.5) * (
-                    ({RuntimeVariables.FF_name_tt_1} * (id_tau_vsJet_Medium_1 < 0.5)) +
-                    ({RuntimeVariables.FF_name_tt_2} * (id_tau_vsJet_Medium_2 < 0.5))
-                )
-            )""",
-            "fake_factor",
-        ),
-        cuts = [
-            (f"""(
-                    (
-                        (id_tau_vsJet_Medium_1 < 0.5) &&
-                        (id_tau_vsJet_Medium_2 > 0.5) &&
-                        (id_tau_vsJet_VVVLoose_1 > 0.5)
-
-                    ) ||
-                    (
-                        (id_tau_vsJet_Medium_1 > 0.5) &&
-                        (id_tau_vsJet_Medium_2 < 0.5) &&
-                        (id_tau_vsJet_VVVLoose_2 > 0.5)
-                    )
-                )""",
-            "tau_anti_iso"),
-        ]
-        weights = [f"""(
-                (0.5) * (
-                    ({RuntimeVariables.FF_name_tt_1} * (id_tau_vsJet_Medium_1 < 0.5)) +
-                    ({RuntimeVariables.FF_name_tt_2} * (id_tau_vsJet_Medium_2 < 0.5))
-                )
-            )""",
-            "fake_factor",]
-    elif channel == "em":
-        raise NotImplementedError("FF training not implemented for em")
-    else:
-        raise ValueError("Invalid channel: {}".format(channel))
-    print("FF training cuts:", cuts)
-    print("FF training weights:", weights)
-    return Selection(name="jetFakes", cuts=cuts, weights=weights)
-
-
 class _SelectionChain(list):
     def __init__(self, functions: Union[Callable, None] = None) -> None:
         super().__init__(functions or [])
@@ -1122,4 +1055,3 @@ HWW_base = HWW_base_process_selection
 qqHWW = qqHWW_process_selection
 WHWW = WHWW_process_selection
 ZHWW = ZHWW_process_selection
-FF_training = FF_training_process_selection

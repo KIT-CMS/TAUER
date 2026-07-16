@@ -7,15 +7,11 @@ from config.logging_setup_configs import setup_logging
 from shapes.selection.process_selection import _get_stxs_bin_or_range
 from ntuple_processor.utils import Cut, Weight
 from ntuple_processor.variations import (
-    AddCut,
     AddWeight,
-    ChangeDatasetReplaceMultipleCutsAndAddWeight,
-    RemoveCut,
     RemoveWeight,
     ReplaceCut,
     ReplaceCutAndAddWeight,
     ReplaceMultipleCuts,
-    ReplaceMultipleCutsAndAddWeight,
     ReplaceVariable,
     ReplaceVariableReplaceCutAndAddWeight,
     ReplaceWeight,
