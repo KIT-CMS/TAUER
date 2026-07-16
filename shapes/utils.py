@@ -4,29 +4,14 @@ from ntuple_processor.variations import (
     ReplaceCut,
     ReplaceWeight,
     ReplaceCutAndAddWeight,
-    ReplaceVariable,
 )
 import re
 from copy import deepcopy
 import logging
-import itertools
 
 from config.logging_setup_configs import setup_logging
 
 logger = setup_logging(logger=logging.getLogger(__name__))
-
-# def add_process(analysis_unit, name, dataset, selections, categorization, channel):
-#     """
-#     Add a process to the analysis unit.
-#     """
-#     if not isinstance(selections, list):
-#         selections = [selections]
-#     unitlist = []
-#     for category_selection, actions in categorization[channel]:
-#         full_selection = selections + [category_selection]
-#         unitlist.append(Unit(dataset, full_selection, actions))
-
-#     analysis_unit[name] = unitlist
 
 
 def add_process(

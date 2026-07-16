@@ -3605,3 +3605,283 @@ status per the established n_sigma tolerance convention.
 
 Committed to branch `phase6a-run2-2018-validation`, worked in its own worktree
 (`.claude/worktrees/phase6a-run2-2018-validation`). Not pushed, no destructive git operations used.
+
+## Phase 7.1 — Framework-wide dead-code cleanup
+
+Status: **DONE.** Branch `phase7.1-dead-code-cleanup`, this worktree
+(`.claude/worktrees/agent-ad0cd8b61e2451949`), based on `master` at `2d12794`
+(the Phase 6a merge commit, i.e. after all of Phase 6a-f had landed). Scope:
+everything except `TauFakeFactors/`, `trainings/uncertainty-aware-training/`,
+`ntuple_processor/`, `CROWN`/`KingMaker` (all out-of-scope submodules/externals
+per the task).
+
+### Method
+
+1. Grepped this file for every phrase flagging deferred/known dead code
+   (`dead`, `residual`, `superseded`, `no longer needed`, `shim`, `left as`,
+   `out of scope for this slice`, etc.) across Phases 1-6, and checked each
+   hit against the current tree (some were already fixed by a later phase
+   before this one ever started — see "Already fixed by an earlier phase"
+   below).
+2. Ran `pyflakes` (installed fresh into the `taukiktflow` conda env for this
+   session; not previously present) over every in-scope directory —
+   `config/`, `shapes/`, `plotting/`, `condor/`, `common/`,
+   `combine_datacards/`, `datacards/`, `btag_efficiencies/`, `tau_es/`,
+   `friends/`, `run.py`, `run_fake_factor_measurement.py`,
+   `trainings/create_training_dataset.py`, `trainings/src/` — for unused
+   imports/locals and redefined names.
+3. For every flagged item, grepped the whole repo (excluding the four
+   out-of-scope trees) for real call sites/imports before removing anything;
+   also ran a small AST script across every in-scope `.py` file to look for
+   duplicate top-level `def`/`class` names in the same module (the same class
+   of bug `plotting/process_ordering.py` turned out to have, below).
+
+### Items flagged by earlier phases, checked against the current tree
+
+- **Phase 5.2's `config/shapes/tff_adapter.py` dead re-implementations** —
+  already fully fixed by Phase 5.2 itself (rewritten down to
+  `get_tff_event_selection`/`_load_tff_yaml`). Nothing further to do; the
+  module is still genuinely load-bearing (`shapes/selection/channel_selection.py`
+  imports it), so it was **not** removed — see "signal_files.py" below for the
+  contrast (a shim with the same original justification that *did* end up with
+  zero remaining consumers).
+- **Phase 5.2's `config/cuts.yaml` `channel_selection:` dead-YAML block** —
+  already fully fixed by Phase 5.2 (now read via
+  `get_channel_selection_cuts()`). Confirmed still wired correctly today.
+- **Pre-existing Blocker #1's `Jet_vetomap` (capital J) dead YAML entry in
+  `config/cuts.yaml`** — already fixed (verified `config/cuts.yaml` now reads
+  lowercase `jet_vetomap` in all three `preselection:` blocks, matching the
+  code-level fix Phase 2a made).
+- **Phase 2a's tauES-template dead code
+  (`add_tauES_datasets`/`book_tauES_histograms` never called)** — already
+  fixed by Phase 2a itself; Phase 6b built further on top of it
+  (`tau_es/energy_scales.py`). Nothing dead remains here.
+- **Phase 6a's duplicate `2018:` luminosity key in `config/samples.yaml`** —
+  already fixed by Phase 6a itself (confirmed only one `2018:` entry, value
+  `59.83`, remains).
+- **Phase 6e's dead `# btag_eff = btag_eff` comment in
+  `shapes/selection/variations.py:1303`** — checked, **kept as a false
+  positive for removal**: this is one line of a 4-line commented-out
+  `AdditionalVariations` block (`btag_eff`/`mistag_eff`/
+  `emb_decay_mode_eff_lt`/`emb_decay_mode_eff_tt`) directly under a
+  `# TODO add missing uncertainties` marker — forward-looking scaffolding for
+  variations that don't exist yet (no `btag_eff`/`mistag_eff` function is
+  defined anywhere in the file), not leftover cruft from a completed
+  migration. Removing it would just delete the TODO note of what's still
+  missing. Left alone.
+- **`config/shapes/tff_adapter.py`/`signal_files.py` "still needed
+  post-6e?" check** (explicitly asked for in this task): `tff_adapter.py` —
+  yes, still needed, confirmed one real consumer
+  (`shapes/selection/channel_selection.py:24`). `signal_files.py` — **no
+  longer needed, removed** (see below): Phase 6e didn't touch either file, but
+  by the time of this sweep `shapes/preselect.py` was already importing
+  `SIGNAL_SAMPLES as signal_files` straight from `config.analysis` (a
+  refactor from some earlier phase), leaving the shim module itself with zero
+  importers anywhere in the repo.
+
+### Dead code removed (this slice's own fresh sweep)
+
+1. **`shapes/selection/process_selection.py`: `FF_training_process_selection`
+   (and its `FF_training = ...` alias) — deleted.** This function was
+   genuinely broken if ever called: the `et`/`mt` branch referenced an
+   undefined `vs_jet_wp` (not a parameter of this function — signature is
+   `(channel, era, **kwargs)`), and the `tt` branch called undefined names
+   `Cut(...)`/`Weight(...)`/`RuntimeVariables...` as bare expression
+   statements (not assigned to anything — dead statements even if the names
+   existed) followed by a stray `cuts = [...]`/`weights = [...]` line that
+   would've overwritten them anyway. Confirmed via repo-wide grep (excluding
+   the four out-of-scope trees) that `FF_training`/`FF_training_process_selection`
+   has **zero call sites** anywhere — not in `shapes/produce_shapes.py`'s
+   `add_processes()` dispatch table (which enumerates every other process
+   alias, e.g. `selection.ZTT_embedded`, `selection.W`, explicitly and
+   exhaustively), not in `shapes/do_estimations.py`, not anywhere else.
+2. **`config/shapes/signal_files.py` — deleted.** Zero remaining importers
+   (`shapes/preselect.py` already reads `config.analysis.SIGNAL_SAMPLES`
+   directly). Fixed the two stale doc references this left behind:
+   `shapes/produce_shapes.py`'s module docstring and
+   `config/analysis.py`'s `SIGNAL_SAMPLES` comment.
+3. **`config.analysis.get_combined_files()` — deleted.** Docstring said
+   "Alias for get_samples() kept for backward compat"; its only historical
+   consumer was the `config/shapes/tff_adapter.py` re-implementation Phase
+   5.2 already deleted. Zero remaining callers.
+4. **`config.analysis`'s unused module-level state — deleted**:
+   `OUTPUT_FEATURES`/`FLAGS`/`PRESEL_COLUMNS`/`TRAINING_VARIABLES` module
+   attributes, the `_lazy_init()` function that populated them at import
+   time, and `get_columns()` (a "backward-compat alias" for
+   `get_output_features()`). Confirmed by repo-wide grep that nothing
+   anywhere imports these module attributes or calls `get_columns()` — every
+   real consumer (`common/lcg_env.py`, `trainings/`, etc.) calls the live
+   functions (`get_output_features()`/`get_flags()`/`get_training_variables()`)
+   directly, on demand, rather than reading the cached globals. `SIGNAL_SAMPLES`
+   and `_lazy_init_signals()` are a **different**, still-live pair (real
+   consumer: `shapes/preselect.py`) and were **not** touched.
+5. **`plotting/process_ordering.py` — removed a byte-for-byte duplicate
+   definition.** The entire file had `sorted_bkg_processes()` and
+   `ControlShapeBkgProcesses` defined **twice**, back to back (lines ~34-175
+   then ~178-333 in the pre-cleanup file) — Python only ever executes the
+   second copy (the first is unreachable/shadowed the moment the module
+   finishes importing), confirmed via `pyflakes`' "redefinition of unused"
+   warning and a manual diff (the two copies differ only by the second one
+   having an extra docstring on `get_classic_ff()`). Deleted the first
+   (dead) copy, kept the second. Phase 2b's own note ("byte-for-byte
+   identical... diffed the two files") was about comparing this file against
+   smhtt_ul's, not about this internal duplication, so it isn't a regression
+   from that phase — the duplication looks pre-existing from before Phase 2b.
+6. **`shapes/utils.py` — removed a commented-out, superseded `add_process()`
+   draft** (an 11-line comment block directly above the real, more complete
+   `add_process()` definition, which already has every line the commented
+   block has plus `variations`/`copy` support). Not a provenance record (no
+   STATUS.md phase claims this was deliberately kept for that reason) — a
+   plain leftover first draft.
+7. **Unused imports removed** (confirmed no other reference anywhere in the
+   file before removing each): `numpy`/`ntuple_processor.utils.Selection` from
+   `shapes/produce_shapes.py`; `ntuple_processor.variations.ReplaceVariable`
+   and `itertools` from `shapes/utils.py`; `AddCut`/
+   `ChangeDatasetReplaceMultipleCutsAndAddWeight`/`RemoveCut`/
+   `ReplaceMultipleCutsAndAddWeight` from `shapes/selection/variations.py`;
+   `os`/`Iterable`/`Tuple` from `shapes/selection/process_selection.py`
+   (the `Tuple` uses pyflakes flagged were inside docstring prose, not real
+   annotations); `ROOT` from `shapes/estimations/{fakefactors,additionals,
+   qcd,ttbar_emb}.py` (genuinely never referenced in any of the four —
+   these modules operate on already-constructed ROOT objects passed in as
+   arguments, no direct `ROOT.*` calls of their own); `_name_string` from a
+   local import in `plotting/plot_shapes_control.py`; `dataclasses.field`
+   from `plotting/compare_control_shapes.py`; `Tuple` from
+   `combine_datacards/tools.py`; `sys` from `combine_datacards/categories.py`;
+   `numpy` from `trainings/create_training_dataset.py`;
+   `multiprocessing.current_process` from `friends/build_friend_tree.py`.
+8. **One unused local variable removed**:
+   `plotting/plot_shapes_control.py`'s per-process overlay-plot loop computed
+   `idx = stack_order.index(highlight_proc)` and never used it again anywhere
+   in the loop body.
+
+### False positives checked and kept (not removed)
+
+- `config/analysis.py`: `global SIGNAL_SAMPLES` inside `_lazy_init_signals()`
+  — pyflakes flags this because the function only calls `.update()` on it
+  (mutation, not rebinding), so the `global` declaration is technically
+  unnecessary. Harmless, not dead code (the function and the module attribute
+  it mutates are both real and used) — left alone rather than risk a
+  behavior-neutral but noisy diff for a pure lint nit.
+- `shapes/estimations/fakefactors.py`: pyflakes reports
+  `.defaults._process_map`/`.defaults._dataset_map` "imported but unused" —
+  false positive. Both names **are** used, at lines ~85-110, via
+  `global _dataset_map, _process_map` inside a nested function that
+  reassigns them (`_dataset_map = deepcopy(_dataset_map)`, etc.) before using
+  them in string formatting. pyflakes' static analysis doesn't connect the
+  `global`-declared nested-scope reassignment back to the module-level
+  import. Confirmed by direct grep of real usage sites in the same file —
+  kept.
+- `config/shapes/tff_adapter.py`, `shapes/selection/control_binning.py`,
+  `gof_binning.py`, `taues_measurement_binning.py` — considered per Phase
+  5.2's own "left in config/shapes/ on purpose" note; re-confirmed all four
+  are still genuinely load-bearing today (grepped real importers), no change.
+- `config/generate_tff_configs.py` — Phase 5.2 flagged this as "considered
+  for a move out of config/, left as a judgment call." Re-confirmed it's
+  still a live, actively-called script (`run.py`, `run_fake_factor_measurement.py`,
+  `btag_efficiencies/run_btag_efficiency.py` all invoke it) — not dead, no
+  action needed; the placement judgment call is unchanged from Phase 5.2.
+- `trainings/create_training_dataset.py`/`trainings/src/dataset_manipulation.py`'s
+  `subprocess_dict[Keys.CUT]`/`[Keys.WEIGHT]` residual (Phase 5.2, reaffirmed
+  by Phase 6c) — this is a "where do these columns come from" tracing
+  question, not a dead-code question; out of this slice's scope (not touched).
+- Several apparent "TODO"/commented-out blocks in `shapes/selection/variations.py`
+  (`AdditionalVariations`, `JetFakeVariations` — `# TODO add jetfake
+  uncertainties`, `# TODO add missing uncertainties`) and two commented-out
+  list literals near the bottom of the file
+  (`# emb_decay_mode_eff_lt = [...]`, `# _emb_decay_mode_eff_tt = [...]`,
+  each with an inline "TODO: Check if needed or is replaced" note) — checked
+  and kept: these are explicitly-marked forward-looking placeholders for
+  variations that haven't been implemented yet (no corresponding function
+  exists), not stale leftovers from a completed migration.
+
+### Validation performed
+
+Environment: `taukiktflow` conda env (with `pyflakes` freshly installed via
+`pip install pyflakes` for this session — not previously present).
+`TauFakeFactors`/`ntuple_processor` symlinked into this worktree from the
+main checkout for the session (same documented one-time
+worktree-submodule-gap workaround every prior phase used), restored to empty
+placeholder directories before every commit (confirmed via `git status
+--short` showing no submodule-pointer changes staged in either of this
+phase's two commits). `CMSSW_15_0_2` at `/ceph/sgiappic/CMSSW_15_0_2`
+(`utils/setup_cmssw.sh`, unchanged) for everything under `combine_datacards/`,
+`datacards/`, and `tau_es/run_taues_category.py` (needs CombineHarvester).
+
+1. **`ast.parse()` over every in-scope `.py` file** (repo-wide, excluding the
+   four out-of-scope trees) — all parse cleanly, both before removing
+   anything (baseline) and after.
+2. **AST duplicate-top-level-definition scan** across every in-scope file —
+   confirmed zero remaining duplicate `def`/`class` names at module level
+   after the `process_ordering.py` fix (this is what caught it in the first
+   place).
+3. **`pyflakes` over every in-scope directory, before and after** — went
+   from the list of findings above down to exactly the two confirmed false
+   positives (`global SIGNAL_SAMPLES`, `fakefactors.py`'s `_process_map`/
+   `_dataset_map`) plus pre-existing, out-of-scope-for-this-task
+   `f-string is missing placeholders` lint notes (stylistic, not dead code,
+   left alone — present in `shapes/selection/variations.py` and
+   `trainings/create_training_dataset.py` both before and after this slice's
+   changes, unrelated to anything touched here).
+4. **Real imports** (`taukiktflow` conda env, `PYTHONPATH=.:TauFakeFactors`):
+   `config.analysis` (spot-checked `get_output_features()`, `get_luminosity('2024')`,
+   `SIGNAL_SAMPLES`, `get_preselection_cuts('2024','mt')['jet_veto']`,
+   `get_channel_selection_cuts('mt')` — all correct, matching Phase 5.2's
+   own validated values), `shapes.selection.{process_selection,variations,
+   channel_selection,category_selection}` (`channel_selection('mt', era='2024',
+   vs_jet_wp='Medium', vs_ele_wp='VVLoose').cuts` produces the identical cut
+   list Phase 5.2 validated), `shapes.utils`,
+   `shapes.estimations.{fakefactors,additionals,qcd,ttbar_emb}`,
+   `combine_datacards.categories` all import cleanly.
+5. **`--help` runs cleanly (rc=0, `usage:` present, no traceback) for every
+   touched CLI entry point**: `shapes/produce_shapes.py`, `shapes/preselect.py`,
+   `shapes/do_estimations.py`, `shapes/convert_to_synced_shapes.py`,
+   `plotting/plot_shapes_control.py`, `plotting/compare_control_shapes.py`,
+   `trainings/create_training_dataset.py`, `friends/build_friend_tree.py`,
+   `run.py`, `run_fake_factor_measurement.py`,
+   `condor/submit_{shapes,plotting,training,btag_efficiency}.py`,
+   `btag_efficiencies/{run_btag_efficiency,generate_configs}.py` (plain
+   `taukiktflow` conda env, no cmsenv needed for any of the above).
+6. **Under `cmsenv`** (`utils/setup_cmssw.sh`, `PYTHONPATH` including this
+   worktree root + `TauFakeFactors/`): real imports of
+   `combine_datacards.{tools,categories,systematics,compare_datacards,
+   make_datacards}` all succeed; `--help` runs cleanly for
+   `datacards/{produce_datacard,produce_gof_datacard,produce_workspace,
+   produce_gof_workspace,run_gof,run_impacts}.py`,
+   `combine_datacards/make_datacards.py`, `tau_es/{run_taues_fit,
+   run_taues_category}.py` — no `ImportError`/`NameError` introduced by any
+   of this slice's import-line edits (the specific failure class Phase 4b
+   previously found and this task explicitly warned about).
+7. **Repo-wide grep for stale references** to everything deleted
+   (`FF_training`, `signal_files` as a module path, `get_combined_files`,
+   `get_columns`, `OUTPUT_FEATURES`/`FLAGS`/`PRESEL_COLUMNS`/
+   `TRAINING_VARIABLES` as module attributes, `_lazy_init`) — zero remaining
+   in executable code; two stale doc-comment references
+   (`shapes/produce_shapes.py`'s module docstring, `config/analysis.py`'s
+   `SIGNAL_SAMPLES` comment) were found and fixed.
+
+### Known drift not fixed here (explicitly out of scope / left for Phase 7.2)
+
+- **`README.md` is already substantially out of date** relative to the
+  post-Phase-5.2/6 file layout — it still shows `channel_selection.py`/
+  `process_selection.py`/`variations.py`/`category_selection.py` living
+  under `config/shapes/` (moved to `shapes/selection/` by Phase 5.2) and
+  `helper_collection.py`/`ntuple_processor_config_helper.py` under `config/`
+  (moved to `common/` by Phase 5.2), in addition to the now-fixed
+  `signal_files.py` reference. This is squarely what Phase 7.2 ("write
+  documentation... deferred to last so it describes the settled structure")
+  is for — a full README rewrite, not a line-by-line patch job here. Only
+  the two stale references directly caused by *this* slice's own deletions
+  (the `produce_shapes.py`/`config/analysis.py` doc-comments above) were
+  fixed; `README.md` itself was intentionally left for Phase 7.2 rather than
+  spot-patched.
+- No new dead-code items were found in `condor/`, `common/`, `btag_efficiencies/`,
+  `tau_es/`, or `datacards/` — `pyflakes` came back clean for all of them on
+  the first pass (only the `config.analysis`/`shapes/estimations/fakefactors.py`
+  false positives, already covered above).
+
+Committed to branch `phase7.1-dead-code-cleanup` in this worktree (two
+commits: the main sweep, and the `friends/build_friend_tree.py` follow-up
+found on a repo-wide `pyflakes .` pass after the first commit). Not pushed,
+no force operations, no destructive git commands used, per the task's
+git-safety instructions.

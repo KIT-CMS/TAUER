@@ -8,7 +8,6 @@ All data lives in three YAML files next to this module:
 
 This module reads those files and provides a Python API used by:
   config/shapes/tff_adapter.py  (backward-compat shim)
-  config/shapes/signal_files.py (backward-compat shim, re-exports SIGNAL_SAMPLES)
   shapes/selection/process_selection.py (reads get_luminosity())
   shapes/produce_shapes.py
   shapes/preselect.py
@@ -150,35 +149,14 @@ def get_training_variables() -> list[str]:
     return get_output_features() + get_flags()
 
 
-# Backward-compat alias (get_output_features()'s original name)
-def get_columns() -> list[str]:
-    return get_output_features()
-
-
-# Module-level constants populated at import time
-OUTPUT_FEATURES: list[str] = []
-FLAGS: list[str] = []
-PRESEL_COLUMNS: list[str] = []        # backward-compat alias for OUTPUT_FEATURES
-TRAINING_VARIABLES: list[str] = []    # combined output_features + flags
-
-def _lazy_init():
-    global OUTPUT_FEATURES, FLAGS, PRESEL_COLUMNS, TRAINING_VARIABLES
-    if not OUTPUT_FEATURES:
-        OUTPUT_FEATURES = get_output_features()
-        FLAGS = get_flags()
-        PRESEL_COLUMNS = OUTPUT_FEATURES  # backward compat
-        TRAINING_VARIABLES = OUTPUT_FEATURES + FLAGS
-
-_lazy_init()
-
-
 # ── Signal sample access ──────────────────────────────────────────────────────
 
 @lru_cache(maxsize=None)
 def _signal_samples() -> dict[str, dict[str, list[str]]]:
     return _load_samples()["signals"]
 
-# Module-level alias kept for backward compat (signal_files.py shim)
+# Module-level alias; consumed directly by shapes/preselect.py
+# (`from config.analysis import SIGNAL_SAMPLES as signal_files`).
 SIGNAL_SAMPLES: dict[str, dict[str, list[str]]] = {}
 
 def _lazy_init_signals():
@@ -379,11 +357,4 @@ def build_presel_files_dict(channels: list[str], era: str) -> dict:
             ch_dict[sig_key] = list(sig_samples)
         result[era][channel] = ch_dict
     return result
-
-
-# ── Combined samples (used by old tff_adapter shim) ──────────────────────────
-
-def get_combined_files(era: str, channel: str) -> dict[str, list[str]]:
-    """Alias for get_samples() kept for backward compat."""
-    return get_samples(era, channel, include_signals=True)
 

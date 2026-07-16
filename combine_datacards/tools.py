@@ -11,7 +11,7 @@ naming baked in, so it needed no reconciliation with
 import ctypes
 import logging
 import math
-from typing import Literal, Tuple, Optional, Dict, List, Union
+from typing import Literal, Optional, Dict, List, Union
 
 import ROOT
 

@@ -4,7 +4,7 @@ Shape production for the TauHarvest SM H→ττ analysis.
 
 Background sample names and base event selections are sourced from
 TauFakeFactors preselection configs via config/shapes/tff_adapter.
-Signal samples are defined in config/shapes/signal_files.
+Signal samples are defined in config/samples.yaml (config.analysis.SIGNAL_SAMPLES).
 """
 import argparse
 import logging
@@ -13,7 +13,6 @@ import pickle
 from functools import partial
 from itertools import combinations
 
-import numpy as np
 import yaml
 
 import shapes.selection.process_selection as selection
@@ -29,7 +28,6 @@ from shapes.selection.channel_selection import channel_selection
 from config.shapes.control_binning import control_binning as default_control_binning
 from config.analysis import build_files_dict
 from ntuple_processor import GraphManager, RunManager, UnitManager
-from ntuple_processor.utils import Selection
 
 
 def parse_arguments():
