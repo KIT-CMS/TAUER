@@ -4375,3 +4375,66 @@ there is no real 2018 DNN friend tree at any path available to this task, so thi
 validated the way Part 2 validated Run3. This mirrors Phase 6b's own honesty convention: "the
 mechanism exists and is wired correctly" (true, demonstrated above) vs. "this was validated against
 real data" (not true for 2018, and not claimed).
+
+### Part 2 checkpoint -- real tt/2024/DY DNN-categorized run: SUCCESS
+
+Same command pattern (`--channels tt --tt-friend-directory .../CROWNFriends/xsec
+.../CROWNMultiFriends/nn_output_260703 --process-selection ztt,zl,zj`). Completed cleanly (36
+histograms -- **6 categories x 3 processes x 2 regions**, matching tt's smaller 5-class-+-xxh scheme
+vs. mt/et's 7-class-+-xxh, exactly as expected from Part 1.1's tt `category_mapping`), no
+undeclared-branch errors -- confirms the Part 1.2 branch-name fix (and the 5-element
+`nn_output_vector` read for tt specifically, vs. 7 elements for mt/et) against real tt-channel
+friends too.
+
+Real per-category population: DY-ZTT (OS) peaks in `ztt` (310,583 entries, dominant as expected).
+5/5 classes + `xxh` populated for every (process, region) pair -- **6/6 categories populated** for
+every one of the 3 DY sub-processes run. **All three channels (mt, et, tt) now have real,
+branch-name-correct, physically sane DNN categorization confirmed against real 2024 data.**
+
+## Phase 8 summary (close-out for this slice)
+
+**Done and real-data-validated:**
+- Part 1.1: real et (7-class, identical to mt) and tt (5-class) `category_mapping`/
+  `DNN_CLASS_MAPPING` entries added, reconciled from smhtt_ul `77af7d0` the same way Phase 4b did mt.
+  Two real bugs fixed alongside (categorization loop hardcoded to `["mt"]`; `xxh` histogram name
+  hardcoded to `"mt_score"`).
+- Part 1.2: real DNN friend branch names captured with hard evidence (quantities_map.json +
+  direct uproot read of real files, all 3 channels) -- `nn_predicted_class`/`nn_predicted_max_value`/
+  `nn_output_vector`, not the previously-assumed `{channel}_max_index`/`{channel}_max_score`/
+  `{channel}_ggh`/`{channel}_qqh`. `category_selection.py` rewired accordingly (per-class ggh/qqh
+  scores now read from `nn_output_vector[index]`).
+- Part 1.3: confirmed `combine_datacards/categories.py`'s `stxs_stage0_run3` path needed no changes
+  and now resolves real categories/is_signal for all three channels.
+- Part 2.1-2.3: real `produce_shapes.py` runs (era 2024, DY-only process-selection, real
+  `nn_output_260703` friends) for **all three channels** (mt, et, tt) completed with **zero
+  undeclared-branch RDataFrame errors** and **100% of expected DNN categories populated** with
+  physically sane per-process distributions -- the core, previously-open gap ("no real DNN-score
+  friend-tree producer/branch reconciliation exists") is now closed with real evidence for the first
+  time in this framework's history.
+- Part 3: confirmed the same mechanism is era-agnostic by construction (channel-keyed only, no era
+  gating anywhere in `category_selection.py`/`categories.py`), so it mechanically extends to 2018
+  (mt, the only channel 2018 has configured) with zero further code changes needed.
+
+**Explicitly NOT done, and why (honest boundary for this slice):**
+- **Full real Combine datacard (Part 2.4):** reached the CombineHarvester `ExtractShapes` step with
+  correct categories/backgrounds/signals resolved from real config, but a complete datacard needs
+  every background process (`TTT/TTL/TTJ/VVT/VVL/VVJ/W` beyond the `ZTT/ZL/ZJ` this slice produced),
+  both Higgs signals, and a real `data_obs` template -- each would need a comparable multi-hour real
+  production run this session's time budget didn't allow, and were not faked with placeholder/
+  zero-content histograms. Phase 4b's fully-synthetic 7-category mt card remains the existing proof
+  of structural datacard validity; this slice adds real (not synthetic) branch-name + category-
+  population validation on top of it, but a fully-real, fully-populated card is a follow-up.
+- **Real 2018 DNN-score validation (Part 3):** no real 2018 DNN friend tree exists at any path
+  available to this task (confirmed directly via `xrdfs ls` against the real 2018 validation
+  production -- no `CROWNMultiFriends` directory at all), so Part 3 is explicitly code-only/
+  unvalidated, not claimed as tested.
+- **Non-DY backgrounds/signal/data for Run3, and systematic variations:** this slice's real
+  production runs were deliberately DY-only (`--process-selection ztt,zl,zj`,
+  `--skip-systematic-variations`) to bound wall-clock time while still exercising every DNN category
+  end-to-end; a wider process-selection run is a strictly larger version of the same validated
+  mechanism, not expected to change any conclusion above.
+- One non-fatal real-data finding worth a follow-up: some individual W/DY-to-mu-mu files in the et
+  channel's real production showed a friends "difference" in `ntuple_processor.booking`'s per-file
+  validation (nn friends apparently not present for every single file) -- logged but non-fatal, and
+  didn't affect the DY-only run actually exercised here; worth checking if/when a wider
+  process-selection is run for real.
