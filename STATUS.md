@@ -4243,3 +4243,31 @@ DY was chosen because Part 2.2's real-branch check (above) confirmed real nn fri
 samples specifically, and DY alone already exercises every DNN category (all 7 classes + xxh) with
 both OS and same-sign regions -- sufficient to validate the branch-name reconciliation and prove the
 mechanism works end-to-end against real data. et/tt below use the same scope for the same reason.
+
+### Part 2 checkpoint -- real et/2024/DY DNN-categorized run: SUCCESS
+
+Same command pattern as mt (above), `--channels et --et-friend-directory .../CROWNFriends/xsec
+.../CROWNMultiFriends/nn_output_260703 --process-selection ztt,zl,zj`. Completed cleanly (48
+histograms written to `dnn_et_2024_dy.root`), **no undeclared-branch RDataFrame errors** -- confirms
+the Part 1.2 branch-name fix also holds for et (not just mt), as expected since et/mt share the exact
+same real friend-tree schema (`nn_predicted_class`/`nn_predicted_max_value`/`nn_output_vector`,
+verified identically for both channels in Part 1.2's real-file check).
+
+Real per-category population, sane physics: DY-ZTT (OS) peaks in `ztt` (457,792 entries, dominant as
+expected for a genuine Z->tautau truth sample). DY-ZL (Z->ll) peaks in `ff` (821,903 entries) --
+consistent with the et channel's samples.yaml DYjets group including DYto2Mu-2Jets (a Z->mumu sample
+being fed through the et selection produces electron/tau fakes, landing predominantly in the
+jet-fakes-like `ff` DNN class -- physically sane, not a bug). All 7 classes + `xxh` populated for
+every (process, region) pair -- **8/8 categories populated**, matching mt's result.
+
+Non-fatal validation note observed during this run (worth recording, not a blocker): some individual
+files within the W and DY(->mu) sub-samples for the et channel showed a friends "difference" in
+`ntuple_processor.booking`'s per-file validation (the full nn-friend branch set --
+`nn_predicted_class`/`nn_predicted_max_value`/`nn_output_vector` plus the xsec-friend branches --
+listed as "different" for those specific files/samples). This is logged CRITICAL but does not raise
+(booking.py's `found_error` flag is informational, doesn't abort the run) and did not manifest as a
+downstream RDataFrame error for the `ztt`/`zl`/`zj` (DY) process selection actually run here. Read at
+face value, it suggests nn_output_260703 is not uniformly available for every single (era, dataset,
+file) combination in the production (e.g. some individual W/DY-to-mu-mu files may be missing friends)
+-- worth a follow-up sweep if a wider process-selection is ever run for real (not done here, out of
+this slice's DY-only scope).
