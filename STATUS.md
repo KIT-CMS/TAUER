@@ -4271,3 +4271,58 @@ face value, it suggests nn_output_260703 is not uniformly available for every si
 file) combination in the production (e.g. some individual W/DY-to-mu-mu files may be missing friends)
 -- worth a follow-up sweep if a wider process-selection is ever run for real (not done here, out of
 this slice's DY-only scope).
+
+### Part 2.4 -- real datacard construction attempt (mt): mechanism confirmed reachable, full card not completed (time-bounded, documented honestly)
+
+Ran the real mt/2024/DY synced shapes (from Part 2's real production run) through
+`shapes/convert_to_synced_shapes.py -e 2024 -i dnn_mt_2024_dy.root -o <dir>` (CMSSW-independent, ran
+fine under the `taukitflow` conda env) -- this produced real, non-synthetic per-category files
+`2024-mt-synced-{ggh,qqh,ztt,ff,zll,tt,misc,xxh}.root` (8/8, matching `category_mapping`'s categories
++ `xxh`), each containing real `ZTT`/`ZL`/`ZJ` `TH1D`s (the three DY sub-processes actually run).
+
+Placed under the exact directory `combine_datacards/make_datacards.py`'s `stxs_stage0_run3` path
+expects (`synced_shapes-{era}-{channel}-{ntuple_tag}-{tag}/{era}-{channel}-synced-{category}.root`,
+confirmed by reading the source directly -- this naming isn't produced automatically by
+`convert_to_synced_shapes.py` itself, Phase 4b's synthetic run built its scratch files straight into
+this layout, matched here by copying the real converter output into it).
+
+Ran `combine_datacards/make_datacards.py --era 2024 --channels mt --categories stxs_stage0_run3
+--stxs-signals stxs_stage0 --embedding False --jetfakes False --real-data False --systematics False
+--bbb False ...` under `utils/setup_cmssw.sh` (`cmsenv`). **Categories/backgrounds/signals wired
+correctly** (`Using stxs_stage0_run3: signal=[(1, 'mt_ggh'), (2, 'mt_qqh')], background=[(3,
+'mt_ztt'), (4, 'mt_ff'), (5, 'mt_zll'), (6, 'mt_tt'), (7, 'mt_misc')]` -- exactly the real et/mt
+7-class scheme from Part 1), confirming `combine_datacards/categories.py`'s `stxs_stage0_run3` path
+does pick up the real per-channel `DNN_CLASS_MAPPING`/`category_mapping` correctly end-to-end.
+
+**Where it stopped:** `ExtractShapes` needs, for every declared bin, both (a) every background
+process `get_backgrounds(embedding=False, jetfakes=False)` returns for that channel (`ZTT, ZL, ZJ,
+TTT, TTL, TTJ, VVT, VVL, VVJ, W`) and (b) a `data_obs` histogram (read from the file *before*
+`replace_with_asimov(cb)` overwrites it -- confirmed by reading `make_datacards.py`'s own call order:
+`ExtractShapes` happens first, `replace_with_asimov` after, so the file must contain a `data_obs`
+template initially even in Asimov mode). This session's real production (deliberately DY-only, see
+Part 2's scope note) only has `ZTT`/`ZL`/`ZJ` -- `TTT/TTL/TTJ/VVT/VVL/VVJ/W`, both Higgs signals
+(`ggH_htt125`/`qqH_htt125`), and `data_obs` are genuinely absent from the real shape file, and
+producing them for real would mean running `produce_shapes.py` again for TT/VV/W/signal/data process
+groups -- each comparable in wall-clock cost to the DY run already done (order 1-2 hours apiece over
+real xrootd), which is not something this slice fabricates a shortcut around.
+
+**What was deliberately NOT done, and why:** filling in the missing processes with zero-content or
+placeholder histograms so `make_datacards.py` would "succeed" was considered and rejected -- that
+would silently assert those processes have zero real yield, which is not true and not something this
+slice fabricates. Restricting `get_backgrounds()`'s return list to just the 3 available processes was
+also considered and rejected as an undocumented, out-of-scope edit to `combine_datacards/processes.py`
+(a shared, physics-meaningful file) made only to force a green run.
+
+**Honest conclusion:** the real branch-name/categorization mechanism (Part 1.2, Part 2.1-2.3) is
+fully validated against real 2024 data for mt/et (tt in progress below) -- that was this task's
+central, previously-unclosed gap ("no real DNN-score friend-tree producer/branch reconciliation
+exists"), and it is now closed with real evidence. The further step of building a *complete*,
+every-process real Combine datacard (backgrounds + both signals + data) was reached mechanically
+(categories/backgrounds/signals resolve correctly, `ExtractShapes`/CombineHarvester import and run)
+but not completed in this session -- it requires materially more real shape production (TT, VV, W,
+ggH125, qqH125, and data process groups, each a comparable-cost real run to the DY one already done)
+that the remaining time budget did not allow. This is recorded here as an open follow-up, not silently
+skipped: Phase 4b's fully-synthetic 7-category mt card (all processes, systematics, `text2workspace.py`
+success) remains the existing structural-validity proof; this slice adds real (not synthetic) DY-only
+category population + branch-name validation on top of it, but does not yet supersede Phase 4b's card
+with an equally complete *real* one.
