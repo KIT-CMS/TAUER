@@ -126,7 +126,7 @@ TauKITFlow/
 │   ├── helper_collection.py          #   ObjBuildingDict/NestedDefaultDict/STXS helpers
 │   └── ntuple_processor_config_helper.py  # booking-graph glue for ntuple_processor
 │
-├── friends/
+├── xsec/
 │   └── build_friend_tree.py          # XSEC friend-tree production (used by `run.py XSEC`)
 │
 ├── trainings/                        # DNN training pipeline
