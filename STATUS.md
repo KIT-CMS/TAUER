@@ -4326,3 +4326,52 @@ skipped: Phase 4b's fully-synthetic 7-category mt card (all processes, systemati
 success) remains the existing structural-validity proof; this slice adds real (not synthetic) DY-only
 category population + branch-name validation on top of it, but does not yet supersede Phase 4b's card
 with an equally complete *real* one.
+
+## Part 3 -- Run2 (2018) extension: code-only, mechanically free, no real validation possible
+
+**Checked smhtt_ul for a genuine Run2-specific DNN classification scheme first** (per the task's
+instruction to reuse one if it exists, rather than build a fresh adaptation). smhtt_ul's
+`tauID_SFs_dev` branch has an *older* `config/shapes/category_selection.py` that predates the
+`77af7d0`/"nn, combine" Run3 rewrite -- but its `category_mapping` is **mt-only** and **byte-identical**
+to TauKITFlow's own pre-Phase-8 mt entry (`ggh/qqh/ztt/ff/zll/tt/misc`, same indices, same
+`{channel}_max_index`/`{channel}_max_score` branch-naming convention Part 1.2 found doesn't match real
+Run3 friends). There is no separate Run2-specific class scheme anywhere in smhtt_ul's history (no
+embedding-aware or jetFakes-only variant) -- this branch is simply the ancestor of the same mt scheme
+already reconciled in Phase 4b/Part 1, not a distinct Run2 adaptation.
+
+**Conclusion: no adaptation is actually needed.** `shapes/selection/category_selection.py`'s
+`category_mapping`/`DNN_CLASS_MAPPING` are keyed purely by **channel**, never by era, and neither
+`combine_datacards/categories.py`'s `get_categories()` nor `shapes/produce_shapes.py`'s use of
+`default_categorization` take an era argument or gate on `RUN2_PRODUCTION_ERAS` anywhere. Confirmed
+directly:
+```
+>>> get_categories(channel="mt", categorization="stxs_stage0_run3")
+[(1, 'mt_ggh'), (2, 'mt_qqh'), (3, 'mt_ztt'), (4, 'mt_ff'), (5, 'mt_zll'), (6, 'mt_tt'), (7, 'mt_misc')]
+```
+identical regardless of which era ultimately calls it. The embedding-vs-jetFakes background
+substitution that *does* vary by era (`combine_datacards/processes.py:get_backgrounds(embedding=True,
+...)` -> `EMB` instead of raw `ZTT`/`TTT`/`VVT`) is a separate, already-generalized mechanism (Phase
+4b/6a wired embedding for every channel/era combination) and is orthogonal to the DNN class scheme
+itself -- the DNN score bins are backdrop-agnostic regions, not background-composition-aware, so
+Run2's embedding-instead-of-jetFakes-only composition doesn't require a different class scheme, only
+the (already-existing) different background list downstream in the datacard.
+
+**No real 2018 DNN-score friend trees exist anywhere given to this task, confirmed by direct check:**
+`xrdfs ls` against the real 2018 validation production
+(`/store/user/jvoss/CROWN/ntuples/SFs_EMB_Run2_v15nanoAOD_29_06_26/`, the same production Phase 2a/6a
+used for all prior real 2018 validation) shows only `BuildCROWNLib/CROWNBuild/CROWNBuildCombined/
+CROWNFriends/CROWNRun/ConfigureDatasets` -- **no `CROWNMultiFriends` directory at all**, so there is
+no `nn_output_*`-equivalent DNN friend tree for 2018 anywhere on disk (matching Phase 2a/6a's earlier
+finding that `CROWNFriends/` for this production has exactly one subdirectory, `xsec`). This was
+checked directly rather than assumed, per the task's explicit instruction not to fabricate a path.
+
+**Status: code-only, unvalidated.** The DNN classification mechanism (category_mapping/
+DNN_CLASS_MAPPING/categorization/stxs_stage0_run3) mechanically applies to era 2018 today, for
+whichever channel(s) 2018 has configured (`config/samples.yaml`'s 2018 entry is mt-only, per its own
+Phase 2a comment -- et/tt/em are not populated for 2018 at all, so even the *code* extension is only
+exercisable for mt in practice, same channel restriction that already applies to every other 2018-era
+feature in this framework). No real run against real 2018 DNN-scored data was performed or claimed --
+there is no real 2018 DNN friend tree at any path available to this task, so this genuinely cannot be
+validated the way Part 2 validated Run3. This mirrors Phase 6b's own honesty convention: "the
+mechanism exists and is wired correctly" (true, demonstrated above) vs. "this was validated against
+real data" (not true for 2018, and not claimed).
