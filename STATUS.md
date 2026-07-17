@@ -4088,3 +4088,353 @@ Done directly (mechanical, low-risk, no agent dispatch needed):
 Not committed via a dispatched agent -- done directly in the main checkout
 since these were small, mechanical, low-risk changes plus one narrowly-scoped
 real bug fix, not requiring parallel/isolated-worktree agent dispatch.
+
+## Phase 8 — Close Phase 4b's DNN-classification gap with real DNN-score friends
+
+Status: **IN PROGRESS** (checkpoint -- Part 1 code changes done, Part 2 real-data validation running).
+Branch: `worktree-agent-a2022edabf259ff66` (this isolated worktree). Real DNN-score friend trees now
+exist (`CROWNMultiFriends/nn_output_260703` under the real 2024-25 Run3 production
+`htt_260602_2024-25_v5`), closing the "no real DNN friend producer/branches exist yet" boundary
+Phase 4b explicitly left open (see that section's "Honest boundary" above).
+
+### Part 1.1 -- real et/tt class semantics imported from smhtt_ul
+
+Confirmed `77af7d0` ("nn, combine") is still the tip of smhtt_ul's `run3_2024` branch (no newer NN
+commit exists). Its `config/shapes/category_selection.py:DNN_CLASS_MAPPING` defines, **verbatim**:
+- `mt` and `et` (identical 7-class scheme, identical index order): `0 ggh(signal) / 1 vbf(signal) /
+  2 dyjets_tt / 3 dyjets_ll / 4 jetFakes / 5 ttbar / 6 diboson`.
+- `tt`: 5-class scheme `0 ggh(signal) / 1 vbf(signal) / 2 dyjets_tt / 3 jetFakes / 4 bkg_rest`.
+
+This confirms the task brief's description of both schemes exactly. TauKITFlow's mt entry
+(`ggh/qqh/ztt/ff/zll/tt/misc`, indices 0-6) was verified to already be a correct 1:1 name-remap of
+legacy's mt/et scheme (qqh==vbf, ztt==dyjets_tt, zll==dyjets_ll, ff==jetFakes, tt==ttbar,
+misc==diboson) -- Phase 4b's reconciliation stands, no changes needed there.
+
+Extended `shapes/selection/category_selection.py`'s `category_mapping` (previously `mt`-only) with:
+- `et`: `dict(_seven_class_scheme)` -- byte-identical to `mt`'s scheme (same names/indices), since
+  legacy defines mt and et identically.
+- `tt`: a new 5-class dict `{ggh:0, qqh:1, ztt:2, ff:3, misc:4}`, following the same TauKITFlow-name
+  <-> legacy-name mapping as mt/et (misc reused for the tt-specific "bkg_rest" catch-all class; no
+  name collision with the tt *channel*, since tt's category set never includes a category literally
+  named "tt").
+
+`DNN_CLASS_MAPPING`/`SIGNAL_CLASSES` are unchanged in mechanism (still single-sourced off
+`category_mapping`, `is_signal = name in {"ggh","qqh"}`) -- they now cover all three channels for
+free, since they're derived from `category_mapping.items()` generically. The stale comment block
+claiming et/tt were "intentionally left out" was rewritten to describe the Phase 8 reconciliation.
+
+Also fixed two real bugs found while doing this (both were mt-only hardcodes that would have broken
+the moment et/tt were exercised):
+- `categorization` loop only ever built `["mt"]` regardless of `category_mapping`'s actual keys --
+  changed to `list(category_mapping.keys())`.
+- The `xxh` category's `Histogram` name was hardcoded to `"mt_score"` for every channel -- changed to
+  `f"{channel}_score"`.
+
+### Part 1.2 -- real branch-naming reconciliation (ground truth captured, evidence below)
+
+**Real branches, captured two ways** against
+`root://cmsdcache-kit-disk.gridka.de//store/user/sgiappic/CROWN/ntuples/htt_260602_2024-25_v5/CROWNMultiFriends/nn_output_260703/2024/<DYto2Tau-2Jets_..._0J-MLL-50...>/{et,mt,tt}/`:
+1. The directory's own `*_quantities_map.json` sidecar file (via `xrdcp`) lists, for **all three
+   channels identically**: `nn_output_vector`, `nn_predicted_class`, `nn_predicted_max_value` (plus
+   unrelated `is_2022postEE`/`is_2022preEE`/.../`is_2025` era-flag booleans).
+2. Confirmed directly by `xrdcp`-ing one real `_0.root` friend file per channel and reading it with
+   `uproot`: same three branches, same names, in all three channels' friend trees. Sample real
+   values (first entry, et channel): `nn_predicted_class=4`, `nn_predicted_max_value=0.408`,
+   `nn_output_vector=[0.0268, 0.00986, 0.398, 0.0118, 0.408, 0.00194, 0.144]` (7 entries for et/mt,
+   confirmed 5 entries for tt, matching the class-count of each channel's scheme above).
+
+**Verdict: TauKITFlow's assumed branch names did NOT match reality.** Pre-Phase-8 code assumed
+`{channel}_max_index`/`{channel}_max_score` (categorization cuts) and `{channel}_ggh`/`{channel}_qqh`
+(scalar per-class score branches, used only by `build_xxh_cutstring`'s 2D signal binning). None of
+those four branch names exist in the real friends -- the real ones are unprefixed
+(`nn_predicted_class`, `nn_predicted_max_value`) and there is **no separate per-class scalar score
+branch at all**; per-class scores live packed in the `nn_output_vector` array, indexed by
+`category_mapping`'s own class index.
+
+**Fix (in `shapes/selection/category_selection.py`):**
+- Per-category cuts: `{channel}_max_index == idx` -> `nn_predicted_class == idx`.
+- Per-category score histogram: `{channel}_max_score` -> `nn_predicted_max_value`.
+- `build_xxh_cutstring(channel, ggh_index=None, qqh_index=None)`: now builds its 2D cutstring off
+  `nn_output_vector[ggh_index]`/`nn_output_vector[qqh_index]` (defaulting the indices to the
+  channel's own `category_mapping["ggh"/"qqh"]["index"]`) instead of the nonexistent
+  `{channel}_ggh`/`{channel}_qqh` scalar branches.
+- No channel-prefix adapter/rename layer was needed beyond this: since each channel's ntuples (and
+  their nn friend trees) are already split into separate per-channel directories/files upstream
+  (`.../nn_output_260703/2024/<sample>/{et,mt,tt}/...`), each channel's RDataFrame only ever has its
+  own channel's (unprefixed) nn friend attached -- there is no cross-channel branch-name collision
+  from using the bare `nn_predicted_class`/`nn_predicted_max_value`/`nn_output_vector` names directly.
+
+### Part 1.3 -- combine_datacards/categories.py
+
+Already channel-generic (`DNN_CLASS_MAPPING[channel]`, `NotImplementedError` only if the channel key
+is missing) -- confirmed no code changes needed there; it automatically picks up the new et/tt
+entries now that `DNN_CLASS_MAPPING` has them. Synthetic-shape stxs_stage0_run3 validation for et/tt
+(mirroring Phase 4b's mt validation) still to be run as a fallback/complement to the real-data path.
+
+### Part 2 -- real-data validation against htt_260602_2024-25_v5 (2024)
+
+Proxy checked first: `voms-proxy-info -all` showed **120h43m remaining** at task start -- well
+above any single-session need, not a blocker.
+
+Friend directories confirmed present for this production via `xrdfs ls` (matching the task's stated
+layout exactly): `CROWNFriends/xsec`, `CROWNFriends/fake_factors_260618_v5`, `CROWNFriends/fastmtt`,
+`CROWNMultiFriends/nn_output_260703` (plus older `nn_output`/`nn_output_260703_grouped` dirs, not
+used here -- `nn_output_260703` is the one named in the task and confirmed to have real
+`nn_predicted_class` branches above).
+
+Runtime-environment note (worktree-specific, not a physics finding): this worktree's `ntuple_processor`
+and `TauFakeFactors` submodules are empty placeholder directories (git worktrees don't auto-populate
+submodules) -- resolved by adding the main checkout's populated copies
+(`/work/sgiappic/TauKITFlow/ntuple_processor`, `/work/sgiappic/TauKITFlow/TauFakeFactors`) to
+`PYTHONPATH` *after* the worktree root, read-only, purely to supply importable module content; no
+files in the main checkout were modified.
+
+(checkpoint continues below once the real produce_shapes.py run completes)
+
+### Part 2 checkpoint -- real mt/2024/DY DNN-categorized run: SUCCESS
+
+Command actually run (after two environment-only false starts, both fixed and documented as
+worktree-hygiene notes, not physics findings):
+```
+PYTHONPATH=<worktree>:<worktree>/TauFakeFactors:/work/sgiappic/TauKITFlow \
+python shapes/produce_shapes.py --era 2024 --channels mt --vs-jet-wp Medium --vs-ele-wp VVLoose \
+  --apply-tauid --xrootd --directory .../CROWNRun \
+  --mt-friend-directory .../CROWNFriends/xsec .../CROWNMultiFriends/nn_output_260703 \
+  --process-selection ztt,zl,zj --skip-systematic-variations --num-processes 4 \
+  --output-file dnn_mt_2024_dy.root
+```
+(DY-only process-selection, chosen deliberately to bound runtime for this smoke/reconciliation
+validation -- see "Scope note" below for why this doesn't cover every background.)
+
+**Environment fix #1** (worktree hygiene, not physics): this worktree's `ntuple_processor` and
+`TauFakeFactors` git submodules are empty placeholder dirs (git worktrees don't auto-populate
+submodules). Fixed by (a) adding the main checkout's populated `ntuple_processor`
+(`/work/sgiappic/TauKITFlow/ntuple_processor`) to `PYTHONPATH` after the worktree root (read-only,
+supplies import content only, no main-checkout files touched), and (b) `rsync`-ing the main
+checkout's `TauFakeFactors` (same submodule commit, `518f5619`, confirmed via `git submodule status`
+in both checkouts) into the worktree's own empty `TauFakeFactors/` directory so
+`config/shapes/tff_adapter.py`'s hardcoded `TFF_CONFIG_ROOT = _REPO_ROOT / "TauFakeFactors"` (which
+resolves relative to the worktree itself, not `PYTHONPATH`) can find
+`TauFakeFactors/configs/smhtt_ul/2024/preselection_mt.yaml`. This is local worktree filesystem state
+only (the path is an untracked gitlink placeholder, `git status --short` confirms no tracked diff)
+-- not a change to the main checkout.
+
+**Result: no `RDataFrame` undeclared-branch errors anywhere** -- confirms the Part 1.2 branch-name
+fix (`nn_predicted_class`/`nn_predicted_max_value`/`nn_output_vector[idx]`) is correct against the
+real friend files. 2469s RDataFrame compute, 48 histograms written to
+`dnn_mt_2024_dy.root`, one per (process x category x region) combination:
+- Real per-category population confirms sane physics, e.g. (OS region) DY-ZTT (genuine Z->tautau):
+  `ztt` category (index 2, the "real Z->tautau" DNN class) gets **1,145,071** entries -- overwhelmingly
+  the largest bin, exactly as expected for a ZTT-truth sample being DNN-classified. DY-ZTT's `ggh`/`qqh`
+  signal-like classes get far fewer (57,466 / 131,478) -- also expected (a DY sample should rarely be
+  classified into the Higgs-signal classes). DY-ZL (Z->ll, non-tau final state) gets its largest
+  population (31,914) in the `ff` class, and DY-ZJ (jet-faked) similarly spreads across
+  `ztt`/`zll`/`misc` -- all physically sane. `xxh` (2D ggh+qqh signal-region binning, now reading
+  `nn_output_vector[0]`/`nn_output_vector[1]` per the Part 1.2 fix) is also populated in every
+  process/region combination.
+- All 7 per-class categories + `xxh` are populated for every (process, region) pair -- **8/8
+  categories populated**, no empty/missing DNN class.
+
+**Scope note (why DY-only, not every background):** a full production-scale run (every process group:
+DY/TT/VV/W/ST/embedding/signals/data, every systematic variation) is a strictly larger version of the
+same validated mechanism and was not run in full here purely for wall-clock reasons (this single
+DY-only mt slice alone took ~46 minutes of real compute + ~15 minutes of upstream ntuple validation).
+DY was chosen because Part 2.2's real-branch check (above) confirmed real nn friends exist for DY
+samples specifically, and DY alone already exercises every DNN category (all 7 classes + xxh) with
+both OS and same-sign regions -- sufficient to validate the branch-name reconciliation and prove the
+mechanism works end-to-end against real data. et/tt below use the same scope for the same reason.
+
+### Part 2 checkpoint -- real et/2024/DY DNN-categorized run: SUCCESS
+
+Same command pattern as mt (above), `--channels et --et-friend-directory .../CROWNFriends/xsec
+.../CROWNMultiFriends/nn_output_260703 --process-selection ztt,zl,zj`. Completed cleanly (48
+histograms written to `dnn_et_2024_dy.root`), **no undeclared-branch RDataFrame errors** -- confirms
+the Part 1.2 branch-name fix also holds for et (not just mt), as expected since et/mt share the exact
+same real friend-tree schema (`nn_predicted_class`/`nn_predicted_max_value`/`nn_output_vector`,
+verified identically for both channels in Part 1.2's real-file check).
+
+Real per-category population, sane physics: DY-ZTT (OS) peaks in `ztt` (457,792 entries, dominant as
+expected for a genuine Z->tautau truth sample). DY-ZL (Z->ll) peaks in `ff` (821,903 entries) --
+consistent with the et channel's samples.yaml DYjets group including DYto2Mu-2Jets (a Z->mumu sample
+being fed through the et selection produces electron/tau fakes, landing predominantly in the
+jet-fakes-like `ff` DNN class -- physically sane, not a bug). All 7 classes + `xxh` populated for
+every (process, region) pair -- **8/8 categories populated**, matching mt's result.
+
+Non-fatal validation note observed during this run (worth recording, not a blocker): some individual
+files within the W and DY(->mu) sub-samples for the et channel showed a friends "difference" in
+`ntuple_processor.booking`'s per-file validation (the full nn-friend branch set --
+`nn_predicted_class`/`nn_predicted_max_value`/`nn_output_vector` plus the xsec-friend branches --
+listed as "different" for those specific files/samples). This is logged CRITICAL but does not raise
+(booking.py's `found_error` flag is informational, doesn't abort the run) and did not manifest as a
+downstream RDataFrame error for the `ztt`/`zl`/`zj` (DY) process selection actually run here. Read at
+face value, it suggests nn_output_260703 is not uniformly available for every single (era, dataset,
+file) combination in the production (e.g. some individual W/DY-to-mu-mu files may be missing friends)
+-- worth a follow-up sweep if a wider process-selection is ever run for real (not done here, out of
+this slice's DY-only scope).
+
+### Part 2.4 -- real datacard construction attempt (mt): mechanism confirmed reachable, full card not completed (time-bounded, documented honestly)
+
+Ran the real mt/2024/DY synced shapes (from Part 2's real production run) through
+`shapes/convert_to_synced_shapes.py -e 2024 -i dnn_mt_2024_dy.root -o <dir>` (CMSSW-independent, ran
+fine under the `taukitflow` conda env) -- this produced real, non-synthetic per-category files
+`2024-mt-synced-{ggh,qqh,ztt,ff,zll,tt,misc,xxh}.root` (8/8, matching `category_mapping`'s categories
++ `xxh`), each containing real `ZTT`/`ZL`/`ZJ` `TH1D`s (the three DY sub-processes actually run).
+
+Placed under the exact directory `combine_datacards/make_datacards.py`'s `stxs_stage0_run3` path
+expects (`synced_shapes-{era}-{channel}-{ntuple_tag}-{tag}/{era}-{channel}-synced-{category}.root`,
+confirmed by reading the source directly -- this naming isn't produced automatically by
+`convert_to_synced_shapes.py` itself, Phase 4b's synthetic run built its scratch files straight into
+this layout, matched here by copying the real converter output into it).
+
+Ran `combine_datacards/make_datacards.py --era 2024 --channels mt --categories stxs_stage0_run3
+--stxs-signals stxs_stage0 --embedding False --jetfakes False --real-data False --systematics False
+--bbb False ...` under `utils/setup_cmssw.sh` (`cmsenv`). **Categories/backgrounds/signals wired
+correctly** (`Using stxs_stage0_run3: signal=[(1, 'mt_ggh'), (2, 'mt_qqh')], background=[(3,
+'mt_ztt'), (4, 'mt_ff'), (5, 'mt_zll'), (6, 'mt_tt'), (7, 'mt_misc')]` -- exactly the real et/mt
+7-class scheme from Part 1), confirming `combine_datacards/categories.py`'s `stxs_stage0_run3` path
+does pick up the real per-channel `DNN_CLASS_MAPPING`/`category_mapping` correctly end-to-end.
+
+**Where it stopped:** `ExtractShapes` needs, for every declared bin, both (a) every background
+process `get_backgrounds(embedding=False, jetfakes=False)` returns for that channel (`ZTT, ZL, ZJ,
+TTT, TTL, TTJ, VVT, VVL, VVJ, W`) and (b) a `data_obs` histogram (read from the file *before*
+`replace_with_asimov(cb)` overwrites it -- confirmed by reading `make_datacards.py`'s own call order:
+`ExtractShapes` happens first, `replace_with_asimov` after, so the file must contain a `data_obs`
+template initially even in Asimov mode). This session's real production (deliberately DY-only, see
+Part 2's scope note) only has `ZTT`/`ZL`/`ZJ` -- `TTT/TTL/TTJ/VVT/VVL/VVJ/W`, both Higgs signals
+(`ggH_htt125`/`qqH_htt125`), and `data_obs` are genuinely absent from the real shape file, and
+producing them for real would mean running `produce_shapes.py` again for TT/VV/W/signal/data process
+groups -- each comparable in wall-clock cost to the DY run already done (order 1-2 hours apiece over
+real xrootd), which is not something this slice fabricates a shortcut around.
+
+**What was deliberately NOT done, and why:** filling in the missing processes with zero-content or
+placeholder histograms so `make_datacards.py` would "succeed" was considered and rejected -- that
+would silently assert those processes have zero real yield, which is not true and not something this
+slice fabricates. Restricting `get_backgrounds()`'s return list to just the 3 available processes was
+also considered and rejected as an undocumented, out-of-scope edit to `combine_datacards/processes.py`
+(a shared, physics-meaningful file) made only to force a green run.
+
+**Honest conclusion:** the real branch-name/categorization mechanism (Part 1.2, Part 2.1-2.3) is
+fully validated against real 2024 data for mt/et (tt in progress below) -- that was this task's
+central, previously-unclosed gap ("no real DNN-score friend-tree producer/branch reconciliation
+exists"), and it is now closed with real evidence. The further step of building a *complete*,
+every-process real Combine datacard (backgrounds + both signals + data) was reached mechanically
+(categories/backgrounds/signals resolve correctly, `ExtractShapes`/CombineHarvester import and run)
+but not completed in this session -- it requires materially more real shape production (TT, VV, W,
+ggH125, qqH125, and data process groups, each a comparable-cost real run to the DY one already done)
+that the remaining time budget did not allow. This is recorded here as an open follow-up, not silently
+skipped: Phase 4b's fully-synthetic 7-category mt card (all processes, systematics, `text2workspace.py`
+success) remains the existing structural-validity proof; this slice adds real (not synthetic) DY-only
+category population + branch-name validation on top of it, but does not yet supersede Phase 4b's card
+with an equally complete *real* one.
+
+## Part 3 -- Run2 (2018) extension: code-only, mechanically free, no real validation possible
+
+**Checked smhtt_ul for a genuine Run2-specific DNN classification scheme first** (per the task's
+instruction to reuse one if it exists, rather than build a fresh adaptation). smhtt_ul's
+`tauID_SFs_dev` branch has an *older* `config/shapes/category_selection.py` that predates the
+`77af7d0`/"nn, combine" Run3 rewrite -- but its `category_mapping` is **mt-only** and **byte-identical**
+to TauKITFlow's own pre-Phase-8 mt entry (`ggh/qqh/ztt/ff/zll/tt/misc`, same indices, same
+`{channel}_max_index`/`{channel}_max_score` branch-naming convention Part 1.2 found doesn't match real
+Run3 friends). There is no separate Run2-specific class scheme anywhere in smhtt_ul's history (no
+embedding-aware or jetFakes-only variant) -- this branch is simply the ancestor of the same mt scheme
+already reconciled in Phase 4b/Part 1, not a distinct Run2 adaptation.
+
+**Conclusion: no adaptation is actually needed.** `shapes/selection/category_selection.py`'s
+`category_mapping`/`DNN_CLASS_MAPPING` are keyed purely by **channel**, never by era, and neither
+`combine_datacards/categories.py`'s `get_categories()` nor `shapes/produce_shapes.py`'s use of
+`default_categorization` take an era argument or gate on `RUN2_PRODUCTION_ERAS` anywhere. Confirmed
+directly:
+```
+>>> get_categories(channel="mt", categorization="stxs_stage0_run3")
+[(1, 'mt_ggh'), (2, 'mt_qqh'), (3, 'mt_ztt'), (4, 'mt_ff'), (5, 'mt_zll'), (6, 'mt_tt'), (7, 'mt_misc')]
+```
+identical regardless of which era ultimately calls it. The embedding-vs-jetFakes background
+substitution that *does* vary by era (`combine_datacards/processes.py:get_backgrounds(embedding=True,
+...)` -> `EMB` instead of raw `ZTT`/`TTT`/`VVT`) is a separate, already-generalized mechanism (Phase
+4b/6a wired embedding for every channel/era combination) and is orthogonal to the DNN class scheme
+itself -- the DNN score bins are backdrop-agnostic regions, not background-composition-aware, so
+Run2's embedding-instead-of-jetFakes-only composition doesn't require a different class scheme, only
+the (already-existing) different background list downstream in the datacard.
+
+**No real 2018 DNN-score friend trees exist anywhere given to this task, confirmed by direct check:**
+`xrdfs ls` against the real 2018 validation production
+(`/store/user/jvoss/CROWN/ntuples/SFs_EMB_Run2_v15nanoAOD_29_06_26/`, the same production Phase 2a/6a
+used for all prior real 2018 validation) shows only `BuildCROWNLib/CROWNBuild/CROWNBuildCombined/
+CROWNFriends/CROWNRun/ConfigureDatasets` -- **no `CROWNMultiFriends` directory at all**, so there is
+no `nn_output_*`-equivalent DNN friend tree for 2018 anywhere on disk (matching Phase 2a/6a's earlier
+finding that `CROWNFriends/` for this production has exactly one subdirectory, `xsec`). This was
+checked directly rather than assumed, per the task's explicit instruction not to fabricate a path.
+
+**Status: code-only, unvalidated.** The DNN classification mechanism (category_mapping/
+DNN_CLASS_MAPPING/categorization/stxs_stage0_run3) mechanically applies to era 2018 today, for
+whichever channel(s) 2018 has configured (`config/samples.yaml`'s 2018 entry is mt-only, per its own
+Phase 2a comment -- et/tt/em are not populated for 2018 at all, so even the *code* extension is only
+exercisable for mt in practice, same channel restriction that already applies to every other 2018-era
+feature in this framework). No real run against real 2018 DNN-scored data was performed or claimed --
+there is no real 2018 DNN friend tree at any path available to this task, so this genuinely cannot be
+validated the way Part 2 validated Run3. This mirrors Phase 6b's own honesty convention: "the
+mechanism exists and is wired correctly" (true, demonstrated above) vs. "this was validated against
+real data" (not true for 2018, and not claimed).
+
+### Part 2 checkpoint -- real tt/2024/DY DNN-categorized run: SUCCESS
+
+Same command pattern (`--channels tt --tt-friend-directory .../CROWNFriends/xsec
+.../CROWNMultiFriends/nn_output_260703 --process-selection ztt,zl,zj`). Completed cleanly (36
+histograms -- **6 categories x 3 processes x 2 regions**, matching tt's smaller 5-class-+-xxh scheme
+vs. mt/et's 7-class-+-xxh, exactly as expected from Part 1.1's tt `category_mapping`), no
+undeclared-branch errors -- confirms the Part 1.2 branch-name fix (and the 5-element
+`nn_output_vector` read for tt specifically, vs. 7 elements for mt/et) against real tt-channel
+friends too.
+
+Real per-category population: DY-ZTT (OS) peaks in `ztt` (310,583 entries, dominant as expected).
+5/5 classes + `xxh` populated for every (process, region) pair -- **6/6 categories populated** for
+every one of the 3 DY sub-processes run. **All three channels (mt, et, tt) now have real,
+branch-name-correct, physically sane DNN categorization confirmed against real 2024 data.**
+
+## Phase 8 summary (close-out for this slice)
+
+**Done and real-data-validated:**
+- Part 1.1: real et (7-class, identical to mt) and tt (5-class) `category_mapping`/
+  `DNN_CLASS_MAPPING` entries added, reconciled from smhtt_ul `77af7d0` the same way Phase 4b did mt.
+  Two real bugs fixed alongside (categorization loop hardcoded to `["mt"]`; `xxh` histogram name
+  hardcoded to `"mt_score"`).
+- Part 1.2: real DNN friend branch names captured with hard evidence (quantities_map.json +
+  direct uproot read of real files, all 3 channels) -- `nn_predicted_class`/`nn_predicted_max_value`/
+  `nn_output_vector`, not the previously-assumed `{channel}_max_index`/`{channel}_max_score`/
+  `{channel}_ggh`/`{channel}_qqh`. `category_selection.py` rewired accordingly (per-class ggh/qqh
+  scores now read from `nn_output_vector[index]`).
+- Part 1.3: confirmed `combine_datacards/categories.py`'s `stxs_stage0_run3` path needed no changes
+  and now resolves real categories/is_signal for all three channels.
+- Part 2.1-2.3: real `produce_shapes.py` runs (era 2024, DY-only process-selection, real
+  `nn_output_260703` friends) for **all three channels** (mt, et, tt) completed with **zero
+  undeclared-branch RDataFrame errors** and **100% of expected DNN categories populated** with
+  physically sane per-process distributions -- the core, previously-open gap ("no real DNN-score
+  friend-tree producer/branch reconciliation exists") is now closed with real evidence for the first
+  time in this framework's history.
+- Part 3: confirmed the same mechanism is era-agnostic by construction (channel-keyed only, no era
+  gating anywhere in `category_selection.py`/`categories.py`), so it mechanically extends to 2018
+  (mt, the only channel 2018 has configured) with zero further code changes needed.
+
+**Explicitly NOT done, and why (honest boundary for this slice):**
+- **Full real Combine datacard (Part 2.4):** reached the CombineHarvester `ExtractShapes` step with
+  correct categories/backgrounds/signals resolved from real config, but a complete datacard needs
+  every background process (`TTT/TTL/TTJ/VVT/VVL/VVJ/W` beyond the `ZTT/ZL/ZJ` this slice produced),
+  both Higgs signals, and a real `data_obs` template -- each would need a comparable multi-hour real
+  production run this session's time budget didn't allow, and were not faked with placeholder/
+  zero-content histograms. Phase 4b's fully-synthetic 7-category mt card remains the existing proof
+  of structural datacard validity; this slice adds real (not synthetic) branch-name + category-
+  population validation on top of it, but a fully-real, fully-populated card is a follow-up.
+- **Real 2018 DNN-score validation (Part 3):** no real 2018 DNN friend tree exists at any path
+  available to this task (confirmed directly via `xrdfs ls` against the real 2018 validation
+  production -- no `CROWNMultiFriends` directory at all), so Part 3 is explicitly code-only/
+  unvalidated, not claimed as tested.
+- **Non-DY backgrounds/signal/data for Run3, and systematic variations:** this slice's real
+  production runs were deliberately DY-only (`--process-selection ztt,zl,zj`,
+  `--skip-systematic-variations`) to bound wall-clock time while still exercising every DNN category
+  end-to-end; a wider process-selection run is a strictly larger version of the same validated
+  mechanism, not expected to change any conclusion above.
+- One non-fatal real-data finding worth a follow-up: some individual W/DY-to-mu-mu files in the et
+  channel's real production showed a friends "difference" in `ntuple_processor.booking`'s per-file
+  validation (nn friends apparently not present for every single file) -- logged but non-fatal, and
+  didn't affect the DY-only run actually exercised here; worth checking if/when a wider
+  process-selection is run for real.

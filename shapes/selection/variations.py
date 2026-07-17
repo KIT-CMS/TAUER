@@ -1040,20 +1040,20 @@ scheme_ggH = {
     ],
 }
 scheme_qqH = {
-    "vbf_scale_0jet": ["qqH_QQ2HQQ_0J125"],
-    "vbf_scale_1jet": ["qqH_QQ2HQQ_1J125"],
-    "vbf_scale_lowmjj": [
+    "qqh_scale_0jet": ["qqH_QQ2HQQ_0J125"],
+    "qqh_scale_1jet": ["qqH_QQ2HQQ_1J125"],
+    "qqh_scale_lowmjj": [
         "qqH_QQ2HQQ_GE2J_MJJ_0_60125",
         "qqH_QQ2HQQ_GE2J_MJJ_60_120125",
         "qqH_QQ2HQQ_GE2J_MJJ_120_350125",
     ],
-    "vbf_scale_highmjj_lowpt": [
+    "qqh_scale_highmjj_lowpt": [
         "qqH_QQ2HQQ_GE2J_MJJ_350_700_PTH_0_200_PTHJJ_0_25125",
         "qqH_QQ2HQQ_GE2J_MJJ_350_700_PTH_0_200_PTHJJ_GT25125",
         "qqH_QQ2HQQ_GE2J_MJJ_GT700_PTH_0_200_PTHJJ_0_25125",
         "qqH_QQ2HQQ_GE2J_MJJ_GT700_PTH_0_200_PTHJJ_GT25125",
     ],
-    "vbf_scale_highmjj_highpt": ["qqH_QQ2HQQ_GE2J_MJJ_GT350_PTH_GT200125"],
+    "qqh_scale_highmjj_highpt": ["qqH_QQ2HQQ_GE2J_MJJ_GT350_PTH_GT200125"],
 }
 
 ggh_acceptance = []
