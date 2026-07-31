@@ -58,6 +58,8 @@ convert_to_synced_shapes.log
 
 # ntuple_processor's validation cache (generated, per-run)
 validation_database/
+# ...except the hand-written validation scripts that live alongside it.
+!validation_database/*.py
 
 # condor/ submission tooling's generated per-run wrapper/submit/log/config files
 condor/run/
