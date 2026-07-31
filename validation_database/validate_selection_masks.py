@@ -95,6 +95,26 @@ logger = logging.getLogger("validate_selection_masks")
 # these is what "current-TFF-behavior" means below.
 TFF_SKIPPED_CUT_KEYS = ("nbtag", "bb_selection")
 
+# Cut expressions that are unconditionally true and therefore NOT encoded as
+# flags in CROWN's masks: `nbtag` is a non-negative jet count, so `nbtag >= 0`
+# can never fail, and `mt_1` is a non-negative transverse mass, so `mt_1 > 0`
+# only fails on an exact 0.0 that does not occur in practice. The yamls still
+# spell them out (QCD/fraction/AR_SR regions, and the Wjets DR_SR regions
+# respectively). They are dropped from the reconstructed cut string so the
+# event-by-event comparison stays a like-for-like test of the mask; keeping
+# them would report a "mismatch" for a cut the mask deliberately omits.
+VACUOUS_CUT_EXPRESSIONS = ("(nbtag >= 0)", "(mt_1 > 0)")
+
+
+def _is_vacuous(expression: str) -> bool:
+    """True if a yaml cut expression is unconditionally satisfied.
+
+    Whitespace-insensitive: the yamls are hand-edited and the same cut appears
+    with and without spaces inside the parentheses.
+    """
+    squashed = "".join(expression.split())
+    return squashed in {"".join(e.split()) for e in VACUOUS_CUT_EXPRESSIONS}
+
 # The same-sign expression FF_Wjets.py / FF_ttbar.py write into the region's
 # tau_pair_sign key for their in-code QCD estimation, verbatim.
 SAME_SIGN_EXPR = "(q_1*q_2) > 0"
@@ -294,10 +314,14 @@ def cut_string(cuts: dict[str, str], skip_tff_skipped_keys: bool = False) -> str
     `skip_tff_skipped_keys` reproduces what TauFakeFactors' apply_region_filters
     actually applies today (nbtag/bb_selection dropped) — the "current-TFF-
     behavior" column of the report.
+
+    Unconditionally-true expressions are always dropped, matching the masks;
+    see VACUOUS_CUT_EXPRESSIONS.
     """
     items = [
         (k, v) for k, v in cuts.items()
         if not (skip_tff_skipped_keys and k in TFF_SKIPPED_CUT_KEYS)
+        and not _is_vacuous(v)
     ]
     if not items:
         return "true"
