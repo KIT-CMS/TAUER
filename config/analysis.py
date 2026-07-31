@@ -84,6 +84,36 @@ RUN2_PRODUCTION_ERAS = ("2018",)
 
 SUPPORTED_ERAS = RUN3_ERAS + RUN2_PRODUCTION_ERAS
 
+# Fake factors are measured on the pre- and post-era parts together, so
+# TauFakeFactors ships ONE set of fake_factors_*/corrections_* configs per
+# year, in the combined `2022` / `2023` directories, and applies it identically
+# to both halves. The per-half directories (2022preEE, ...) still hold their own
+# preselection_*.yaml -- only the FF region configs are shared.
+#
+# NOTE: the FF/corrections yamls that still sit in the per-half directories are
+# stale leftovers and are NOT read by anything once this mapping is used. They
+# disagree with the combined ones (different njets splitting, older isolation
+# windows); they are kept only to avoid deleting files nobody asked us to
+# delete, and should be removed upstream.
+_FF_CONFIG_ERA: dict[str, str] = {
+    "2022preEE": "2022",
+    "2022postEE": "2022",
+    "2023preBPix": "2023",
+    "2023postBPix": "2023",
+}
+
+
+def ff_config_era(era: str) -> str:
+    """Return the TauFakeFactors config directory to use for `era`.
+
+    Maps the pre/post halves of 2022 and 2023 onto their combined directory;
+    every other era maps to itself.
+    """
+    if era not in SUPPORTED_ERAS:
+        raise ValueError(f"Era '{era}' not in supported eras: {SUPPORTED_ERAS}")
+    return _FF_CONFIG_ERA.get(era, era)
+
+
 # TFF process name → ntuple_processor dataset key
 _TFF_TO_DATASET: dict[str, str] = {
     "DYjets":  "DY",
@@ -169,12 +199,14 @@ def get_region_mask_names(era: str, channel: str) -> list[str]:
     config/generate_tff_configs.py's generated TFF `output_features:` block --
     concatenate the two lists explicitly.
 
-    `era` is accepted (and validated) because the mask *content* is
-    era-dependent (see the plan's era groups: tt trigger/pt, mt/et QCD lep_iso,
-    Wjets mt_1, ttbar nbtag all change between 2022-23 and 2024+) even though
-    the mask *names* are era-independent by design -- so downstream code never
-    has to special-case an era, and this signature does not have to change if a
-    future era ever gains or loses a region.
+    `era` is accepted (and validated) because the mask *content* can be
+    era-dependent -- the preselection is (the tt double-tau trigger and its pt
+    threshold changed in 2024) -- even though the mask *names* are
+    era-independent by design, so downstream code never has to special-case an
+    era and this signature does not have to change if a future era gains or
+    loses a region. The fake-factor *region* cuts are era-independent: they
+    come from TauFakeFactors' combined `2022`/`2023` config directories (see
+    `ff_config_era`) and are identical there and in 2024/2025/2026.
     """
     if era not in SUPPORTED_ERAS:
         raise ValueError(f"Era '{era}' not in supported eras: {SUPPORTED_ERAS}")

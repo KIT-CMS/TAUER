@@ -58,6 +58,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(REPO_ROOT))
 from common.conda_env import run_in_conda  # noqa: E402
+from config.analysis import ff_config_era  # noqa: E402
 
 MODES = [
     "XSEC",
@@ -552,7 +553,9 @@ def _patched_ff_config(era: str, channel: str, config_kind: str, ff_input_dir: s
     import tempfile
     import yaml
 
-    src_dir = REPO_ROOT / "TauFakeFactors" / "configs" / "smhtt_ul" / era
+    # 2022preEE/2022postEE (and the 2023 halves) share one set of FF configs,
+    # kept in the combined `2022` / `2023` directory -- see analysis.ff_config_era.
+    src_dir = REPO_ROOT / "TauFakeFactors" / "configs" / "smhtt_ul" / ff_config_era(era)
     tmp_dir = Path(tempfile.mkdtemp(prefix=f"tff_config_{era}_{channel}_"))
 
     with open(src_dir / "common_settings.yaml") as f:
@@ -583,7 +586,7 @@ def mode_ff(cfg, extra):
         if cfg["ff_input_dir"]:
             config_file = _patched_ff_config(cfg["era"], channel, "fake_factors", cfg["ff_input_dir"])
         else:
-            config_file = f"TauFakeFactors/configs/smhtt_ul/{cfg['era']}/fake_factors_{channel}.yaml"
+            config_file = f"TauFakeFactors/configs/smhtt_ul/{ff_config_era(cfg['era'])}/fake_factors_{channel}.yaml"
         cmd = ["python", "TauFakeFactors/ff_calculation.py", "--config-file", config_file, *extra]
         result = run_plain(cmd, env_overrides=env_overrides)
         if result.returncode != 0:
@@ -606,7 +609,7 @@ def mode_ff_corr(cfg, extra):
         if cfg["ff_input_dir"]:
             config_file = _patched_ff_config(cfg["era"], channel, "corrections", cfg["ff_input_dir"])
         else:
-            config_file = f"TauFakeFactors/configs/smhtt_ul/{cfg['era']}/corrections_{channel}.yaml"
+            config_file = f"TauFakeFactors/configs/smhtt_ul/{ff_config_era(cfg['era'])}/corrections_{channel}.yaml"
         cmd = ["python", "TauFakeFactors/ff_corrections.py", "--config-file", config_file, *extra]
         result = run_plain(cmd, env_overrides=env_overrides)
         if result.returncode != 0:

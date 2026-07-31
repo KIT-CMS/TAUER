@@ -83,6 +83,7 @@ from config.analysis import (  # noqa: E402
     PRESELECTION_MASK_BRANCH,
     SUPPORTED_ERAS,
     TFF_CONFIG_ROOT,
+    ff_config_era,
     get_preselection_cuts,
     get_region_mask_names,
 )
@@ -122,8 +123,16 @@ def _strip_meta(cuts: dict) -> tuple[dict, str | None]:
 # ── YAML access (read-only) ───────────────────────────────────────────────────
 
 def _load_tff_yaml(era: str, channel: str, kind: str) -> dict:
-    """Read TauFakeFactors/configs/smhtt_ul/{era}/{kind}_{channel}.yaml."""
-    path = TFF_CONFIG_ROOT / era / f"{kind}_{channel}.yaml"
+    """Read TauFakeFactors/configs/smhtt_ul/{era}/{kind}_{channel}.yaml.
+
+    The era is mapped through analysis.ff_config_era first: fake factors are
+    measured on the pre- and post-era halves together, so 2022preEE/2022postEE
+    both read the combined `2022` directory (likewise for 2023). The FF/
+    corrections yamls still sitting in the per-half directories are stale and
+    must NOT be used -- reading them here would compare the masks against cuts
+    that nothing actually applies.
+    """
+    path = TFF_CONFIG_ROOT / ff_config_era(era) / f"{kind}_{channel}.yaml"
     if not path.exists():
         raise FileNotFoundError(
             f"{path} not found.\nRun: git submodule update --init TauFakeFactors"
