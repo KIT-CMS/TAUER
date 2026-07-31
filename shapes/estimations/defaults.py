@@ -16,8 +16,7 @@ _dataset_map = {
     "W": "W",
     "W_NLO": "WNLO",
     "qqH125": "qqH",
-    "ZH125": "ZH",
-    "WH125": "WH",
+    "VH_as_qqH125": "VH",
 }
 
 _process_map = {
@@ -38,8 +37,11 @@ _process_map = {
     "W": "W",
     "W_NLO": "W",
     "qqH125": "qqH125",
-    "ZH125": "ZH125",
-    "WH125": "WH125",
+    # Same real selection-chain label ("qqH125") as the plain qqH125 process
+    # above -- these two are distinguished by "dataset" (qqH vs VH), not by
+    # this field, since both are literally selection.qqH125 applied to
+    # different physical CROWN samples. See shapes/produce_shapes.py.
+    "VH_as_qqH125": "qqH125",
 }
 
 _name_string = "{dataset}#{channel}{process}{selection}#{variation}#{variable}"

@@ -23,12 +23,19 @@ STATUS.md ("## Phase 2d") for the full reconciliation record. Summary:
   ``Channel`` literal placeholders resolved via ``_resolve()``, matching
   variations.py exactly, NOT the ``$ERA``/``$CHANNEL`` CombineHarvester sigils.
 - Where a systematic source has a variations.py counterpart, the *name* here
-  is copied from variations.py's up-name (stripped of "Up") so the two stay
-  byte-for-byte in sync by inspection. Where variations.py splits/groups a
-  source differently than SMRun2Legacy did (jet energy scale: variations.py
-  uses the full 27-source split, not SMRun2Legacy's older regional-JEC
-  grouping; tau ID efficiency: variations.py splits the lt channels by tau pT
-  bin, not by decay mode+pT the way SMRun2Legacy's
+  is copied from variations.py's up-name (stripped of "Up"/"UP") so the two
+  stay byte-for-byte in sync by inspection. Where variations.py splits/groups
+  a source differently than SMRun2Legacy did (jet energy scale: variations.py
+  uses jet_variations.py's REGROUPED 6(+5 per-era)-source scheme, not
+  SMRun2Legacy's older regional-JEC grouping or a full per-individual-source
+  split; b-tagging: jet_variations.py's Run3 fixed-WP scheme
+  (CMS_btag_fixedWP_*), not a full-shape or per-individual-source scheme;
+  trigger: tau_triggersetup.py's CMS_eff_m_trigger/CMS_eff_e_trigger/
+  CMS_trig_t_ditau_cross, not per-source SMRun2Legacy names, and these are NOT
+  era-decorrelated; LHE/PS scale weights: config.py now emits one postfixed
+  set per STXS stage-0 Higgs production mode (_ggH/_qqH/_VH/_ttH), not one
+  shared set for all signal samples; tau ID efficiency: variations.py splits
+  the lt channels by tau pT bin, not by decay mode+pT the way SMRun2Legacy's
   ``split_tau_id_and_es_by_pt`` did), this module follows variations.py's
   scheme, since that's what Phase 1 established as the CMS/Combine-convention-
   correct one and it's what the shape files will actually contain.
@@ -139,7 +146,16 @@ class Processes:
             "ZH_had_GE2J_MJJ_GT700_PTH_0_200_PTHJJ_0_25_htt", "ZH_had_GE2J_MJJ_GT700_PTH_0_200_PTHJJ_GT25_htt",
         ]
         self.VH = [
-            "WH_lep_htt", "ZH_lep_htt", "ggZH_lep_htt", "ttH_htt", "WH_htt", "ZH_htt",
+            # "VH_htt" is the simple stage0-scheme process name (see
+            # combine_datacards/processes.py::get_signals("stxs_stage0")) --
+            # matches shapes/produce_shapes.py's "vh" category, which is
+            # WminusH/WplusH/ZH restricted to leptonic V decay (HTXS_stage_0
+            # in {30, 40}, see shapes/selection/process_selection.py). The
+            # remaining entries below are the finer STXS-submeasurement names
+            # for a not-yet-produced scheme (kept for forward compatibility,
+            # see module docstring).
+            "VH_htt",
+            "WH_lep_htt", "ZH_lep_htt", "ggZH_lep_htt", "WH_htt", "ZH_htt",
             "WH_lep_FWDH_htt",
             "WH_lep_PTV_0_75_htt", "WH_lep_PTV_75_150_htt",
             "WH_lep_PTV_150_250_0J_htt", "WH_lep_PTV_150_250_GE1J_htt", "WH_lep_PTV_GT250_htt",
@@ -150,11 +166,17 @@ class Processes:
             "ggZH_lep_PTV_0_75_htt", "ggZH_lep_PTV_75_150_htt",
             "ggZH_lep_PTV_150_250_0J_htt", "ggZH_lep_PTV_150_250_GE1J_htt", "ggZH_lep_PTV_GT250_htt",
         ]
+        # "ttH_htt" used to be folded into self.VH (wrong -- ttH is its own
+        # STXS stage-0 production mode, and shapes/produce_shapes.py books it
+        # as its own "tth" category, distinct from "vh"); it now has its own
+        # dedicated group, matching combine_datacards/processes.py's
+        # get_signals("stxs_stage0").
+        self.ttH = ["ttH_htt"]
         self.ggHToWW = ["ggH_hww"]
         self.qqHToWW = ["qqH_hww"]
-        self.signals = self.ggH + self.ggZH_had + self.qqH + self.VH_had + self.VH
+        self.signals = self.ggH + self.ggZH_had + self.qqH + self.VH_had + self.VH + self.ttH
 
-        self.htt = self.ggH + self.ggZH_had + self.qqH + self.VH_had + self.VH
+        self.htt = self.ggH + self.ggZH_had + self.qqH + self.VH_had + self.VH + self.ttH
         self.hww = self.ggHToWW + self.qqHToWW + ["WH_hww", "ZH_hww"]
 
         self.z = ["ZTT", "ZL", "ZJ"]
@@ -268,14 +290,14 @@ def add_systematics(
         "2017": 1.0082, "2018": 1.0084,
         "2022preEE": 1.0084, "2022postEE": 1.0084,
         "2023preBPix": 1.0084, "2023postBPix": 1.0084,
-        "2024": 1.0084, "2025": 1.0084,
+        "2024": 1.0084, "2025": 1.0084, "2026": 1.0084,
     }
     lumi_unc_corr = {
         "2016": 1.006, "2016preVFP": 1.006, "2016postVFP": 1.006,
         "2017": 1.009, "2018": 1.020,
         "2022preEE": 1.020, "2022postEE": 1.020,
         "2023preBPix": 1.020, "2023postBPix": 1.020,
-        "2024": 1.020, "2025": 1.020,
+        "2024": 1.020, "2025": 1.020, "2026": 1.020,
     }
     lumi_unc_1718 = {"2016": 1.0, "2017": 1.006, "2018": 1.002}
 
@@ -291,16 +313,24 @@ def add_systematics(
     if era != "2018":
         add_syst("CMS_prefiring", "shape", processes.mc, channels.all)
 
-    # ---- Trigger (variations.py: CMS_eff_trigger_{mt,et,tt}_Era, no per-dm split for tt) ----
-    add_syst("CMS_eff_trigger_et_Era", "shape", processes.mc, channels.et)
-    add_syst("CMS_eff_trigger_mt_Era", "shape", processes.mc, channels.mt)
-    add_syst("CMS_eff_trigger_tt_Era", "shape", processes.mc, channels.tt)
+    # ---- Trigger: variations.py now books CROWN's tau_triggersetup.py shift
+    # names directly -- CMS_eff_m_trigger (mt), CMS_eff_e_trigger (et),
+    # CMS_trig_t_ditau_cross (tt); these are NOT era-decorrelated in
+    # tau_triggersetup.py, so no "Era" placeholder (unlike most other
+    # systematics in this file). tau_triggersetup.py has no shift at all for
+    # the em channel, so that stays a flat lnN estimate as before. ----
+    add_syst("CMS_eff_e_trigger", "shape", processes.mc, channels.et)
+    add_syst("CMS_eff_m_trigger", "shape", processes.mc, channels.mt)
+    add_syst("CMS_trig_t_ditau_cross", "shape", processes.mc, channels.tt)
     add_syst("CMS_eff_trigger_em_Era", "lnN", processes.mc, channels.em, 1.02)
 
     if embedding:
-        add_syst("CMS_eff_trigger_emb_et_Era", "shape", processes.emb, channels.et)
-        add_syst("CMS_eff_trigger_emb_mt_Era", "shape", processes.emb, channels.mt)
-        add_syst("CMS_eff_trigger_emb_tt_Era", "shape", processes.emb, channels.tt)
+        # No embedding-side shape systematic exists for et/mt/tt trigger
+        # efficiency in tau_triggersetup.py (the branches that used to be
+        # referenced here, singleElectronTriggerSFUp/singleMuonTriggerSFUp,
+        # are explicitly MC-only -- exclude_samples includes "embedding" --
+        # and there is no ditau-cross-trigger embedding shift at all; see
+        # shapes/selection/variations.py). Flat lnN kept for em only.
         add_syst("CMS_eff_trigger_emb_em_Era", "lnN", processes.emb, channels.em, 1.02)
 
     # ---- Tau-ID WP (lnN, no variations.py shape counterpart) ----
@@ -375,42 +405,43 @@ def add_systematics(
         if embedding:
             add_syst(f"CMS_eff_t_dm_{dm_label}_Run" + era, "shape", processes.emb, channels.tt, 0.5)
 
-    # ---- b-tagging: variations.py defines two schemes (btagging: legacy
-    # 8-source Run2 split; btagging_2024: newer correlated Run3 scheme) but
-    # neither is wired into shapes/produce_shapes.py's booking calls yet
-    # (grepped -- zero references), so no shape histograms for either exist in
-    # the shape files today. Add the era-appropriate name set anyway (per the
-    # module docstring: unmatched systematics are safely dropped downstream by
-    # tools.load_systematic_shapes/filter_zero_yield_systs with a logged
-    # warning) so the wiring is ready once produce_shapes.py adds btag
-    # variations -- pick the Run3 'btagging_2024' name set for era >= 2022
-    # (matches its naming/intent), the legacy 8-source set otherwise. ----
-    if int(era[:4]) >= 2022:
-        for src in ["", "fsr_", "hdamp_", "isr_", "jer_", "jes_", "mass_", "stat_", "tune_"]:
-            add_syst(f"CMS_btag_{src}Era", "shape", processes.mc, channels.all)
-    else:
-        for src in {"btag_b_HF", "btag_c_CFerr1", "btag_c_CFerr2", "btag_j_LF"}:
-            add_syst(f"CMS_{src}", "shape", processes.mc, channels.all)
-        for src in {"btag_b_HFstats1", "btag_b_HFstats2", "btag_j_LFstats1", "btag_j_LFstats2"}:
-            add_syst(f"CMS_{src}_Era", "shape", processes.mc, channels.all)
-
-    # ---- Jet energy scale: variations.py uses the full 27-source JES split
-    # (jet_es list), NOT SMRun2Legacy's regional-JEC grouping -- follow
-    # variations.py unconditionally (the regional_jec toggle is kept as a
-    # CLI-compat no-op). ----
-    jes_sources = [
-        "Total", "SinglePionECAL", "SinglePionHCAL", "AbsoluteMPFBias", "AbsoluteScale",
-        "Fragmentation", "PileUpDataMC", "RelativeFSR", "PileupPtRef", "AbsoluteStat",
-        "TimePtEta", "RelativeStatFSR", "FlavorQCD", "PileupPtEC1", "PileUpPtBB",
-        "RelativePtBB", "RelativeJEREC1", "RelativePtEC1", "RelativeStatEC", "RelativePtHF",
-        "PileUpPtHF", "RelativeJERHF", "RelativeStatHF", "PileUpPtEC2", "RelativeJEREC2",
-        "RelativePtEC2", "RelativeBal", "RelativeSample",
-    ]
-    for src in jes_sources:
-        add_syst(f"CMS_scale_j_{src}", "shape", processes.mc, channels.all)
-
-    if era == "2018":
-        add_syst("CMS_scale_j_HEMIssue_Era", "shape", processes.mc, channels.all)
+    # ---- Jet Energy Scale/Resolution + fixed-WP b-tag SF: variations.py's
+    # jet_energy_scale(era)/jet_energy_resolution(era)/btag_fixedWP(era) --
+    # jet_variations.py's REGROUPED (Run3-only, unconditionally on for this
+    # analysis) scheme: 6 fully-era-correlated JES sources, 5 more
+    # per-era-decorrelated ones, JER, and 4 fixed-WP b-tag components. The
+    # old 27-source per-individual-JES-source list and the legacy Run2
+    # full-shape / "btagging_2024" b-tag name sets matched neither
+    # jet_variations.py's actual output nor anything shapes/produce_shapes.py
+    # books, and are removed.
+    #
+    # CROWN embeds its OWN era tag (not the raw `era` string) into the
+    # per-era-decorrelated names -- e.g. "2022postEE" -> "2022EE" -- so this
+    # uses a local era_tag lookup rather than the generic Era-placeholder
+    # _resolve() the rest of this file relies on.
+    _JES_ERA_MAP = {
+        "2018": "2018",
+        "2022preEE": "2022", "2022postEE": "2022EE",
+        "2023preBPix": "2023", "2023postBPix": "2023BPix",
+        "2024": "2024", "2025": "2025", "2026": "2026",
+    }
+    era_tag = _JES_ERA_MAP.get(era)
+    if era_tag is not None:
+        for src in ["Total", "Absolute", "FlavorQCD", "BBEC1", "HF", "EC2", "RelativeBal"]:
+            add_syst(f"CMS_scale_j_{src}", "shape", processes.mc, channels.all)
+        for src in ["Absolute", "BBEC1", "HF", "EC2", "RelativeSample"]:
+            add_syst(f"CMS_scale_j_{src}_{era_tag}", "shape", processes.mc, channels.all)
+        add_syst(f"CMS_res_j_{era_tag}", "shape", processes.mc, channels.all)
+        # Fixed-WP b-tag scheme (jet_variations.py) is Run3-only; the Run2
+        # full-shape scheme it replaces for 2018 isn't booked in
+        # shapes/produce_shapes.py (2018 shape production is background-only).
+        if int(era[:4]) >= 2022:
+            add_syst("CMS_btag_fixedWP_bc_correlated", "shape", processes.mc, channels.all)
+            add_syst(f"CMS_btag_fixedWP_bc_uncorrelated_{era_tag}", "shape", processes.mc, channels.all)
+            add_syst("CMS_btag_fixedWP_light_correlated", "shape", processes.mc, channels.all)
+            add_syst(f"CMS_btag_fixedWP_light_uncorrelated_{era_tag}", "shape", processes.mc, channels.all)
+    # Note: the 2018-only HEM15/16 shift (CMS_scale_j_HEMIssue_2018) is not
+    # booked in shapes/produce_shapes.py either, so it's not added here.
 
     # ---- MET energy scale and recoil (variations.py: matches exactly) ----
     add_syst("CMS_scale_met_unclustered_Era", "shape", processes.htt + processes.hww + processes.z + processes.ttbar + processes.w + processes.vv, channels.all)
@@ -505,15 +536,25 @@ def add_systematics(
     else:
         add_syst("QCDScale_qqH", "lnN", processes.qqH + processes.qqHToWW, channels.all, 1.005)
 
-    # variations.py: LHE_alphaS{shift}, LHE_pdf{shift}, LHE_scale_muF_norm{shift},
-    # LHE_scale_muR_norm{shift}, PS_scale_Fsr_norm{shift}, PS_scale_Isr_norm{shift}
-    # -- all match SMRun2Legacy's naming exactly (no Era/Channel involved).
-    add_syst("LHE_alphaS", "shape", processes.ggH + processes.qqH, channels.all)
-    add_syst("LHE_pdf", "shape", processes.ggH + processes.qqH, channels.all)
-    add_syst("LHE_scale_muF_norm", "shape", processes.ggH + processes.qqH, channels.all)
-    add_syst("LHE_scale_muR_norm", "shape", processes.ggH + processes.qqH, channels.all)
-    add_syst("PS_scale_Fsr_norm", "shape", processes.ggH, channels.all)
-    add_syst("PS_scale_Isr_norm", "shape", processes.ggH, channels.all)
+    # variations.py: LHE_alphaS_{postfix}{shift}, LHE_pdf_{postfix}{shift},
+    # LHE_scale_muF_norm_{postfix}{shift}, LHE_scale_muR_norm_{postfix}{shift},
+    # PS_scale_Fsr_norm_{postfix}{shift}, PS_scale_Isr_norm_{postfix}{shift}
+    # for postfix in {ggH, qqH, VH, ttH} -- postfixed per STXS stage-0 Higgs
+    # production mode, since config.py's "LHE Scale Weight variations" block
+    # now emits one set of branches per mode (uncorrelated nuisances across
+    # modes) rather than one shared set for all signal samples.
+    for postfix, procs in (
+        ("ggH", processes.ggH),
+        ("qqH", processes.qqH),
+        ("VH", processes.VH),
+        ("ttH", processes.ttH),
+    ):
+        add_syst(f"LHE_alphaS_{postfix}", "shape", procs, channels.all)
+        add_syst(f"LHE_pdf_{postfix}", "shape", procs, channels.all)
+        add_syst(f"LHE_scale_muF_norm_{postfix}", "shape", procs, channels.all)
+        add_syst(f"LHE_scale_muR_norm_{postfix}", "shape", procs, channels.all)
+        add_syst(f"PS_scale_Fsr_norm_{postfix}", "shape", procs, channels.all)
+        add_syst(f"PS_scale_Isr_norm_{postfix}", "shape", procs, channels.all)
 
     for src in {"muF_", "muR_"}:
         add_syst(f"ggH_scale_0jet_{src}", "shape", processes.ggH, channels.all)

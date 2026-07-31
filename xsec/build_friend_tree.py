@@ -4,6 +4,7 @@ import json
 import os
 import glob
 import shutil
+import time
 from tqdm import tqdm
 from multiprocessing import Pool, RLock
 import XRootD.client.glob_funcs as xrdglob
@@ -36,7 +37,7 @@ def args_parser():
     parser.add_argument(
         "--dataset-config",
         type=str,
-        default="TauFakeFactors/datasets/nanoAOD_v12/datasets.json",
+        default="datasets/nanoAOD_v12/datasets.json",
         help="path to the datasets.json (use nanoAOD_v12 for 2022/23, nanoAOD_v15 for 2024/25)",
     )
     parser.add_argument(
@@ -247,6 +248,11 @@ def generate_friend_trees(dataset, ntuples, nthreads, workdir, output_path, debu
 
 
 if __name__ == "__main__":
+    # Self-nice regardless of invocation method (run.py already wraps this in
+    # `nice -n 19`, but this also covers direct invocation). multiprocessing.Pool
+    # workers spawned below inherit this niceness via fork(). Safe to call even
+    # when already niced (os.nice() clamps at the max of 19).
+    os.nice(19)
     args = args_parser()
     base_path = os.path.join(args.basepath, "*/*/*/*.root")
     output_path = os.path.join(args.outputpath)
@@ -274,6 +280,18 @@ if __name__ == "__main__":
         dataset, ntuples_wo_data, nthreads, workdir, output_path, args.debug
     )
     # remove the temporary directory
+    # Retried because workdir tends to live on a networked filesystem: files
+    # moved/xrdcp'd out by many parallel workers can leave transient
+    # .nfsXXXXXXXX silly-rename artifacts that reappear after rmtree's scan,
+    # making a directory look non-empty right as it tries to rmdir it.
     if os.path.exists(workdir):
-        shutil.rmtree(workdir)
+        for attempt in range(5):
+            try:
+                shutil.rmtree(workdir)
+                break
+            except OSError as e:
+                if attempt == 4:
+                    print(f"Warning: could not fully remove {workdir}: {e}")
+                else:
+                    time.sleep(2)
     print("Done")

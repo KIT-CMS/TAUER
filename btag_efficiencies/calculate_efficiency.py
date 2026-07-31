@@ -1017,6 +1017,12 @@ def run_for_channel(config: Dict, args: argparse.Namespace) -> None:
 # Entry point
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
+    # Self-nice regardless of invocation method -- covers direct invocation in
+    # addition to run_btag_efficiency.py's own niced subprocess call. Spawned
+    # worker processes below still inherit this niceness (nice is a process
+    # scheduling attribute preserved across both fork and spawn/exec). Safe to
+    # call even when already niced (os.nice() clamps at the max of 19).
+    os.nice(19)
     args = parser.parse_args()
 
     if args.workers > 1:

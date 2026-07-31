@@ -36,7 +36,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from condor.common import JobSpec, SubmissionPlan, make_tag, submit
-from config.analysis import RUN3_ERAS, get_channels
+from common.sample_paths import build_shape_output_paths
+from config.analysis import RUN3_ERAS, get_channels, vs_ele_wp_for
 
 # Default process groups produced by shapes/produce_shapes.py (see its
 # `procS` default in main()). Used only when --split-by-process is set and
@@ -57,9 +58,12 @@ def parse_args():
     p.add_argument("--eras", type=csv, default=list(RUN3_ERAS), help="Comma-separated eras (default: all Run3 eras from config.analysis).")
     p.add_argument("--channels", type=csv, default=get_channels(), help="Comma-separated channels (default: all channels from config.analysis).")
     p.add_argument("--vs-jet-wp", default="Medium")
-    p.add_argument("--vs-ele-wp", default=None, help="Default: Tight for et, VVLoose otherwise (matches run.py).")
+    p.add_argument("--vs-ele-wp", default=None, help="Default: Tight for et, VVLoose otherwise (config.analysis.vs_ele_wp_for(), matches run.py).")
     p.add_argument("--user", default=getpass.getuser(), help="Grid storage username (default: current user).")
-    p.add_argument("--output-dir", default="output")
+    p.add_argument("--output-dir", default=None, help="Default: build_shape_output_paths(--ntupletag).output.")
+    p.add_argument("--validation-db-root", default=None,
+                    help="Default: build_shape_output_paths(--ntupletag).validation. "
+                         "See shapes/produce_shapes.py --validation-db-root.")
     p.add_argument("--ff-friends-dir", default=None)
     p.add_argument("--ff-type", default="none")
     p.add_argument("--presel-dir", default=None)
@@ -79,17 +83,14 @@ def parse_args():
     return p.parse_args()
 
 
-def vs_ele_wp_for(channel: str, override: str | None) -> str:
-    if override:
-        return override
-    return "Tight" if channel == "et" else "VVLoose"
-
-
 def build_jobs(args) -> list[JobSpec]:
     jobs: list[JobSpec] = []
     base_store = f"/store/user/{args.user}/CROWN/ntuples/{args.ntupletag}"
     ntuples_dir = args.local_directory if args.no_xrootd else f"{base_store}/CROWNRun/"
     xsec_friends = f"{base_store}/CROWNFriends/xsec/"
+    shape_paths = build_shape_output_paths(args.ntupletag, user=args.user)
+    output_dir = args.output_dir or shape_paths.output
+    validation_db_root = args.validation_db_root or shape_paths.validation
 
     process_groups = args.process_selection or DEFAULT_PROCESSES
     for era in args.eras:
@@ -100,7 +101,15 @@ def build_jobs(args) -> list[JobSpec]:
                 f"--channels {channel}",
                 f"--vs-jet-wp {args.vs_jet_wp}",
                 f"--vs-ele-wp {vs_ele_wp}",
-                f"--directory {ntuples_dir}",
+                # Scopes ntuple_processor's on-disk validation_database/ cache
+                # by ntupletag -- without this, produce_shapes.py's
+                # --validation-tag default ("default") is shared across every
+                # ntupletag ever submitted through this script, and a stale/
+                # racy cache entry from one tag can be silently reused (or
+                # collide) with another. run.py's mode_shapes has passed this
+                # since Phase 6d; this script never did (bug, fixed here).
+                f"--validation-tag {args.ntupletag}",
+                f"--validation-db-root {validation_db_root}",
                 f"--et-friend-directory {xsec_friends}",
                 f"--mt-friend-directory {xsec_friends}",
                 f"--tt-friend-directory {xsec_friends}",
@@ -108,7 +117,13 @@ def build_jobs(args) -> list[JobSpec]:
                 f"--num-processes {args.num_processes}",
                 f"--num-threads {args.num_threads}",
             ]
-            if not args.no_xrootd:
+            # --directory and --presel-dir are mutually exclusive in
+            # shapes/produce_shapes.py.
+            if args.presel_dir:
+                common.append(f"--presel-dir {args.presel_dir}")
+            else:
+                common.append(f"--directory {ntuples_dir}")
+            if not args.no_xrootd and not args.presel_dir:
                 common.append("--xrootd")
             if args.skip_systematic_variations:
                 common.append("--skip-systematic-variations")
@@ -123,19 +138,17 @@ def build_jobs(args) -> list[JobSpec]:
                 ]
             elif args.ff_type != "none":
                 common.append(f"--ff-type {args.ff_type}")
-            if args.presel_dir:
-                common.append(f"--presel-dir {args.presel_dir}")
 
             if args.split_by_process:
                 for process in process_groups:
-                    output_file = f"{args.output_dir}/{era}-{channel}-{process}-shapes.root"
+                    output_file = f"{output_dir}/{era}-{channel}-{process}-shapes.root"
                     job_args = common + [
                         f"--process-selection {process}",
                         f"--output-file {output_file}",
                     ]
                     jobs.append(JobSpec(name=f"{era}_{channel}_{process}", arguments=" ".join(job_args)))
             else:
-                output_file = f"{args.output_dir}/{era}-{channel}-shapes.root"
+                output_file = f"{output_dir}/{era}-{channel}-shapes.root"
                 job_args = list(common)
                 if args.process_selection:
                     job_args.append(f"--process-selection {','.join(process_groups)}")

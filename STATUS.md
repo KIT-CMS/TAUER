@@ -66,7 +66,7 @@ instances, all now single-sourced:
    numerically identical output for every era before/after (`109.816 * 1000.0` for 2024,
    `8.086 * 1000.0` for 2022preEE, etc.) and that unknown eras still raise `ValueError`.
 3. **`shapes/preselect.py`** had its *own separate* hardcoded `_LUMI_PB` dict (same six numbers,
-   pre-multiplied by 1000, i.e. pb^-1) used to build the signal `presel_weight` C++ expression.
+   pre-multiplied by 1000, i.e. pb^-1) used to build the signal `weight` C++ expression.
    Replaced with `get_luminosity(era) * 1000.0`. Verified `_build_weight_expr(...)` output is
    byte-identical to the pre-fix hardcoded value (`109816.0 * ...`).
 
@@ -98,10 +98,10 @@ here:
   analysis's cut choices.
 - The current downstream architecture already satisfies the "calculate once, reuse everywhere"
   requirement: `shapes/preselect.py` produces one skimmed, CROWN-directory-compatible tree per
-  process/channel/era with `presel_weight` baked in, and `shapes/produce_shapes.py` +
+  process/channel/era with the event `weight` baked in, and `shapes/produce_shapes.py` +
   `config/shapes/process_selection.py`'s `preselected=True` code path already consumes that
   output directly (see `MC_base_process_selection(..., preselected=True)`, which trims the
-  weight list down to just what isn't already folded into `presel_weight`). No further passages
+  weight list down to just what isn't already folded into that `weight` column). No further passages
   or renaming are needed to use it downstream.
 
 **Implication for produce_shapes.py's input contract:** unchanged from today — it reads

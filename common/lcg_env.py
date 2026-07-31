@@ -28,7 +28,7 @@ SETUP_ROOT = REPO_ROOT / "utils" / "setup_root.sh"
 def get_output_features() -> List[str]:
     cmd = (
         f"source {SETUP_ROOT} >/dev/null 2>&1 && "
-        'python -c "from config.analysis import get_output_features; '
+        'nice -n 19 python -c "from config.analysis import get_output_features; '
         'print(chr(10).join(get_output_features()))"'
     )
     result = subprocess.run(["bash", "-c", cmd], cwd=str(REPO_ROOT), capture_output=True, text=True)

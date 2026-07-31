@@ -85,7 +85,11 @@ def run_in_cmsenv(
     pattern for parallel toy-throwing in run_gof.py)."""
     inner = " ".join(shlex.quote(a) for a in cmd_args)
     prefix = "ulimit -s unlimited; " if unlimited_stack else ""
-    script = f"{prefix}source {shlex.quote(str(SETUP_CMSSW))} && {inner}"
+    # Every Combine/CombineTool/text2workspace invocation runs niced (matches
+    # run.py's run_plain/run_conda convention) -- this is the single place
+    # datacards/*.py and tau_es/*.py funnel through, so nicing it here covers
+    # all of them without touching each call site.
+    script = f"{prefix}source {shlex.quote(str(SETUP_CMSSW))} && nice -n 19 {inner}"
     popen_kwargs = dict(
         cwd=str(cwd or REPO_ROOT),
         env=_merged_env(env_overrides),

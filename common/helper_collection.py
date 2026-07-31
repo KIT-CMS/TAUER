@@ -197,13 +197,13 @@ def pandas_df_from_root(args: Tuple[str, Iterable, str]) -> pd.DataFrame:
 
 
 def calculate_stxs_N_and_negative_fractions(
-    database_path: str = "../TauFakeFactors/datasets/nanoAOD_v12",
+    database_path: str = "../datasets/nanoAOD_v12",
     output_path: str = "./config/shapes/stxs_bin_split_info.yaml",
     stage: str = "1p2",
     granularity: str = "coarse",
     specific_process: Union[None, Iterable[str]] = ("ggh_htautau", "vbf_htautau"),
     specific_era: Union[None, Iterable[str]] = ("2022preEE", "2022postEE",
-                                                "2023preBPix", "2023postBPix", "2024", "2025"),
+                                                "2023preBPix", "2023postBPix", "2024", "2025", "2026"),
     n_workers: int = 20,
 ) -> dict:
     """
@@ -237,7 +237,7 @@ def calculate_stxs_N_and_negative_fractions(
     logger.info("Calculating STXS N_events, negative fractions, xsec_fraction per bin...")
 
     ERAS = ["2016preVFP", "2016postVFP", "2017", "2018", 
-        "2022preEE", "2022postEE", "2023preBPix", "2023postBPix", "2024", "2025"]
+        "2022preEE", "2022postEE", "2023preBPix", "2023postBPix", "2024", "2025", "2026"]
     BINS = {
         "ggh_htautau": {
             "1p2": {

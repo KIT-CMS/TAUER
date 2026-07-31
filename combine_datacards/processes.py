@@ -64,7 +64,12 @@ def get_backgrounds(
 def get_signals(stxs_version: str = "stxs_stage0") -> list:
     logger.debug(f"Calling get_signals with {locals()}")
     if stxs_version == "stxs_stage0":
-        signals = ["ggH_htt", "qqH_htt"]
+        # VH_htt/ttH_htt were missing here (only ggH_htt/qqH_htt were
+        # listed), even though shapes/produce_shapes.py has always booked
+        # four signal categories (ggh/qqh/vh/tth) -- see
+        # combine_datacards/systematics.py's Processes class for the matching
+        # process-name groups these feed into AddSyst.
+        signals = ["ggH_htt", "qqH_htt", "VH_htt", "ttH_htt"]
         logger.info(f"Using STXS stage 0 signals: {signals}")
         return signals
 

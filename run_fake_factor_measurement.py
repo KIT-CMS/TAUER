@@ -78,7 +78,7 @@ def _tff_env() -> dict:
 
 def _run(cmd: list[str], **kwargs) -> None:
     print(f"[run_fake_factor_measurement] $ {' '.join(cmd)}")
-    subprocess.run(cmd, check=True, cwd=_REPO_ROOT, **kwargs)
+    subprocess.run(["nice", "-n", "19", *cmd], check=True, cwd=_REPO_ROOT, **kwargs)
 
 
 def main() -> int:

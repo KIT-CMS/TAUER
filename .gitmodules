@@ -4,3 +4,7 @@
 [submodule "TauFakeFactors"]
 	path = TauFakeFactors
 	url = git@github.com:KIT-CMS/TauFakeFactors.git
+[submodule "datasets"]
+	path = datasets
+	url = git@github.com:KIT-CMS/KingMaker_sample_database.git
+	branch = main

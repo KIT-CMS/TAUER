@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 """
 Control-plot and shape comparison plotting using mplhep (CMS style).
-Replaces the Dumbledraw-based plotting of smhtt_ul.
+Replaces the Dumbledraw-based plotting of smhtt_ul, matched visually
+against the smhtt_ul reference (Dumbledraw/styles.py, colors.yaml, labels.yaml).
 """
 import argparse
 import logging
@@ -10,6 +11,7 @@ from pathlib import Path
 
 
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 import mplhep as hep
 import numpy as np
 import ROOT
@@ -21,116 +23,232 @@ from plotting.process_ordering import ControlShapeBkgProcesses
 
 hep.style.use(hep.style.CMS)
 
+# The default CMS style is tuned for stand-alone 10x10in figures. Our canvas
+# is smaller and has two stacked panels, so the stock font/linewidths render
+# wildly oversized (tick numbers dwarfing the frame, spines ~2.5x thicker
+# than the tick marks themselves) -- rescale everything down together so
+# text, ticks and the frame stay proportionate to the smhtt_ul (ROOT/Dumbledraw)
+# reference plots this is meant to match.
+plt.rcParams.update({
+    "font.size": 15,
+    "axes.linewidth": 1.1,
+    "xtick.major.width": 1.1,
+    "ytick.major.width": 1.1,
+    "xtick.minor.width": 0.9,
+    "ytick.minor.width": 0.9,
+    "xtick.major.size": 6.0,
+    "ytick.major.size": 6.0,
+    "xtick.minor.size": 3.0,
+    "ytick.minor.size": 3.0,
+    "xtick.labelsize": 13,
+    "ytick.labelsize": 13,
+    "legend.fontsize": 10.5,
+})
+
 logger = setup_logging(logger=logging.getLogger(__name__))
 
 
-# --- Color palette and legend label dictionary from smhtt_ul ---
+# --- Color palette, straight from smhtt_ul's Dumbledraw/colors.yaml, so the
+# stack fill colours are identical to the reference plots. ---
 PROCESS_COLOURS = {
-    "ZTT":      "#FFCC66",
-    "ZL":       "#336633",
-    "ZJ":       "#99CC66",
-    "TTT":      "#FFCCFF",
-    "TTL":      "#CC99CC",
-    "TTJ":      "#996699",
-    "TT":       "#996699",
-    "VVT":      "#66CCCC",
-    "VVL":      "#669999",
-    "VVJ":      "#336666",
-    "VV":       "#336666",
-    "W":        "#FF6666",
-    "QCD":      "#CCCCCC",
-    "jetFakes": "#B97A57",
-    "jetFakesEMB": "#B97A57",
-    "QCDEMB":   "#CCCCCC",
-    "EMB":      "#E8E8E8",
-    "ggH125":   "#FF0000",
-    "qqH125":   "#0000FF",
-    "VH125":    "#00CC00",
-    "ttH125":   "#990099",
+    "ZTT":      "#ffa90e",
+    "ZL":       "#3f90da",
+    "ZJ":       "#9abbd9",
+    "TTT":      "#a963d1",
+    "TTL":      "#832db6",
+    "TTJ":      "#c59ade",
+    "TT":       "#832db6",
+    "VVT":      "#69c7bc",
+    "VVL":      "#27ad9e",
+    "VVJ":      "#92dadd",
+    "VV":       "#92dadd",
+    "W":        "#e76300",
+    "QCD":      "#b9ac70",
+    "jetFakes": "#94a4a2",
+    "jetFakesEMB": "#94a4a2",
+    "QCDEMB":   "#b9ac70",
+    "EMB":      "#ffa90e",
+    "ggH125":   "#5790fc",
+    "qqH125":   "#bd1f01",
+    "VH125":    "#e76300",
+    "ttH125":   "#832db6",
 }
 
-# Legend label dictionary (from smhtt_ul Dumbledraw/labels.yaml legend_label)
+# Legend labels, transcribed from smhtt_ul's Dumbledraw/labels.yaml
+# legend_label block into matplotlib mathtext (ROOT TLatex's "#rightarrow"/
+# "#bar{}" markup is not understood by matplotlib and was rendering as
+# literal text, which is why labels used to overlap/overflow the legend box).
 legend_label_dict = {
-    "ZTT": "Z#rightarrow#tau#tau",
-    "ZL": "Z#rightarrow ll (lep)",
-    "ZJ": "Z#rightarrow ll (jet)",
-    "TTT": "t#bar{t} (lep)",
-    "TTL": "t#bar{t} (lep)",
-    "TTJ": "t#bar{t} (jet)",
-    "TT": "t#bar{t}",
-    "VVT": "Diboson (lep)",
-    "VVL": "Diboson (lep)",
-    "VVJ": "Diboson (jet)",
+    "ZTT": r"Z$\rightarrow\tau\tau$",
+    "ZL": r"Z$\rightarrow$ll",
+    "ZJ": r"Z$\rightarrow$ll (jet$\rightarrow\tau_h$)",
+    "TTT": r"t$\bar{t}$ ($\tau\tau$)",
+    "TTL": r"t$\bar{t}$ (l$\tau$)",
+    "TTJ": r"t$\bar{t}$ (jet$\rightarrow\tau_h$)",
+    "TT": r"t$\bar{t}$",
+    "VVT": r"Diboson ($\tau\tau$)",
+    "VVL": r"Diboson (l$\tau$)",
+    "VVJ": r"Diboson (jet$\rightarrow\tau_h$)",
     "VV": "Diboson",
     "W": "W+jets",
-    "QCD": "QCD",
-    "jetFakes": "jet#rightarrow#tau_{h}",
-    "jetFakesEMB": "jet#rightarrow#tau_{h}",
-    "QCDEMB": "QCD",
-    "EMB": "Embedded",
-    "ggH125": "gg#rightarrowH (125)",
-    "qqH125": "qq#rightarrowH (125)",
+    "QCD": "QCD multijet",
+    "jetFakes": r"Jet$\rightarrow\tau_h$",
+    "jetFakesEMB": r"Jet$\rightarrow\tau_h$",
+    "QCDEMB": "QCD multijet",
+    "EMB": r"$\tau$ embedded",
+    "ggH125": r"gg$\rightarrow$H (125)",
+    "qqH125": r"qq$\rightarrow$H (125)",
     "VH125": "VH (125)",
     "ttH125": "ttH (125)",
 }
 
-# X label dictionary (partial, for demonstration; should be extended as needed)
-x_label_dict = {
-    "m_vis": "Visible di-#tau mass [GeV]",
-    "pt_1": "Leading lepton p_{T} [GeV]",
-    "pt_2": "Subleading lepton p_{T} [GeV]",
-    "eta_1": "Leading lepton #eta",
-    "eta_2": "Subleading lepton #eta",
-    "mt_1": "Transverse mass m_{T} [GeV]",
+_JET1 = r"\text{Jet}_1"
+_JET2 = r"\text{Jet}_2"
+
+# X-axis labels. smhtt_ul's labels.yaml doesn't cover most of TauKITFlow's
+# newer jet-lepton delta variables (deltaEta_1j1, deltaR_12jj, ...), so these
+# are written fresh in matplotlib mathtext, following the same naming
+# conventions (leading/subleading jet, di-jet, lepton legs) as the entries
+# smhtt_ul does define for shared variables (jpt_1, mjj, pt_ttjj, ...).
+_COMMON_X_LABELS = {
+    "jpt_1": r"Leading jet $p_T$ [GeV]",
+    "jpt_2": r"Subleading jet $p_T$ [GeV]",
+    "jeta_1": r"Leading jet $\eta$",
+    "jeta_2": r"Subleading jet $\eta$",
+    "deltaEta_jj": r"$\Delta\eta(\mathrm{jet}_1,\mathrm{jet}_2)$",
+    "deltaR_jj": r"$\Delta R(\mathrm{jet}_1,\mathrm{jet}_2)$",
+    "deltaEta_12j1": r"$\Delta\eta(\ell_1\ell_2,\mathrm{jet}_1)$",
+    "deltaEta_12j2": r"$\Delta\eta(\ell_1\ell_2,\mathrm{jet}_2)$",
+    "deltaEta_12jj": r"$\Delta\eta(\ell_1\ell_2,\mathrm{jet}_1\mathrm{jet}_2)$",
+    "deltaR_12j1": r"$\Delta R(\ell_1\ell_2,\mathrm{jet}_1)$",
+    "deltaR_12j2": r"$\Delta R(\ell_1\ell_2,\mathrm{jet}_2)$",
+    "deltaR_12jj": r"$\Delta R(\ell_1\ell_2,\mathrm{jet}_1\mathrm{jet}_2)$",
+    "deltaEta_1j1": r"$\Delta\eta(\ell_1,\mathrm{jet}_1)$",
+    "deltaEta_1j2": r"$\Delta\eta(\ell_1,\mathrm{jet}_2)$",
+    "deltaEta_2j1": r"$\Delta\eta(\ell_2,\mathrm{jet}_1)$",
+    "deltaEta_2j2": r"$\Delta\eta(\ell_2,\mathrm{jet}_2)$",
+    "deltaR_1j1": r"$\Delta R(\ell_1,\mathrm{jet}_1)$",
+    "deltaR_1j2": r"$\Delta R(\ell_1,\mathrm{jet}_2)$",
+    "deltaR_2j1": r"$\Delta R(\ell_2,\mathrm{jet}_1)$",
+    "deltaR_2j2": r"$\Delta R(\ell_2,\mathrm{jet}_2)$",
+    "deltaEta_ditaupair": r"$\Delta\eta(\ell_1,\ell_2)$",
+    "deltaR_ditaupair": r"$\Delta R(\ell_1,\ell_2)$",
+    "m_vis": r"Visible di-$\tau$ mass [GeV]",
+    "pt_vis": r"Visible di-$\tau$ $p_T$ [GeV]",
+    "mjj": r"Di-jet mass $m_{jj}$ [GeV]",
+    "pt_dijet": r"Di-jet $p_T$ [GeV]",
+    "mt_tot": r"Total transverse mass $m_T^{tot}$ [GeV]",
+    "pt_tt": r"$p_T(\tau\tau)$ [GeV]",
+    "pt_ttjj": r"$p_T(\tau\tau + \mathrm{di-jet})$ [GeV]",
+    "puppimet": r"Missing transverse energy [GeV]",
+    "nbtag": "Number of b-tagged jets",
+    "njets": "Number of jets",
+    "q_1": r"Leading lepton charge",
+    "q_2": r"Subleading lepton charge",
+    "iso_1": r"Leading lepton isolation",
+    "iso_2": r"Subleading lepton isolation",
 }
+
+# Per-channel leading/subleading lepton naming, mirroring smhtt_ul's
+# channel-specific x_label_dict blocks (mm/em/mt/et/tt use "Muon"/"Electron"/
+# "Hadronic Tau" depending on slot).
+_CHANNEL_LEPTONS = {
+    "mt": (r"Muon", r"\tau_h"),
+    "et": (r"Electron", r"\tau_h"),
+    "tt": (r"Leading $\tau_h$", r"Subleading $\tau_h$"),
+    "em": (r"Electron", r"Muon"),
+    "mm": (r"Leading muon", r"Subleading muon"),
+    "ee": (r"Leading electron", r"Subleading electron"),
+}
+
+
+def _channel_x_labels(channel: str) -> dict:
+    lep1, lep2 = _CHANNEL_LEPTONS.get(channel, (r"\ell_1", r"\ell_2"))
+    lep1_tex = lep1 if lep1.startswith(("Muon", "Electron", "Leading", "Subleading")) else f"${lep1}$"
+    lep2_tex = lep2 if lep2.startswith(("Muon", "Electron", "Leading", "Subleading")) else f"${lep2}$"
+    labels = dict(_COMMON_X_LABELS)
+    labels.update({
+        "pt_1": f"{lep1_tex} $p_T$ [GeV]",
+        "pt_2": f"{lep2_tex} $p_T$ [GeV]",
+        "eta_1": f"{lep1_tex} $\\eta$",
+        "eta_2": f"{lep2_tex} $\\eta$",
+        "mass_1": f"{lep1_tex} mass [GeV]",
+        "mass_2": f"{lep2_tex} mass [GeV]",
+        "mt_1": r"Transverse mass $m_T(\ell_1, \slash{E}_T)$ [GeV]",
+        "mt_2": r"Transverse mass $m_T(\ell_2, \slash{E}_T)$ [GeV]",
+        "tau_decaymode_1": f"{lep1_tex} decay mode",
+        "tau_decaymode_2": f"{lep2_tex} decay mode",
+    })
+    return labels
+
 
 # Display text for the "year" part of the CMS lumi label. Covers both Run2
 # (ported from smhtt_ul's Dumbledraw DrawLumi() era branch, plotting/
 # plot_shapes_control.py there) and Run3. The numeric lumi (fb^-1) and
 # center-of-mass energy (TeV) come from config.analysis.get_luminosity() /
-# get_center_of_mass() — single-sourced from config/samples.yaml, not
+# get_center_of_mass() -- single-sourced from config/samples.yaml, not
 # duplicated here.
 ERA_YEAR_LABEL = {
-    "2016preVFP":   "2016 (preVFP)",
-    "2016postVFP":  "2016 (postVFP)",
+    "2016preVFP":   "2016 preVFP",
+    "2016postVFP":  "2016 postVFP",
     "2017":         "2017",
     "2018":         "2018",
-    "2022preEE":    "2022 (preEE)",
-    "2022postEE":   "2022 (postEE)",
-    "2023preBPix":  "2023 (preBPix)",
-    "2023postBPix": "2023 (postBPix)",
+    "2022preEE":    "2022 preEE",
+    "2022postEE":   "2022 postEE",
+    "2023preBPix":  "2023 preBPix",
+    "2023postBPix": "2023 postBPix",
     "2024":         "2024",
     "2025":         "2025",
+    "2026":         "2026",
 }
 
 
-def cms_label_kwargs(era: str) -> dict:
-    """
-    year/lumi/com kwargs for hep.cms.label(), era-correct for both Run2 and
-    Run3 (13 TeV vs. 13.6 TeV, and the right integrated luminosity for each
-    era). Letting mplhep's exp_label() build the "N fb^-1 (year, com TeV)"
-    string itself (via these three kwargs, rather than a hand-built string
-    passed as `lumi=`) is also a bugfix: passing a pre-formatted string as
-    `lumi=` made mplhep append its own "fb^-1 (13 TeV)" suffix on top of the
-    already-formatted string, and silently used its default 13 TeV even for
-    Run3 eras.
-    """
+def lumi_label(era: str) -> str:
+    """'8.08 fb$^{-1}$ (2022 preEE, 13.6 TeV)', matching smhtt_ul's DrawLumi() string."""
     if era not in RUN2_ERAS and era not in RUN3_ERAS:
-        logger.warning(f"Era {era!r} not in RUN2_ERAS/RUN3_ERAS; using it verbatim in the CMS label.")
-        return {"year": era}
+        logger.warning(f"Era {era!r} not in RUN2_ERAS/RUN3_ERAS; using it verbatim in the lumi label.")
+        return era
     com = get_center_of_mass(era)
-    return {
-        "year": ERA_YEAR_LABEL.get(era, era),
-        "lumi": get_luminosity(era),
-        "lumi_format": "{0:.2f}",
-        "com": int(com) if com == int(com) else com,
-    }
+    com_str = str(int(com)) if com == int(com) else str(com)
+    return f"{get_luminosity(era):.2f} fb$^{{-1}}$ ({ERA_YEAR_LABEL.get(era, era)}, {com_str} TeV)"
+
 
 CHANNEL_LABELS = {
     "et": r"$e\tau_h$",
     "mt": r"$\mu\tau_h$",
     "tt": r"$\tau_h\tau_h$",
     "em": r"$e\mu$",
+}
+
+# (dataset, process-selection) for the data-driven QCD estimates written by
+# shapes/estimations/qcd.py:qcd_estimation() -- not in _process_map/_dataset_map
+# since those only cover the raw MC samples from produce_shapes.py.
+# "QCD" (is_embedding=False) is what --do-qcd (run.py's default when no FF
+# friend-tree directory is configured) produces; "QCDEMB" is its embedding
+# counterpart (is_embedding=True), included here for completeness.
+_QCD_SS_OS_ESTIMATION_KEYS = {
+    "QCD": ("QCDMC", "QCDMC"),
+    "QCDEMB": ("QCD", "QCD"),
+}
+
+# Stage-0 signal datasets (dataset name in the shapes file, keyed by the
+# process-selection suffix) and the display scale factor for each -- one
+# fixed number per production mode so every non-empty signal is visible on
+# the same linear axis as the backgrounds, following smhtt_ul's own choices
+# (Dumbledraw/plot_shapes_control.py: 10x ggH, 100x qqH, 10000x VH, 1000x ttH
+# -- roughly inverse to each mode's cross-section, so all four land at a
+# similar height on the plot).
+_SIGNAL_DATASETS = {
+    "ggH125": "ggH",
+    "qqH125": "qqH",
+    "VH125": "VH",
+    "ttH125": "ttH",
+}
+_SIGNAL_SCALES = {
+    "ggH125": 10,
+    "qqH125": 100,
+    "VH125": 10000,
+    "ttH125": 1000,
 }
 
 
@@ -142,16 +260,16 @@ def _th1_to_numpy(hist):
     return edges, y, yerr
 
 
-def _get_hist(rootfile, dataset, channel, process, selection, variation, variable):
-    # Use smhtt_ul-style key: {dataset}#{channel}-{process}-{selection}#{variation}#{variable}
-    # Map process to correct ROOT key using _process_map
-    from shapes.estimations.defaults import _process_map
-    process_key = _process_map.get(process, process)
-    # Only use {dataset}#{channel}-{process}#{variation}#{variable}
-    name = f"{dataset}#{channel}{process_key}#{variation}#{variable}"
+def _get_hist(rootfile, dataset, channel, process_selection, variation, variable):
+    # smhtt_ul-style key: {dataset}#{channel}{-process_selection}#{variation}#{variable}
+    # (see Dumbledraw/rootfile_parser_ntuple_processor_inputshapes.py:get()).
+    # There is no separate "category" dimension in these control-plot shapes:
+    # the ROOT file only splits by channel, background/data selection and
+    # systematic variation.
+    name = f"{dataset}#{channel}{process_selection}#{variation}#{variable}"
     h = rootfile.Get(name)
     if not h:
-        print(f"[DEBUG] Histogram not found: {name}")
+        logger.debug(f"Histogram not found: {name}")
         return None
     return h.Clone()
 
@@ -160,7 +278,6 @@ def plot_control(
     rootfile: ROOT.TFile,
     channel: str,
     era: str,
-    category: str,
     variable: str,
     process_config: ControlShapeBkgProcesses,
     output_dir: str,
@@ -168,7 +285,7 @@ def plot_control(
     blinded: bool = False,
 ):
     fig, (ax_top, ax_bot) = plt.subplots(
-        2, 1, figsize=(7, 8), gridspec_kw={"height_ratios": [3, 1]}, sharex=True
+        2, 1, figsize=(6.6, 6.6), gridspec_kw={"height_ratios": [4, 1.2], "hspace": 0.03}, sharex=True
     )
 
     bkg_hists  = {}
@@ -181,33 +298,46 @@ def plot_control(
     bkg_processes = process_config()
 
     for proc in bkg_processes:
-        if proc not in _process_map:
+        if proc in _QCD_SS_OS_ESTIMATION_KEYS:
+            # "QCD" only shows up in ControlShapeBkgProcesses.FULLY_CLASSIC, i.e.
+            # exactly the default case (no --fake-factor, no --embedding). shapes/
+            # do_estimations.py already covers that default with the same-sign/
+            # opposite-sign data-driven QCD estimate (shapes/estimations/qcd.py:
+            # qcd_estimation(), run via `--do-qcd` -- run.py's mode_shapes() picks
+            # that over `--do-ff` whenever no FF friend-tree directory is
+            # configured). That estimation writes its output under its own
+            # "QCDMC"/"QCD" dataset+selection labels rather than through
+            # _process_map/_dataset_map, so it needs its own lookup here.
+            ds, sel = _QCD_SS_OS_ESTIMATION_KEYS[proc]
+            h = _get_hist(rootfile, ds, channel, "-" + sel, "Nominal", variable)
+        elif proc in _process_map:
+            ds = _dataset_map.get(proc, proc)
+            h = _get_hist(rootfile, ds, channel, "-" + _process_map[proc], "Nominal", variable)
+        else:
             continue
-        ds   = _dataset_map.get(proc, proc)
-        psel = "-" + _process_map[proc]
-        sel  = ("-" + category) if category else ""
-        h = _get_hist(rootfile, ds, channel, psel, sel, "Nominal", variable)
         if h:
             bkg_hists[proc] = h
 
-    for sig_proc in ["ggH125", "qqH125"]:
-        if sig_proc not in _process_map:
-            continue
-        ds   = _dataset_map.get(sig_proc, sig_proc)
-        psel = "-" + _process_map[sig_proc]
-        sel  = ("-" + category) if category else ""
-        h = _get_hist(rootfile, ds, channel, psel, sel, "Nominal", variable)
-        if h:
+    # Stage-0 (per-production-mode, not split into STXS stage-1 bins) signal
+    # shapes. _process_map only carries "qqH125" (and the VH_as_qqH125 merge
+    # used for datacards); the other three are simply plain datasets in the
+    # shapes file under their own name (see e.g. "ggH#mt-ggH125#Nominal#...",
+    # confirmed present in output/*-shapes.root), so look those up directly
+    # rather than only checking _process_map.
+    for sig_proc, dataset in _SIGNAL_DATASETS.items():
+        h = _get_hist(rootfile, dataset, channel, "-" + sig_proc, "Nominal", variable)
+        if h and h.Integral() > 0:
             sig_hists[sig_proc] = h
 
-    # data
-    data_key = f"data#{channel}-data{('-' + category) if category else ''}#Nominal#{variable}"
-    data_h_raw = rootfile.Get(data_key)
-    if data_h_raw and not blinded:
-        data_hist = data_h_raw.Clone()
+    # data (no process-selection suffix at all -- see _process_map["data"] == "data",
+    # which rootfile_parser_ntuple_processor_inputshapes.get() maps to category="")
+    if not blinded:
+        data_h_raw = _get_hist(rootfile, "data", channel, "", "Nominal", variable)
+        if data_h_raw:
+            data_hist = data_h_raw
 
     if not bkg_hists:
-        logger.warning(f"No backgrounds found for {channel}/{category}/{variable}. Skipping.")
+        logger.warning(f"No backgrounds found for {channel}/{variable}. Skipping.")
         plt.close(fig)
         return
 
@@ -215,9 +345,9 @@ def plot_control(
     stack_order = [p for p in bkg_processes if p in bkg_hists]
     edges, _, _ = _th1_to_numpy(list(bkg_hists.values())[0])
     x_centers   = 0.5 * (edges[:-1] + edges[1:])
+    bin_widths  = edges[1:] - edges[:-1]
 
     stack_values = []
-
     stack_labels = []
     stack_colors = []
     for proc in stack_order:
@@ -226,11 +356,11 @@ def plot_control(
         stack_labels.append(legend_label_dict.get(proc, proc))
         stack_colors.append(PROCESS_COLOURS.get(proc, "#AAAAAA"))
 
-
     hep.histplot(
         stack_values, edges,
         stack=True, histtype="fill",
         label=stack_labels, color=stack_colors,
+        edgecolor="black", linewidth=0.4,
         ax=ax_top,
     )
 
@@ -242,168 +372,146 @@ def plot_control(
     ))
     ax_top.bar(
         x_centers, 2 * total_mc_err, bottom=total_mc - total_mc_err,
-        width=edges[1:] - edges[:-1], color="gray", alpha=0.35,
-        hatch="///", linewidth=0, label="Stat. unc.",
+        width=bin_widths, color="gray", alpha=0.4,
+        hatch="////", linewidth=0, label="Bkg. stat. unc.",
     )
 
-    # signals (scaled ×50)
-    SIGNAL_SCALE = 50
+    # signals, one fixed scale factor per production mode (see _SIGNAL_SCALES)
     for sig, h in sig_hists.items():
         _, y_sig, _ = _th1_to_numpy(h)
         col = PROCESS_COLOURS.get(sig, "#FF0000")
-        sig_label = legend_label_dict.get(sig, sig) + f" (×{SIGNAL_SCALE})"
+        scale = _SIGNAL_SCALES.get(sig, 1)
+        sig_label = f"{scale}" + r"$\times$" + legend_label_dict.get(sig, sig)
         hep.histplot(
-            y_sig * SIGNAL_SCALE, edges,
-            histtype="step", linewidth=2, color=col,
+            y_sig * scale, edges,
+            histtype="step", linewidth=1.8, color=col,
             label=sig_label, ax=ax_top,
         )
 
-    # data
+    # data. Same marker size in both panels (smhtt_ul draws "data_obs" with
+    # one consistent marker style everywhere it appears).
+    DATA_MARKERSIZE = 3.2
+    y_data = None
     if data_hist:
         _, y_data, yerr_data = _th1_to_numpy(data_hist)
         ax_top.errorbar(
             x_centers, y_data, yerr=yerr_data,
-            fmt="ko", markersize=4, linewidth=1.2, label="Data", zorder=10,
+            fmt="ko", markersize=DATA_MARKERSIZE, linewidth=1.2, label="Observed", zorder=10,
         )
 
     # ── Ratio panel ──────────────────────────────────────────────────────────
-    if data_hist and total_mc.sum() > 0:
+    if data_hist is not None and total_mc.sum() > 0:
         with np.errstate(divide="ignore", invalid="ignore"):
             ratio      = np.where(total_mc > 0, y_data / total_mc, 0.0)
             ratio_err  = np.where(total_mc > 0, yerr_data / total_mc, 0.0)
             mc_unc_rel = np.where(total_mc > 0, total_mc_err / total_mc, 0.0)
-        ax_bot.errorbar(x_centers, ratio, yerr=ratio_err, fmt="ko", markersize=3, linewidth=1)
+        ax_bot.errorbar(x_centers, ratio, yerr=ratio_err, fmt="ko", markersize=DATA_MARKERSIZE, linewidth=1)
         ax_bot.bar(
             x_centers, 2 * mc_unc_rel, bottom=1.0 - mc_unc_rel,
-            width=edges[1:] - edges[:-1], color="gray", alpha=0.35, hatch="///", linewidth=0,
+            width=bin_widths, color="gray", alpha=0.4, hatch="////", linewidth=0,
         )
     ax_bot.axhline(1.0, color="black", linewidth=0.8)
     ax_bot.set_ylim(0.5, 1.5)
-    ax_bot.set_ylabel("Data/MC")
+    ax_bot.set_yticks([0.6, 0.8, 1.0, 1.2, 1.4])
+    ax_bot.grid(axis="y", linestyle=":", linewidth=0.6, color="gray")
+    # hep.style.CMS sets yaxis.labellocation="top" globally (so "N_events" on
+    # the main panel sits near the top, HEP convention) -- override it back
+    # to centered just for this small ratio panel, where a top-anchored label
+    # reads as off-center.
+    ax_bot.set_ylabel("Data/MC", fontsize=14, loc="center")
 
     # ── Axes decoration ──────────────────────────────────────────────────────
+    max_stack = total_mc.max() if len(total_mc) else 0.0
+    max_data  = y_data.max() if y_data is not None and len(y_data) else 0.0
+    max_val   = max(max_stack, max_data, 1e-9)
+
+    ax_top.set_ylabel(r"$N_{\mathrm{events}}$", fontsize=15)
 
     if log_y:
         ax_top.set_yscale("log")
-        ax_top.set_ylim(bottom=0.1)
+        ax_top.set_ylim(0.1, max_val * 300)
     else:
-        ax_top.set_ylim(bottom=0)
-    ax_top.set_ylabel("Events / bin", fontsize=16)
-    ax_bot.set_xlabel(x_label_dict.get(variable, variable), fontsize=16)
-    ax_top.legend(loc="upper right", ncol=2, fontsize=12, framealpha=0.7, handlelength=2.0, borderaxespad=0.8, labelspacing=0.4)
+        ax_top.set_ylim(0, max_val * 1.8)
+        ax_top.yaxis.set_major_formatter(mticker.ScalarFormatter(useMathText=True))
+        ax_top.ticklabel_format(axis="y", style="sci", scilimits=(0, 3))
+        ax_top.yaxis.set_major_locator(mticker.MaxNLocator(nbins=5))
+        # Matplotlib repositions the "x10^n" offset text on every draw to sit
+        # right above the y-axis, next to the tick numbers -- not above the
+        # "N_events" title, which sits further left/outside the axes (it's
+        # rotated 90 deg alongside the tick labels). Force a draw to let the
+        # formatter compute the offset string and to get the title's actual
+        # on-screen position, then hide the auto-placed text and draw our own
+        # directly above "N_events" instead.
+        fig.canvas.draw()
+        offset_str = ax_top.yaxis.get_offset_text().get_text()
+        ax_top.yaxis.get_offset_text().set_visible(False)
+        if offset_str:
+            label_bbox = ax_top.yaxis.label.get_window_extent(renderer=fig.canvas.get_renderer())
+            label_x_axes = ax_top.transAxes.inverted().transform(
+                ((label_bbox.x0 + label_bbox.x1) / 2, 0)
+            )[0]
+            ax_top.text(
+                label_x_axes, 1.012, offset_str, transform=ax_top.transAxes,
+                va="bottom", ha="center", fontsize=13,
+            )
 
+    ax_bot.set_xlabel(_channel_x_labels(channel).get(variable, variable), fontsize=15)
 
-    hep.cms.label(
-        ax=ax_top,
-        label="Work in progress",
-        data=bool(data_hist),
-        loc=0,
-        fontsize=14,
-        **cms_label_kwargs(era),
+    # Some variables (e.g. pt_1 with a lepton-pT selection cut) are booked
+    # over a wider binning than where any background/data actually lands,
+    # leaving a stretch of fully-empty bins at one or both ends of the frame.
+    # Crop the x-axis to the first/last bin with any content instead of
+    # always showing the full booked range.
+    has_content = total_mc > 0
+    if y_data is not None:
+        has_content = has_content | (y_data > 0)
+    if has_content.any():
+        first_bin = np.argmax(has_content)
+        last_bin  = len(has_content) - 1 - np.argmax(has_content[::-1])
+        ax_top.set_xlim(edges[first_bin], edges[last_bin + 1])
+    else:
+        ax_top.set_xlim(edges[0], edges[-1])
+
+    ax_top.legend(
+        loc="upper right", ncol=2, fontsize=10, framealpha=0.0,
+        handlelength=1.4, columnspacing=1.0, borderaxespad=0.6, labelspacing=0.35,
+    )
+
+    # Above-frame row: channel label (left) and lumi/era string (right) --
+    # smhtt_ul's DrawChannelCategoryLabel()/DrawLumi(), both drawn just above
+    # the top axis line rather than inside it. Flush to the corners now that
+    # the y-axis "x10^n" offset text (above) no longer shares this row.
+    ax_top.text(
+        0.0, 1.012, CHANNEL_LABELS.get(channel, channel),
+        transform=ax_top.transAxes, va="bottom", ha="left", fontsize=15,
     )
     ax_top.text(
-        0.02, 0.96,
-        f"{CHANNEL_LABELS.get(channel, channel)}, {category or 'inclusive'}",
-        transform=ax_top.transAxes, va="top", fontsize=14,
+        1.0, 1.012, lumi_label(era),
+        transform=ax_top.transAxes, va="bottom", ha="right", fontsize=15,
     )
 
+    # Inside-frame CMS label block, top-left -- smhtt_ul's DrawCMS(), bold
+    # "Private Work" with the italic "(CMS data/simulation)" subtext below it.
+    ax_top.text(
+        0.03, 0.945, "Private Work", transform=ax_top.transAxes,
+        va="top", ha="left", fontsize=15, fontweight="bold",
+    )
+    ax_top.text(
+        0.03, 0.885, "(CMS data/simulation)", transform=ax_top.transAxes,
+        va="top", ha="left", fontsize=12, fontstyle="italic",
+    )
 
-    # Save main stack plot
-    fig.tight_layout()
-    fname = f"{channel}_{era}_{category or 'inc'}_{variable}"
-    for ext in ("png", "pdf"):
-        out = Path(output_dir) / ext
-        out.mkdir(parents=True, exist_ok=True)
+    # Save. No fig.tight_layout(): the shared-x/gridspec_kw layout above plus
+    # the above-axes transAxes text triggers matplotlib's "not compatible with
+    # tight_layout" warning; savefig(bbox_inches="tight") already crops the
+    # figure to its actual content without it.
+    fname = f"{channel}_{era}_{variable}"
+    out = Path(output_dir) / era / channel
+    out.mkdir(parents=True, exist_ok=True)
+    for ext in ("pdf", "png"):
         fig.savefig(out / f"{fname}.{ext}", bbox_inches="tight", dpi=150)
     logger.info(f"Saved plot: {fname}")
     plt.close(fig)
-
-    # --- Save overlay plots for each process ---
-    for highlight_proc in stack_order:
-        fig_ol, (ax_top_ol, ax_bot_ol) = plt.subplots(
-            2, 1, figsize=(7, 8), gridspec_kw={"height_ratios": [3, 1]}, sharex=True
-        )
-        # Stack as before
-        hep.histplot(
-            stack_values, edges,
-            stack=True, histtype="fill",
-            label=stack_labels, color=stack_colors,
-            ax=ax_top_ol,
-        )
-        # Highlight the selected process
-        _, y_highlight, _ = _th1_to_numpy(bkg_hists[highlight_proc])
-        ax_top_ol.step(
-            x_centers, y_highlight, where="mid",
-            color="red", linewidth=2.5, label=f"{legend_label_dict.get(highlight_proc, highlight_proc)} (highlighted)"
-        )
-        # MC unc band
-        ax_top_ol.bar(
-            x_centers, 2 * total_mc_err, bottom=total_mc - total_mc_err,
-            width=edges[1:] - edges[:-1], color="gray", alpha=0.35,
-            hatch="///", linewidth=0, label="Stat. unc.",
-        )
-        # Signals
-        for sig, h in sig_hists.items():
-            _, y_sig, _ = _th1_to_numpy(h)
-            col = PROCESS_COLOURS.get(sig, "#FF0000")
-            sig_label = legend_label_dict.get(sig, sig) + f" (×{SIGNAL_SCALE})"
-            hep.histplot(
-                y_sig * SIGNAL_SCALE, edges,
-                histtype="step", linewidth=2, color=col,
-                label=sig_label, ax=ax_top_ol,
-            )
-        # Data
-        if data_hist:
-            _, y_data, yerr_data = _th1_to_numpy(data_hist)
-            ax_top_ol.errorbar(
-                x_centers, y_data, yerr=yerr_data,
-                fmt="ko", markersize=4, linewidth=1.2, label="Data", zorder=10,
-            )
-        # Ratio panel
-        if data_hist and total_mc.sum() > 0:
-            with np.errstate(divide="ignore", invalid="ignore"):
-                ratio      = np.where(total_mc > 0, y_data / total_mc, 0.0)
-                ratio_err  = np.where(total_mc > 0, yerr_data / total_mc, 0.0)
-                mc_unc_rel = np.where(total_mc > 0, total_mc_err / total_mc, 0.0)
-            ax_bot_ol.errorbar(x_centers, ratio, yerr=ratio_err, fmt="ko", markersize=3, linewidth=1)
-            ax_bot_ol.bar(
-                x_centers, 2 * mc_unc_rel, bottom=1.0 - mc_unc_rel,
-                width=edges[1:] - edges[:-1], color="gray", alpha=0.35, hatch="///", linewidth=0,
-            )
-        ax_bot_ol.axhline(1.0, color="black", linewidth=0.8)
-        ax_bot_ol.set_ylim(0.5, 1.5)
-        ax_bot_ol.set_ylabel("Data/MC")
-        # Decorations
-        if log_y:
-            ax_top_ol.set_yscale("log")
-            ax_top_ol.set_ylim(bottom=0.1)
-        else:
-            ax_top_ol.set_ylim(bottom=0)
-        ax_top_ol.set_ylabel("Events / bin", fontsize=16)
-        ax_bot_ol.set_xlabel(x_label_dict.get(variable, variable), fontsize=16)
-        ax_top_ol.legend(loc="upper right", ncol=2, fontsize=12, framealpha=0.7, handlelength=2.0, borderaxespad=0.8, labelspacing=0.4)
-        hep.cms.label(
-            ax=ax_top_ol,
-            label="Work in progress",
-            data=bool(data_hist),
-            loc=0,
-            fontsize=14,
-            **cms_label_kwargs(era),
-        )
-        ax_top_ol.text(
-            0.02, 0.96,
-            f"{CHANNEL_LABELS.get(channel, channel)}, {category or 'inclusive'}",
-            transform=ax_top_ol.transAxes, va="top", fontsize=14,
-        )
-        # Save overlay plot
-        fig_ol.tight_layout()
-        fname_ol = f"{channel}_{era}_{category or 'inc'}_{variable}_oplot_{highlight_proc}"
-        for ext in ("png", "pdf"):
-            out = Path(output_dir) / ext
-            out.mkdir(parents=True, exist_ok=True)
-            fig_ol.savefig(out / f"{fname_ol}.{ext}", bbox_inches="tight", dpi=150)
-        logger.info(f"Saved overlay plot: {fname_ol}")
-        plt.close(fig_ol)
 
 
 def parse_arguments():
@@ -452,40 +560,25 @@ def main(args):
             channel=channel,
             selection_option="CR",
         )
-        # Infer available categories from file keys
-        categories = set()
-        for key in rootfile.GetListOfKeys():
-            parts = key.GetName().split("#")
-            if len(parts) < 2:
-                continue
-            sel = parts[1]
-            if sel.startswith(channel + "-"):
-                cat = sel[len(channel) + 1:]
-                # strip process suffix
-                cat_parts = cat.split("-")
-                if len(cat_parts) > 1:
-                    categories.add(cat_parts[-1])
-
-        if not categories:
-            categories = {""}  # run with no category suffix
-
-        for category in sorted(categories):
-            for variable in plot_vars:
-                plot_control(
-                    rootfile=rootfile,
-                    channel=channel,
-                    era=args.era,
-                    category=category,
-                    variable=variable,
-                    process_config=proc_config,
-                    output_dir=args.output,
-                    log_y=args.log_y,
-                    blinded=args.blinded,
-                )
+        for variable in plot_vars:
+            plot_control(
+                rootfile=rootfile,
+                channel=channel,
+                era=args.era,
+                variable=variable,
+                process_config=proc_config,
+                output_dir=args.output,
+                log_y=args.log_y,
+                blinded=args.blinded,
+            )
     rootfile.Close()
 
 
 if __name__ == "__main__":
+    # Self-nice regardless of invocation method (run.py already wraps this in
+    # `nice -n 19`, but this also covers direct invocation). Safe to call even
+    # when already niced (os.nice() clamps at the max of 19).
+    os.nice(19)
     args = parse_arguments()
     logger = setup_logging(logger=logging.getLogger(__name__))
     main(args)

@@ -71,6 +71,27 @@ def prefiring_weight(era, **kwargs):
     return ("1.0", "prefireWeight")
 
 
+# The 2024/2025/2026 Summer24 MC campaigns were each produced once and then
+# split into two equal halves, with each half assigned to a different era's
+# CROWN ntuple production. numberGeneratedEventsWeight (1/nevents, computed in
+# xsec/build_friend_tree.py from the *full* campaign's nevents in
+# datasets.json) is unaware of this split, so each era's shapes only see half
+# the events the normalization assumes -- undercounting MC normalization by
+# this factor. This weight applies the explicit correction; it is the single
+# place to update if the split ratio changes or an era gets its own
+# dedicated (unsplit) MC campaign.
+MC_CAMPAIGN_SPLIT_FACTOR = {
+    "2024": 2.0,
+    "2025": 2.0,
+    "2026": 2.0,
+}
+
+
+def mc_campaign_split_weight(era, **kwargs):
+    factor = MC_CAMPAIGN_SPLIT_FACTOR.get(era, 1.0)
+    return (str(factor), "mc_campaign_split_weight")
+
+
 def MC_base_process_selection(channel, era, vs_jet_wp, vs_ele_wp, preselected=False, **kwargs):
     wps_dict = [
 
@@ -140,7 +161,7 @@ def MC_base_process_selection(channel, era, vs_jet_wp, vs_ele_wp, preselected=Fa
             f"((gen_match_1==5)*id_wgt_tau_vsEle_{vs_ele_wp}_1 + (gen_match_1!=5)) * ((gen_match_2==5)*id_wgt_tau_vsEle_{vs_ele_wp}_2 + (gen_match_2!=5))",
             "vseleweight",
         )
-        if era in ["2024", "2025"]:
+        if era in ["2024", "2025", "2026"]:
             trgweight = (
                 "(trg_wgt_doubletau30_leg1 * trg_wgt_doubletau30_leg2 * (pt_1 > 35) * (pt_2 > 35))", "trgweight"
             )
@@ -152,14 +173,17 @@ def MC_base_process_selection(channel, era, vs_jet_wp, vs_ele_wp, preselected=Fa
         raise ValueError("Given channel {} not defined.".format(channel))
 
     if preselected:
-        # When reading from preselected files, presel_weight already encodes:
+        # When reading from preselected files, the preselection's `weight`
+        # column (shapes/preselect.py::_define_weight -- the same branch
+        # TauFakeFactors reads) already encodes:
         # lumi × gen × SF(vsEle) × SF(vsMu) × SF(lep-id/iso) × Z/Top pt reweighting.
         # Only pileup, trigger SF, tau-vsJet SF, and btag weight are still needed here.
         MC_base_process_weights = [
-            ("presel_weight", "presel_weight"),
+            ("weight", "preselweight"),
             ("puweight", "puweight"),
             tauidweight,
             trgweight,
+            mc_campaign_split_weight(era),
         ]
     else:
         MC_base_process_weights = [
@@ -172,6 +196,7 @@ def MC_base_process_selection(channel, era, vs_jet_wp, vs_ele_wp, preselected=Fa
             trgweight,
             lumi_weight(era),
             prefiring_weight(era),
+            mc_campaign_split_weight(era),
         ]
     # Phase 5.1 (2026-07-15) root cause + fix: this used to exclude "mt" from
     # btag_weight unconditionally (`channel not in ("mm", "mt")`), which was
@@ -649,7 +674,11 @@ def TTT_process_selection(channel, era, **kwargs):
         tt_cut = "gen_match_1==5 && gen_match_2==5"
     elif "em" in channel:
         tt_cut = "gen_match_1==3 && gen_match_2==4"
-    weights = [ttbar_em_weight(channel, era)]
+    # Disabled for now -- re-enable by uncommenting once ttbar_em_weight's
+    # per-era correction is validated (see its docstring for the calibration
+    # this was measuring; no 2026 value exists yet).
+    # weights = [ttbar_em_weight(channel, era)]
+    weights = []
     return Selection(name="TTT", cuts=[(f"({tt_cut})", "ttt_cut")], weights=weights)
 
 
@@ -668,7 +697,11 @@ def TTL_process_selection(channel, era, **kwargs):
     elif "em" in channel:
         emb_veto = "!(gen_match_1==3 && gen_match_2==4)"
         ff_veto = "(1.0)"
-    weights = [ttbar_em_weight(channel, era)]
+    # Disabled for now -- re-enable by uncommenting once ttbar_em_weight's
+    # per-era correction is validated (see its docstring for the calibration
+    # this was measuring; no 2026 value exists yet).
+    # weights = [ttbar_em_weight(channel, era)]
+    weights = []
     return Selection(
         name="TTL",
         cuts=[(f"({emb_veto})", "tt_emb_veto"), (f"({ff_veto})", "ff_veto")],
@@ -732,13 +765,27 @@ def VVL_process_selection(channel, **kwargs):
     )
 
 
+# STXS stage-0 Higgs production-mode codes (HTXS_stage_0). Stage 0 already
+# merges genuine VBF with hadronically-decaying-V associated production
+# (indistinguishable qqH final state) under the "VBF" code -- only
+# leptonically-decaying WH/ZH get their own codes. This is why qqH and VH
+# are split by *this* cut, not by dataset: the WminusH/WplusH/ZH samples in
+# samples.yaml:signals feed both qqH (hadronic V decay) and VH (leptonic V
+# decay), same as smhtt_ul's process_selection.py (rem_htautau feeding both
+# qqH125 and WH125/ZH125 via HTXS cuts).
+_HTXS_STAGE0_GGH = 10
+_HTXS_STAGE0_VBF = 20  # VBF + hadronic-decay WH/ZH
+_HTXS_STAGE0_WH_LEP = 30
+_HTXS_STAGE0_ZH_LEP = 40
+
+
 def VH_process_selection(channel, era, vs_jet_wp, vs_ele_wp, **kwargs):
     return Selection(
         name="VH125",
         weights=HTT_process_selection(channel, era, vs_jet_wp, vs_ele_wp).weights,
         cuts=[
             (
-                "(HTXS_stage1_2_cat_pTjet30GeV>=300)&&(HTXS_stage1_2_cat_pTjet30GeV<=505)",
+                f"(HTXS_stage_0=={_HTXS_STAGE0_WH_LEP})||(HTXS_stage_0=={_HTXS_STAGE0_ZH_LEP})",
                 "htxs_match",
             )
         ],
@@ -758,7 +805,7 @@ def WH_process_selection(channel, era, vs_jet_wp, vs_ele_wp, **kwargs):
         ],
         cuts=[
             (
-                "(HTXS_stage1_2_cat_pTjet30GeV>=300)&&(HTXS_stage1_2_cat_pTjet30GeV<=305)",
+                f"HTXS_stage_0=={_HTXS_STAGE0_WH_LEP}",
                 "htxs_match",
             )
         ],
@@ -779,7 +826,7 @@ def ZH_process_selection(channel, era, vs_jet_wp, vs_ele_wp, **kwargs):
         ],
         cuts=[
             (
-                "(HTXS_stage1_2_cat_pTjet30GeV>=400)&&(HTXS_stage1_2_cat_pTjet30GeV<=405)",
+                f"HTXS_stage_0=={_HTXS_STAGE0_ZH_LEP}",
                 "htxs_match",
             )
         ],
@@ -845,7 +892,7 @@ def _get_stxs_stitching_weight(
     **kwargs,
 ):
     if full_recreation:
-        specific_era = ("2022preEE", "2022postEE", "2023preBPix", "2023postBPix", "2024", "2025")
+        specific_era = ("2022preEE", "2022postEE", "2023preBPix", "2023postBPix", "2024", "2025", "2026")
         specific_process = ("ggh_htautau", "vbf_htautau")  # (process,),
     else:
         specific_era = (era,)
@@ -858,7 +905,7 @@ def _get_stxs_stitching_weight(
             _ = info[era]
     except (FileNotFoundError, KeyError):
         info = calculate_stxs_N_and_negative_fractions(
-            database_path=file.parent.parent.parent / "TauFakeFactors" / "datasets" / f"nanoAOD_{nanoAOD_version}",
+            database_path=file.parent.parent.parent / "datasets" / f"nanoAOD_{nanoAOD_version}",
             output_path=file,
             specific_era=specific_era,
             specific_process=specific_process,
@@ -920,7 +967,7 @@ def ggH125_process_selection(channel, era, vs_jet_wp, vs_ele_wp, weight_stitchin
 
     ggH125_cuts = [
         (
-            "(HTXS_stage1_2_cat_pTjet30GeV>=100)&&(HTXS_stage1_2_cat_pTjet30GeV<=116)",
+            f"HTXS_stage_0=={_HTXS_STAGE0_GGH}",
             "htxs",
         )
     ]
@@ -943,7 +990,7 @@ def qqH125_process_selection(channel, era, vs_jet_wp, vs_ele_wp, weight_stitchin
         )
     qqH125_cuts = [
         (
-            "(HTXS_stage1_2_cat_pTjet30GeV>=200)&&(HTXS_stage1_2_cat_pTjet30GeV<=210)",
+            f"HTXS_stage_0=={_HTXS_STAGE0_VBF}",
             "qqH125",
         )
     ]

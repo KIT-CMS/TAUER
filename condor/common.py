@@ -33,11 +33,19 @@ Python condor submitter, not a law/luigi HTCondorWorkflow.
   cmsenv/conda-activation step it can't avoid; Python for everything else).
 
 Conventions (validated against the live KIT-ETP condor pool, see STATUS.md):
-- `/work/sgiappic` (this repo's location) and `/cvmfs` are mounted on execute
-  nodes, so `should_transfer_files = NO` is used — no need to transfer the
-  repo or the LCG view, jobs run in place. This differs from KingMaker's
-  container-universe jobs, which explicitly transfer inputs/outputs because
-  they assume no shared filesystem (remote/grid-submittable sites).
+- `/work/sgiappic` (this repo's location) and `/cvmfs` are available on
+  execute nodes via each node's Docker bind mounts (see the
+  `should_transfer_files` comment in `build_submit_text` for how that's
+  actually reached now — FileSystemDomain-based matching, which is what
+  originally justified this bullet, stopped working when the pool started
+  auto-wrapping plain vanilla jobs and diversifying FileSystemDomain per
+  host; jobs land in a container either way but that container has /work
+  bind-mounted, `should_transfer_files = YES` + explicit
+  `TARGET.ProvidesEtpResources` requirements is what actually gets them
+  scheduled there now). No repo/LCG-view transfer needed either way. This
+  differs from KingMaker's *remote* container-universe jobs (mdm1-style grid
+  pool), which explicitly ship a tarball because they assume no shared
+  filesystem at all.
 - `x509userproxy` / `accounting_group = cms.higgs` follow the same convention
   as KingMaker's generated .jdl files, for consistency across this user's
   condor usage at KIT-ETP.
@@ -58,7 +66,50 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 DEFAULT_CONDA_ENV = "taukitflow"
 DEFAULT_CONDA_BASE = "/work/sgiappic/MiniForge"
-DEFAULT_ACCOUNTING_GROUP = "cms.higgs"
+DEFAULT_ACCOUNTING_GROUP = "cms"
+
+_BOOTSTRAP_SENTINEL = "TAUKITFLOW_CONDOR_ENV_BOOTSTRAPPED"
+
+
+def _ensure_taukitflow_env() -> None:
+    """Every condor/submit_*.py CLI imports condor.common (this module) before
+    `from config.analysis import ...`, which needs CustomLogging
+    (TauFakeFactors/CustomLogging) on PYTHONPATH plus the `taukitflow` conda
+    env's dependencies (ROOT, yaml, ...). Unlike condor jobs themselves (see
+    write_wrapper_script() below, which bootstraps this for the *worker
+    node*), a user invoking a submit_*.py script directly from an interactive
+    shell that isn't already `conda activate taukitflow` hits
+    `ModuleNotFoundError: No module named 'CustomLogging'` before argparse
+    even runs. Re-exec once under the right env/PYTHONPATH here -- since this
+    runs at import time, before any submit_*.py script's own
+    `config.analysis` import -- instead of making every invocation remember
+    to activate conda + export PYTHONPATH by hand first.
+    """
+    import importlib.util
+
+    if importlib.util.find_spec("CustomLogging") is not None:
+        return  # already importable: correct env/PYTHONPATH already in place
+    if os.environ.get(_BOOTSTRAP_SENTINEL):
+        # Already re-exec'd once and CustomLogging is *still* not importable
+        # -- re-execing again would just loop. Let the real ImportError from
+        # the calling script's `from config.analysis import ...` surface
+        # instead of failing silently here.
+        return
+
+    import sys
+
+    env = dict(os.environ)
+    env[_BOOTSTRAP_SENTINEL] = "1"
+    env["PYTHONPATH"] = f"{REPO_ROOT}:{REPO_ROOT / 'TauFakeFactors'}:{env.get('PYTHONPATH', '')}"
+    inner = " ".join(shlex.quote(a) for a in ["python3", *sys.argv])
+    script = (
+        f"source {shlex.quote(DEFAULT_CONDA_BASE)}/etc/profile.d/conda.sh && "
+        f"conda activate {shlex.quote(DEFAULT_CONDA_ENV)} && exec {inner}"
+    )
+    os.execvpe("bash", ["bash", "-c", script], env)
+
+
+_ensure_taukitflow_env()
 
 
 def default_proxy_path() -> str:
@@ -155,7 +206,7 @@ cd {REPO_ROOT}
 {env_block}
 echo "[wrapper] host=$(hostname) stage={plan.stage} entry_point={plan.entry_point}"
 echo "[wrapper] args: $@"
-exec python3 {plan.entry_point} "$@"
+exec nice -n 19 python3 {plan.entry_point} "$@"
 """
     wrapper.write_text(content)
     wrapper.chmod(0o755)
@@ -168,7 +219,36 @@ def build_submit_text(plan: SubmissionPlan, wrapper: Path) -> str:
     classads = {
         "universe": "vanilla",
         "executable": str(wrapper),
-        "should_transfer_files": "NO",
+        # `should_transfer_files = NO` used to be paired with the default
+        # vanilla-universe requirement `TARGET.FileSystemDomain ==
+        # MY.FileSystemDomain` (condor_submit only adds that clause for NO).
+        # As of the live KIT-ETP pool check below, no execute slot advertises
+        # the submit host's (portal1.etp.kit.edu) FileSystemDomain except
+        # portal1's own slot, which has START=false (it's the schedd/login
+        # node, not a worker) -- so NO makes every job unmatchable. YES drops
+        # that clause (condor_submit instead requires TARGET.HasFileTransfer,
+        # true on effectively every execute node) while `requirements` below
+        # picks the real ETP worker nodes explicitly. This doesn't lose the
+        # shared-filesystem access `should_transfer_files = NO` was there
+        # for: those nodes' Docker wrapping (auto-applied by the pool's
+        # JOB_TRANSFORM_VanillaJobs for any job that doesn't set its own
+        # container_image) bind-mounts /work, /ceph and /home directly
+        # (DOCKER_MOUNT_VOLUMES in /etc/condor/config.d/0063.node_worker_local.cfg),
+        # so /work/sgiappic is still there for reading local files throughout
+        # the job and saving output at the end -- `transfer_output_files`
+        # below is left empty so HTCondor itself never tries to ship any
+        # files back.
+        "should_transfer_files": "YES",
+        "when_to_transfer_output": "ON_EXIT",
+        "transfer_output_files": '""',
+        # Restrict to nodes that actually provide ETP-local storage
+        # (/work, /ceph, /cvmfs) instead of relying on FileSystemDomain
+        # matching, which no longer works on this pool (see above). This is
+        # the same attribute KingMaker's own local/non-remote guidance
+        # points at (lawluigi_configs/KingMaker_luigi.cfg: "when using
+        # local, make sure to adjust the htcondor requirements so all local
+        # paths are accessible for ETP, that is TARGET.ProvidesEtpResources").
+        "requirements": "(TARGET.ProvidesEtpResources =?= true)",
         "getenv": "False",
         "notification": "Never",
         "accounting_group": DEFAULT_ACCOUNTING_GROUP,

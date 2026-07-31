@@ -5,13 +5,35 @@ from ntuple_processor.variations import (
     ReplaceWeight,
     ReplaceCutAndAddWeight,
 )
+import os
 import re
 from copy import deepcopy
+from concurrent.futures import ProcessPoolExecutor
 import logging
 
 from config.logging_setup_configs import setup_logging
 
 logger = setup_logging(logger=logging.getLogger(__name__))
+
+# Cap on how many dataset keys (DY/TT/VV/W/data/signals/...) get validated
+# concurrently in get_nominal_datasets(). dataset_from_crownoutput()'s own
+# per-file validation (see ntuple_processor/booking.py) is a plain sequential
+# Python loop doing one remote xrootd TFile.Open per file, with no
+# parallelism of its own -- this is what makes a cold validation_database
+# cache (a brand new NTUPLETAG/--validation-tag) painfully slow, since it's
+# entirely network-latency-bound (near-zero CPU while it waits on each
+# remote open). Running one dataset key's validation per worker process
+# (same fork-based multiprocessing pattern already used safely in
+# xsec/build_friend_tree.py) turns that into up to _VALIDATION_WORKERS
+# concurrent remote opens instead of one at a time -- a real, direct speedup
+# for the first run against any given tag. Once validation_database/<tag>/
+# is populated, subsequent runs hit the cache and this doesn't matter.
+_VALIDATION_WORKERS = 8
+
+
+def _book_one_dataset(job):
+    key, kwargs = job
+    return key, dataset_from_crownoutput(**kwargs)
 
 
 def add_process(
@@ -109,41 +131,64 @@ def filter_friends(dataset, friend):
 
 
 def get_nominal_datasets(
-    era, channel, friend_directories, files, directory, validation_tag, xrootd=False
+    era,
+    channel,
+    friend_directories,
+    files,
+    directory,
+    validation_tag,
+    validation_db_root="validation_database",
+    flat_layout=False,
+    xrootd=False,
 ):
+    from config.analysis import get_mc_ntuple_era
+
+    # MC may need to be read from a different physical CROWN-production era
+    # directory than the analysis era (see MC_NTUPLE_ERA_OVERRIDE, e.g. 2026
+    # borrowing 2025's un-copied MC ntuples/friends) -- data/embedding always
+    # read from the real era's own directory.
+    mc_era = get_mc_ntuple_era(era)
+
+    jobs = []
+    for key, names in files[era][channel].items():
+        dataset_era = era if key in ("data", "EMB") else mc_era
+        friends = (
+            [fdir for fdir in friend_directories[channel] if filter_friends(key, fdir)]
+            if friend_directories is not None
+            else []
+        )
+        jobs.append((
+            key,
+            dict(
+                dataset_name=key,
+                file_names=names,
+                era=dataset_era,
+                channel=channel,
+                folder=channel + "_nominal",
+                files_base_directory=directory,
+                friends_base_directories=friends,
+                validate_samples=False,
+                validation_tag=validation_tag,
+                validation_db_root=validation_db_root,
+                flat_layout=flat_layout,
+                xrootd=xrootd,
+            ),
+        ))
+
+    # See _VALIDATION_WORKERS docstring above: this is what actually parallelizes
+    # the slow, network-bound per-file xrootd validation that dataset_from_crownoutput
+    # does internally and sequentially -- one dataset key (DY/TT/VV/W/data/...) per
+    # worker process instead of one at a time. Falls back to a single worker
+    # (no process pool overhead) when there's nothing to gain from it.
     datasets = dict()
-    if friend_directories is not None:
-        for key, names in files[era][channel].items():
-            datasets[key] = dataset_from_crownoutput(
-                key,
-                names,
-                era,
-                channel,
-                channel + "_nominal",
-                directory,
-                [
-                    fdir
-                    for fdir in friend_directories[channel]
-                    if filter_friends(key, fdir)
-                ],
-                validate_samples=False,
-                validation_tag=validation_tag,
-                xrootd=xrootd,
-            )
+    n_workers = min(_VALIDATION_WORKERS, len(jobs), os.cpu_count() or _VALIDATION_WORKERS) or 1
+    if n_workers <= 1:
+        for key, kwargs in jobs:
+            datasets[key] = dataset_from_crownoutput(**kwargs)
     else:
-        for key, names in files[era][channel].items():
-            datasets[key] = dataset_from_crownoutput(
-                key,
-                names,
-                era,
-                channel,
-                channel + "_nominal",
-                directory,
-                [],
-                validate_samples=False,
-                validation_tag=validation_tag,
-                xrootd=xrootd,
-            )
+        with ProcessPoolExecutor(max_workers=n_workers) as pool:
+            for key, dataset in pool.map(_book_one_dataset, jobs):
+                datasets[key] = dataset
     return datasets
 
 
@@ -159,6 +204,8 @@ def add_tauES_datasets(
     categorization,
     additional_emb_procS,
     validation_tag,
+    validation_db_root="validation_database",
+    flat_layout=False,
     xrootd=False,
     shiftstring="EMBtauESshift",
 ):
@@ -180,6 +227,8 @@ def add_tauES_datasets(
             ],
             validate_samples=False,
             validation_tag=validation_tag,
+            validation_db_root=validation_db_root,
+            flat_layout=flat_layout,
             xrootd=xrootd,
         )
         nominals[era]["datasets"][channel][processname] = dataset

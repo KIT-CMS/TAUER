@@ -18,22 +18,34 @@ Modes:
     TRAIN-SHAPES  Produce shapes for NN training
     CONFIGS       Collect ntuple_processor configs (YAML) -- no histogram production
     GEN-TFF-CONFIGS  Regenerate TFF per-channel preselection YAMLs from unified config
-    PRESEL        Run TauFakeFactors preselection (per channel)
+    PRESEL        Run the preselection (signals + backgrounds, per channel) into
+                  --presel-dir, defaulting to
+                  build_shape_output_paths(NTUPLETAG).preselection -- TauKITFlow's
+                  own (shapes/preselect.py), read from that same default by both
+                  SHAPES (--presel-dir) and FF/FF-CORR (--ff-input-dir)
     FF            Run TauFakeFactors fake factor calculation (per channel)
     FF-CORR       Run TauFakeFactors fake factor corrections (per channel)
-    FF-MEASURE    Run the full FF measurement chain: GEN-TFF-CONFIGS -> PRESEL -> FF -> FF-CORR
-                  (the four modes above still exist for single-step reruns)
+    FF-MEASURE    Standalone TauFakeFactors measurement chain (GEN-TFF-CONFIGS ->
+                  TauFakeFactors' OWN preselection.py -> FF -> FF-CORR). Note its
+                  preselection step is TauFakeFactors', NOT run.py's PRESEL above --
+                  in this pipeline use PRESEL then FF/FF-CORR --ff-input-dir instead.
     TRAIN         Run NN training via law (uncertainty-aware-training)
     TRAIN-DATASET Build training feather folds from ROOT shapes (plain Python, no law/condor)
 
 Note on conda activation (see common/conda_env.py's module docstring for the
-reasoning): only the modes that used `check_env()` in the bash version --
-XSEC, SHAPES/SHAPES-NOSYS, TRAIN-SHAPES, CONFIGS, PRESEL -- activate the
+reasoning): the modes that used `check_env()` in the bash version --
+XSEC, SHAPES/SHAPES-NOSYS, TRAIN-SHAPES, CONFIGS -- activate the
 `taukitflow` conda env before running their python command, exactly as
-before. PLOT/GEN-TFF-CONFIGS/FF/FF-CORR/TRAIN do not (same as the bash
-version -- they run in whatever environment this script itself is invoked
-under; PLOT in particular is expected to run under the separate
-`environment-plotting.yml` env, not `taukitflow`).
+before. PRESEL activates `fake_factors` instead (it reuses TauFakeFactors'
+helper modules, whose deps -- ruamel.yaml, XRootD-client -- `taukitflow`
+does not declare). GEN-TFF-CONFIGS/FF/FF-CORR/TRAIN do not (same as the bash version --
+they run in whatever environment this script itself is invoked under). PLOT
+used to require a separate `environment-plotting.yml` (`taukitflow-plotting`)
+env just to get ROOT -- `environment.yml` now declares `root` directly
+(condor/submit_plotting.py's jobs already ran PLOT under plain `taukitflow`
+successfully, which is what confirmed ROOT already worked there), so PLOT
+now activates the one `taukitflow` env too; the separate env/yml no longer
+exist.
 """
 from __future__ import annotations
 
@@ -66,14 +78,23 @@ MODES = [
 HELP_EPILOG = """
 Required environment variables (for shape production):
   NTUPLETAG          CROWN ntuple tag (e.g. htt_260417_2022-23)
-  TAG                Output label tag (optional, e.g. 260417) -- accepted for
-                      CLI-compat with the old bash script; unused by any mode.
+  TAG                Run-tag, distinct from NTUPLETAG; defaults to NTUPLETAG.
+                      Used by SHAPES/SHAPES-NOSYS/PLOT to nest output under
+                      output/{TAG}/{ss-os,ff}/{era}/{channel}/shapes.root.
+                      The default already makes an ss-os run and a later
+                      --ff-friends-dir run for the same NTUPLETAG share a
+                      tree (so the ff run finds and hadd's onto the ss-os
+                      run's output instead of redoing it) -- only set this
+                      explicitly for a second, independent run that should
+                      NOT build on the earlier one.
 
 Optional:
   ERA              (default: 2022postEE)
   CHANNELS         (default: et,mt,tt)
   VS_JET_WP        (default: Medium)
-  VS_ELE_WP        (default: VVLoose, or Tight if CHANNELS == "et")
+  VS_ELE_WP        (default: per-channel, matching smhtt_ul's Run3 configs --
+                    Tight for et, VVLoose otherwise; set this to force the
+                    same WP for every channel instead)
   FF_FRIENDS_DIR   Path to fake factor friend trees (enables FF mode in SHAPES)
   FF_CONFIG        Override config path for FF mode
   FF_CORR_CONFIG   Override config path for FF-CORR mode
@@ -113,7 +134,23 @@ def make_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ff-friends-dir", dest="ff_friends_dir", default=None)
     parser.add_argument("--ff-config", dest="ff_config", default=None)
     parser.add_argument("--ff-corr-config", dest="ff_corr_config", default=None)
-    parser.add_argument("--presel-dir", dest="presel_dir", default=None)
+    parser.add_argument(
+        "--presel-dir", dest="presel_dir", default=None,
+        help="The central preselection tree: PRESEL writes it, SHAPES/"
+             "SHAPES-NOSYS/TRAIN-SHAPES read it. Defaults on both sides to "
+             "build_shape_output_paths(ntupletag).preselection "
+             "(/ceph/$USER/TauKITFlow_shapes/$NTUPLETAG/preselection), so "
+             "SHAPES picks up PRESEL's output automatically. Pass an empty "
+             "string to make SHAPES read raw CROWN ntuples instead.",
+    )
+    parser.add_argument(
+        "--ff-input-dir", dest="ff_input_dir", default=None,
+        help="For FF/FF-CORR: override common_settings.yaml's file_path/output_path "
+             "(via a generated tmp config, TFF's real YAML on disk is never touched) "
+             "to point at a central-preselection dir (e.g. "
+             "build_shape_output_paths(ntupletag).preselection) instead of TFF's own "
+             "preselection.py output.",
+    )
     return parser
 
 
@@ -142,8 +179,11 @@ def run_plain(cmd_args, cwd=None, env_overrides=None):
     return subprocess.run(["nice", "-n", "19", *cmd_args], cwd=str(cwd or REPO_ROOT), env=env)
 
 
-def run_conda(cmd_args, env_overrides=None):
-    return run_in_conda(["nice", "-n", "19", *cmd_args], cwd=REPO_ROOT, env_overrides=env_overrides, check=False)
+def run_conda(cmd_args, env_overrides=None, conda_env=None):
+    kwargs = {"cwd": REPO_ROOT, "env_overrides": env_overrides, "check": False}
+    if conda_env:
+        kwargs["conda_env"] = conda_env
+    return run_in_conda(["nice", "-n", "19", *cmd_args], **kwargs)
 
 
 def mode_xsec(cfg, extra):
@@ -151,10 +191,10 @@ def mode_xsec(cfg, extra):
 
     paths = build_ul_sample_paths(cfg["ntupletag"], cfg["era"])
     print(f"[XSEC] Building cross-section friend trees for {cfg['ntupletag']}")
-    if cfg["era"].startswith("2024") or cfg["era"].startswith("2025"):
-        datasets_json = "TauFakeFactors/datasets/nanoAOD_v15/datasets.json"
+    if cfg["era"].startswith("2024") or cfg["era"].startswith("2025") or cfg["era"].startswith("2026"):
+        datasets_json = "datasets/nanoAOD_v15/datasets.json"
     else:
-        datasets_json = "TauFakeFactors/datasets/nanoAOD_v12/datasets.json"
+        datasets_json = "datasets/nanoAOD_v12/datasets.json"
 
     cmd = [
         "python",
@@ -177,9 +217,18 @@ def mode_shapes(cfg, extra, mode):
 
     paths = build_ul_sample_paths(cfg["ntupletag"], cfg["era"])
 
-    output_dir = Path(cfg["output_dir"])
-    output_dir.mkdir(parents=True, exist_ok=True)
-    outfile = output_dir / f"{cfg['era']}-{cfg['channels'].replace(',', '-', 1)}-shapes.root"
+    # Nested output/{tag}/{qcd-label}/{era}/{channels}/shapes.root -- tag
+    # defaults to ntupletag (see cfg["tag"] construction above), so an ss-os
+    # run and a later --ff-friends-dir run land in the same tree by default
+    # and the ff run can find the ss-os run's output below without any extra
+    # config. qcd-label mirrors which estimation --ff-friends-dir selects
+    # (same "ff" if ff_friends_dir else "ss-os" logic as estimation_args
+    # below).
+    channels_label = cfg["channels"].replace(",", "-", 1)
+    qcd_label = "ff" if cfg["ff_friends_dir"] else "ss-os"
+    run_dir = Path(cfg["output_dir"]) / cfg["tag"] / qcd_label / cfg["era"] / channels_label
+    run_dir.mkdir(parents=True, exist_ok=True)
+    outfile = run_dir / "shapes.root"
 
     extra_args = []
     ff_friends = []
@@ -191,8 +240,14 @@ def mode_shapes(cfg, extra, mode):
         ]
         extra_args += ["--ff-type", "fake_factor"]
 
+    directory_args = ["--directory", paths.ntuples]
     if cfg["presel_dir"]:
-        extra_args += ["--presel-dir", cfg["presel_dir"]]
+        # --directory and --presel-dir are mutually exclusive in
+        # shapes/produce_shapes.py -- now that --presel-dir actually exists
+        # there (it didn't before; this passthrough was dead/would have
+        # crashed with "unrecognized arguments" the moment PRESEL_DIR was
+        # ever set), drop --directory instead of passing both.
+        directory_args = ["--presel-dir", cfg["presel_dir"]]
 
     if mode == "SHAPES-NOSYS":
         extra_args.append("--skip-systematic-variations")
@@ -200,33 +255,92 @@ def mode_shapes(cfg, extra, mode):
     if not os.environ.get("DNN_FRIENDS_DIR"):
         extra_args.append("--no-dnn-categorization")
 
-    print(f"[{mode}] Producing shapes: era={cfg['era']} channels={cfg['channels']}")
-    cmd = [
-        "python",
-        "shapes/produce_shapes.py",
-        "--era", cfg["era"],
-        "--channels", cfg["channels"],
-        "--vs-jet-wp", cfg["vs_jet_wp"],
-        "--vs-ele-wp", cfg["vs_ele_wp"],
-        "--directory", paths.ntuples,
-        "--et-friend-directory", paths.xsec_friends,
-        "--mt-friend-directory", paths.xsec_friends,
-        "--tt-friend-directory", paths.xsec_friends,
-        "--em-friend-directory", paths.xsec_friends,
-        *ff_friends,
-        "--output-file", str(outfile),
-        "--num-processes", str(cfg["nprocs"]),
-        "--num-threads", str(cfg["nthreads"]),
-        "--xrootd",
-        *extra_args,
-        *extra,
-    ]
-    result = run_conda(cmd, env_overrides={"PYTHONPATH": pythonpath_with_tff()})
-    if result.returncode != 0:
-        return result.returncode
+    if cfg["vs_ele_wp"]:
+        extra_args += ["--vs-ele-wp", cfg["vs_ele_wp"]]
+
+    def _produce(output_file, ff_only=False):
+        cmd = [
+            "python",
+            "shapes/produce_shapes.py",
+            "--era", cfg["era"],
+            "--channels", cfg["channels"],
+            "--vs-jet-wp", cfg["vs_jet_wp"],
+            # Scopes ntuple_processor's on-disk validation_database/ cache by
+            # ntupletag (default "default" otherwise) -- without this, switching
+            # --ntupletag reuses another tag's stale, tag-specific file list
+            # under the same era_channel_dataset.yaml cache key and every real
+            # lookup against the new tag's (different) file paths raises
+            # "File ... not found in validation results." (booking.py:361).
+            "--validation-tag", cfg["ntupletag"],
+            "--validation-db-root", cfg["validation_dir"],
+            *directory_args,
+            "--et-friend-directory", paths.xsec_friends,
+            "--mt-friend-directory", paths.xsec_friends,
+            "--tt-friend-directory", paths.xsec_friends,
+            "--em-friend-directory", paths.xsec_friends,
+            *ff_friends,
+            "--output-file", str(output_file),
+            "--num-processes", str(cfg["nprocs"]),
+            "--num-threads", str(cfg["nthreads"]),
+            "--xrootd",
+            *extra_args,
+            *(["--ff-only"] if ff_only else []),
+            *extra,
+        ]
+        return run_conda(cmd, env_overrides={"PYTHONPATH": pythonpath_with_tff()})
+
+    if qcd_label == "ff":
+        # Same tag/era/channels, ss-os label -- the sibling non-FF run this
+        # ff run builds on instead of redoing, IF it already exists (same
+        # ntupletag/tag by default -- see cfg["tag"]).
+        ss_os_file = Path(cfg["output_dir"]) / cfg["tag"] / "ss-os" / cfg["era"] / channels_label / "shapes.root"
+        if ss_os_file.exists():
+            print(f"[{mode}] Reusing existing ss-os shapes at {ss_os_file} -- booking only the "
+                  f"FF-weighted variations (--ff-only) and merging onto a copy of it, instead of "
+                  f"redoing the full (expensive) shape production.")
+            ff_only_file = run_dir / "shapes_ff_only.root"
+            result = _produce(ff_only_file, ff_only=True)
+            if result.returncode != 0:
+                return result.returncode
+            # hadd merges histograms present in both inputs and copies over
+            # histograms unique to either -- correct here because ss_os_file
+            # and ff_only_file have disjoint histogram-name sets by
+            # construction (--ff-only only books what a normal run books
+            # when args.ff_type != "none", which a plain ss-os run never
+            # booked in the first place).
+            hadd_result = run_conda(
+                ["hadd", "-f", str(outfile), str(ss_os_file), str(ff_only_file)],
+                env_overrides={"PYTHONPATH": pythonpath_with_tff()},
+            )
+            if hadd_result.returncode != 0:
+                return hadd_result.returncode
+            ff_only_file.unlink(missing_ok=True)
+        else:
+            print(f"[{mode}] No existing ss-os shapes found at {ss_os_file}; producing full shapes "
+                  f"(including FF variations) from scratch.")
+            result = _produce(outfile, ff_only=False)
+            if result.returncode != 0:
+                return result.returncode
+    else:
+        print(f"[{mode}] Producing shapes: era={cfg['era']} channels={cfg['channels']}")
+        result = _produce(outfile, ff_only=False)
+        if result.returncode != 0:
+            return result.returncode
 
     print(f"[{mode}] Running post-processing estimations on {outfile}")
-    estimation_args = ["--do-ff"] if cfg["ff_friends_dir"] else []
+    # Matches smhtt_ul: the fake-factor method (--do-ff) is only usable once
+    # FF friend trees are available; without them, fall back to the same
+    # same-sign-data to opposite-sign-data QCD multijet extrapolation
+    # (--do-qcd, shapes/estimations/qcd.py:qcd_estimation) smhtt_ul used by
+    # default. Both read from the `same_sign` histograms produce_shapes.py
+    # already books unconditionally for et/mt/tt (see its `_book(... ,
+    # [variations.same_sign])` calls), so no shape-production change is
+    # needed -- only which estimation to run on top of them.
+    estimation_args = ["--do-ff"] if cfg["ff_friends_dir"] else ["--do-qcd"]
+    # Merges the "qqh" (pure VBF) and "vh_as_qqh" (hadronic-decay WminusH/WplusH/ZH
+    # events reclassified as qqH via HTXS_stage_0, see shapes/produce_shapes.py)
+    # histograms produced above back into one physical qqH125 shape.
+    estimation_args.append("--do-qqh-procs")
     cmd = [
         "python",
         "shapes/do_estimations.py",
@@ -239,9 +353,16 @@ def mode_shapes(cfg, extra, mode):
 
 
 def mode_plot(cfg, extra):
-    output_dir = Path(cfg["output_dir"])
-    outfile = output_dir / f"{cfg['era']}-{cfg['channels'].replace(',', '-', 1)}-shapes.root"
-    plot_dir = f"/web/sgiappic/public_html/CMS_HTT/{cfg['era']}/test/"
+    # Same nested layout mode_shapes writes to (output/{tag}/{qcd-label}/{era}/{channels}/shapes.root).
+    channels_label = cfg["channels"].replace(",", "-", 1)
+    qcd_label = "ff" if cfg["ff_friends_dir"] else "ss-os"
+    outfile = Path(cfg["output_dir"]) / cfg["tag"] / qcd_label / cfg["era"] / channels_label / "shapes.root"
+    # plot_shapes_control.py itself builds <plot_dir>/<era>/<channel>/<ext>/...
+    # -- do not bake era into plot_dir here, or it gets nested twice. tag/
+    # qcd-label are nested here (mirroring output/'s layout) so ss-os and ff
+    # plots for the same era/channel don't collide, and so the validation
+    # cache lookup implied by a shared tag stays consistent between them.
+    plot_dir = f"/web/sgiappic/public_html/CMS_HTT/{cfg['tag']}/{qcd_label}/"
     variables = os.environ.get("VARIABLES", "m_vis,pt_1,pt_2,eta_1,eta_2,mt_1")
 
     print(f"[PLOT] Plotting shapes from {outfile}")
@@ -255,7 +376,7 @@ def mode_plot(cfg, extra):
         "--variables", variables,
         *extra,
     ]
-    return run_plain(cmd).returncode
+    return run_conda(cmd, env_overrides={"PYTHONPATH": pythonpath_with_tff()}).returncode
 
 
 def mode_train_shapes(cfg, extra):
@@ -267,13 +388,15 @@ def mode_train_shapes(cfg, extra):
     outfile = output_dir / f"{cfg['era']}-{cfg['channels'].replace(',', '-', 1)}-training-shapes.root"
 
     print(f"[TRAIN-SHAPES] Producing training shapes: era={cfg['era']} channels={cfg['channels']}")
+    vs_ele_wp_args = ["--vs-ele-wp", cfg["vs_ele_wp"]] if cfg["vs_ele_wp"] else []
     cmd = [
         "python",
         "shapes/produce_shapes.py",
         "--era", cfg["era"],
         "--channels", cfg["channels"],
         "--vs-jet-wp", cfg["vs_jet_wp"],
-        "--vs-ele-wp", cfg["vs_ele_wp"],
+        "--validation-tag", cfg["ntupletag"],
+        *vs_ele_wp_args,
         "--directory", paths.ntuples,
         "--et-friend-directory", paths.xsec_friends,
         "--mt-friend-directory", paths.xsec_friends,
@@ -298,13 +421,15 @@ def mode_configs(cfg, extra):
     outfile = output_dir / f"{cfg['era']}-{cfg['channels'].replace(',', '-', 1)}-config.yaml"
 
     print(f"[CONFIGS] Collecting ntuple_processor configs: era={cfg['era']} channels={cfg['channels']}")
+    vs_ele_wp_args = ["--vs-ele-wp", cfg["vs_ele_wp"]] if cfg["vs_ele_wp"] else []
     cmd = [
         "python",
         "shapes/produce_shapes.py",
         "--era", cfg["era"],
         "--channels", cfg["channels"],
         "--vs-jet-wp", cfg["vs_jet_wp"],
-        "--vs-ele-wp", cfg["vs_ele_wp"],
+        "--validation-tag", cfg["ntupletag"],
+        *vs_ele_wp_args,
         "--directory", paths.ntuples,
         "--et-friend-directory", paths.xsec_friends,
         "--mt-friend-directory", paths.xsec_friends,
@@ -327,27 +452,83 @@ def mode_gen_tff_configs(cfg, extra):
 
 
 def mode_presel(cfg, extra):
-    # Phase 6e note (STATUS.md "## Phase 6e"): this used to also pass
-    # `--columns <output_features>`, an argument preselection.py's argparse
-    # doesn't define at all (it reads output_features from the config file
-    # itself) -- that made every real PRESEL invocation fail with
-    # "unrecognized arguments". Removed.
-    print(f"[PRESEL] Running TauFakeFactors preselection: era={cfg['era']} channels={cfg['channels']}")
+    """
+    The analysis' preselection step: TauKITFlow's own, via
+    shapes/preselect.py -- a full replacement for TauFakeFactors'
+    preselection.py, which this pipeline does not use at all (that file is
+    untouched on disk and still works for running TauFakeFactors standalone;
+    see run_fake_factor_measurement.py's "presel" step, which is that
+    separate standalone path).
+
+    Writes ONE flat preselection tree to cfg["presel_dir"], which defaults to
+    build_shape_output_paths(NTUPLETAG).preselection -- the same default
+    SHAPES reads from, so the two line up without either being told where it
+    is (--presel-dir/PRESEL_DIR overrides it on both sides). Consumed
+    directly by BOTH shapes/produce_shapes.py (--presel-dir) and
+    TauFakeFactors' ff_calculation.py/ff_corrections.py (--ff-input-dir, see
+    mode_ff/mode_ff_corr) -- no second CROWN-shaped mirror of it is needed.
+    """
+    from common.sample_paths import build_shape_output_paths, build_ul_sample_paths
+
+    ul_paths = build_ul_sample_paths(cfg["ntupletag"], cfg["era"])
+    output_dir = cfg["presel_dir"] or build_shape_output_paths(cfg["ntupletag"]).preselection
+
+    print(f"[PRESEL] Preselection: era={cfg['era']} channels={cfg['channels']} -> {output_dir}")
     for channel in cfg["channels"].split(","):
         print(f"[PRESEL] Processing channel {channel}")
         cmd = [
-            "python",
-            "TauFakeFactors/preselection.py",
-            "--config-file", f"TauFakeFactors/configs/smhtt_ul/{cfg['era']}/preselection_{channel}.yaml",
+            "python", "shapes/preselect.py",
+            "--era", cfg["era"],
+            "--channel", channel,
+            "--output-dir", output_dir,
+            "--directory", ul_paths.ntuples,
+            "--xsec-friends", ul_paths.xsec_friends,
             "--nthreads", str(cfg["nthreads"]),
             *extra,
         ]
+        # process_background_process() lazily imports TauFakeFactors'
+        # helper.filters/helper.functions (gen-mode split + output naming,
+        # reused so the output layout matches byte-for-byte), which need the
+        # `fake_factors` env's deps (ruamel.yaml, XRootD-client) -- the
+        # `taukitflow` env does not declare those in environment.yml.
         result = run_conda(
-            cmd, env_overrides={"PYTHONPATH": f"{os.environ.get('PYTHONPATH', '')}:{REPO_ROOT / 'TauFakeFactors'}"}
+            cmd,
+            env_overrides={"PYTHONPATH": f"{os.environ.get('PYTHONPATH', '')}:{REPO_ROOT / 'TauFakeFactors'}"},
+            conda_env="fake_factors",
         )
         if result.returncode != 0:
             return result.returncode
     return 0
+
+
+def _patched_ff_config(era: str, channel: str, config_kind: str, ff_input_dir: str) -> str:
+    """
+    For --ff-input-dir: build a tmp config dir containing an unmodified copy
+    of TauFakeFactors/configs/smhtt_ul/{era}/{config_kind}_{channel}.yaml
+    plus a *patched* common_settings.yaml (file_path/output_path overridden
+    to ff_input_dir) -- TauFakeFactors/helper/functions.py::load_config()
+    always looks for common_settings.yaml in the same directory as
+    --config-file, so this is enough to redirect ff_calculation.py/
+    ff_corrections.py's input glob without ever touching the real files
+    under TauFakeFactors/configs/.
+    """
+    import shutil
+    import tempfile
+    import yaml
+
+    src_dir = REPO_ROOT / "TauFakeFactors" / "configs" / "smhtt_ul" / era
+    tmp_dir = Path(tempfile.mkdtemp(prefix=f"tff_config_{era}_{channel}_"))
+
+    with open(src_dir / "common_settings.yaml") as f:
+        common_cfg = yaml.safe_load(f)
+    common_cfg["file_path"] = ff_input_dir
+    common_cfg["output_path"] = ff_input_dir
+    with open(tmp_dir / "common_settings.yaml", "w") as f:
+        yaml.safe_dump(common_cfg, f)
+
+    config_src = src_dir / f"{config_kind}_{channel}.yaml"
+    shutil.copy(config_src, tmp_dir / config_src.name)
+    return str(tmp_dir / config_src.name)
 
 
 def mode_ff(cfg, extra):
@@ -355,7 +536,7 @@ def mode_ff(cfg, extra):
     # PER CHANNEL (fake_factors_et.yaml, fake_factors_mt.yaml, ...), never a
     # joined-multi-channel file -- the old default here
     # (`fake_factors_{channels}.yaml`) only ever matched a real file when
-    # channels was a single channel. Now loops per channel, same as PRESEL.
+    # channels was a single channel. Now loops per channel.
     # cfg["ff_config"] (if set) still overrides for a single explicit file.
     print(f"[FF] Running TauFakeFactors fake factor calculation: era={cfg['era']} channels={cfg['channels']}")
     env_overrides = {"PYTHONPATH": f"{os.environ.get('PYTHONPATH', '')}:{REPO_ROOT / 'TauFakeFactors'}"}
@@ -363,11 +544,11 @@ def mode_ff(cfg, extra):
         cmd = ["python", "TauFakeFactors/ff_calculation.py", "--config-file", cfg["ff_config"], *extra]
         return run_plain(cmd, env_overrides=env_overrides).returncode
     for channel in cfg["channels"].split(","):
-        cmd = [
-            "python", "TauFakeFactors/ff_calculation.py",
-            "--config-file", f"TauFakeFactors/configs/smhtt_ul/{cfg['era']}/fake_factors_{channel}.yaml",
-            *extra,
-        ]
+        if cfg["ff_input_dir"]:
+            config_file = _patched_ff_config(cfg["era"], channel, "fake_factors", cfg["ff_input_dir"])
+        else:
+            config_file = f"TauFakeFactors/configs/smhtt_ul/{cfg['era']}/fake_factors_{channel}.yaml"
+        cmd = ["python", "TauFakeFactors/ff_calculation.py", "--config-file", config_file, *extra]
         result = run_plain(cmd, env_overrides=env_overrides)
         if result.returncode != 0:
             return result.returncode
@@ -386,11 +567,11 @@ def mode_ff_corr(cfg, extra):
         cmd = ["python", "TauFakeFactors/ff_corrections.py", "--config-file", cfg["ff_corr_config"], *extra]
         return run_plain(cmd, env_overrides=env_overrides).returncode
     for channel in cfg["channels"].split(","):
-        cmd = [
-            "python", "TauFakeFactors/ff_corrections.py",
-            "--config-file", f"TauFakeFactors/configs/smhtt_ul/{cfg['era']}/corrections_{channel}.yaml",
-            *extra,
-        ]
+        if cfg["ff_input_dir"]:
+            config_file = _patched_ff_config(cfg["era"], channel, "corrections", cfg["ff_input_dir"])
+        else:
+            config_file = f"TauFakeFactors/configs/smhtt_ul/{cfg['era']}/corrections_{channel}.yaml"
+        cmd = ["python", "TauFakeFactors/ff_corrections.py", "--config-file", config_file, *extra]
         result = run_plain(cmd, env_overrides=env_overrides)
         if result.returncode != 0:
             return result.returncode
@@ -399,7 +580,8 @@ def mode_ff_corr(cfg, extra):
 
 def mode_ff_measure(cfg, extra):
     print(f"[FF-MEASURE] Running the full TauFakeFactors FF measurement chain: era={cfg['era']} channels={cfg['channels']}")
-    print("[FF-MEASURE] (GEN-TFF-CONFIGS -> PRESEL -> FF -> FF-CORR, see run_fake_factor_measurement.py)")
+    print("[FF-MEASURE] (GEN-TFF-CONFIGS -> TauFakeFactors' own preselection.py -> FF -> FF-CORR,")
+    print("[FF-MEASURE]  see run_fake_factor_measurement.py -- NOT run.py's PRESEL mode)")
     cmd = [
         "python", "run_fake_factor_measurement.py",
         "--era", cfg["era"],
@@ -446,7 +628,7 @@ def mode_train(cfg, extra):
     # submodule's own `law run ...` workflow is a deliberate exception, not an
     # oversight -- Phase 6c decided to leave it untouched (submodule-internals
     # boundary: run.py carries zero task-graph logic of its own here, it only
-    # forwards parameters to the submodule's own law CLI, same as PRESEL/FF/
+    # forwards parameters to the submodule's own law CLI, same as FF/
     # FF-CORR shelling out to TauFakeFactors' own scripts). Only
     # create_training_dataset.py -- which never used law -- got a law-free
     # entry point, see mode_train_dataset above / TRAIN-DATASET mode.
@@ -467,11 +649,12 @@ def mode_train(cfg, extra):
 
     env = dict(os.environ)
     env["PYTHONPATH"] = f"{env.get('PYTHONPATH', '')}:{REPO_ROOT}"
-    subprocess.run(["law", "index", "-v"], cwd=str(uat_dir), env=env, check=True)
+    subprocess.run(["nice", "-n", "19", "law", "index", "-v"], cwd=str(uat_dir), env=env, check=True)
 
     for channel in cfg["channels"].split(","):
         print(f"[TRAIN] Running {train_task} for channel {channel}")
         cmd = [
+            "nice", "-n", "19",
             "law", "run", train_task,
             "--workers", workers,
             "--local-scheduler",
@@ -502,28 +685,79 @@ def main(argv=None) -> int:
     # style the bash version supported since MODE/ERA/etc. were plain shell
     # variables), else the hardcoded default.
     channels = env_or(args.channels, "CHANNELS", "et,mt,tt")
-    vs_ele_wp_default = "Tight" if channels == "et" else "VVLoose"
 
     cfg = {
         "era": env_or(args.era, "ERA", "2022postEE"),
         "channels": channels,
         "vs_jet_wp": env_or(args.vs_jet_wp, "VS_JET_WP", "Medium"),
-        "vs_ele_wp": env_or(args.vs_ele_wp, "VS_ELE_WP", vs_ele_wp_default),
+        # None (not a hardcoded "VVLoose"/"Tight") unless the user overrides it
+        # via --vs-ele-wp/VS_ELE_WP: shapes/produce_shapes.py applies the
+        # correct per-channel smhtt_ul Run3 default itself (Tight for et,
+        # VVLoose otherwise, config.analysis.vs_ele_wp_for()) for every
+        # channel in cfg["channels"], which a single value here can't do once
+        # more than one channel is requested at once (e.g. the "et,mt,tt"
+        # default).
+        "vs_ele_wp": env_or(args.vs_ele_wp, "VS_ELE_WP", None),
         "ntupletag": env_or(args.ntupletag, "NTUPLETAG", ""),
-        "tag": env_or(args.tag, "TAG", ""),
-        "output_dir": env_or(args.output_dir, "OUTPUT_DIR", "output"),
+        # Run-tag (distinct from --ntupletag): defaults to ntupletag itself
+        # (filled in below, once ntupletag is known) so an ss-os run and a
+        # later --ff-friends-dir run for the same ntupletag automatically
+        # land in the same output/{tag}/{qcd-label}/... tree -- and the ff
+        # run finds/hadd's onto the ss-os run's output -- with no extra
+        # config needed. Only override --tag/TAG explicitly when you want a
+        # second, independent SHAPES attempt for the same ntupletag that
+        # should NOT reuse/build on an earlier run's output.
+        "tag": env_or(args.tag, "TAG", None),
+        # None (not a hardcoded "output"/CWD-relative "validation_database")
+        # unless the user overrides via --output-dir/OUTPUT_DIR or
+        # --presel-dir/PRESEL_DIR -- filled in below, once ntupletag is known,
+        # from common.sample_paths.build_shape_output_paths(ntupletag), the
+        # single source of truth for the unified
+        # /ceph/$USER/TauKITFlow_shapes/$ntupletag/{preselection,crown,output,validation}
+        # tree (replacing the previously scattered bare "output"/CWD-relative
+        # "validation_database" defaults).
+        "output_dir": env_or(args.output_dir, "OUTPUT_DIR", None),
         "nthreads": env_or(args.nthreads, "NTHREADS", "4"),
         "nprocs": env_or(args.nprocs, "NPROCS", "1"),
-        "presel_dir": env_or(args.presel_dir, "PRESEL_DIR", ""),
+        "presel_dir": env_or(args.presel_dir, "PRESEL_DIR", None),
+        "validation_dir": None,
         "ff_friends_dir": env_or(args.ff_friends_dir, "FF_FRIENDS_DIR", ""),
         "ff_config": env_or(args.ff_config, "FF_CONFIG", ""),
         "ff_corr_config": env_or(args.ff_corr_config, "FF_CORR_CONFIG", ""),
+        "ff_input_dir": env_or(args.ff_input_dir, "FF_INPUT_DIR", ""),
     }
 
-    needs_ntupletag = mode in ("XSEC", "SHAPES", "SHAPES-NOSYS", "TRAIN-SHAPES", "CONFIGS")
+    needs_ntupletag = mode in (
+        "XSEC", "SHAPES", "SHAPES-NOSYS", "TRAIN-SHAPES", "CONFIGS", "PRESEL",
+    )
     if needs_ntupletag and not cfg["ntupletag"]:
         print("ERROR: NTUPLETAG must be set (CROWN ntuple tag, e.g. htt_260417_2022-23).", file=sys.stderr)
         return 1
+
+    if cfg["ntupletag"]:
+        from common.sample_paths import build_shape_output_paths
+
+        shape_paths = build_shape_output_paths(cfg["ntupletag"])
+        if cfg["tag"] is None:
+            cfg["tag"] = cfg["ntupletag"]
+        if cfg["output_dir"] is None:
+            cfg["output_dir"] = shape_paths.output
+        if cfg["presel_dir"] is None:
+            # Default to the ONE central preselection tree,
+            # /ceph/$USER/TauKITFlow_shapes/$ntupletag/preselection -- the same
+            # path PRESEL writes to (mode_presel below) -- so SHAPES reads
+            # PRESEL's output with no --presel-dir needed. Override with
+            # --presel-dir/PRESEL_DIR (on PRESEL it moves the output, on
+            # SHAPES the input); pass an empty string to opt out entirely and
+            # go back to reading raw CROWN ntuples (mode_shapes's
+            # `if cfg["presel_dir"]:` branch).
+            cfg["presel_dir"] = shape_paths.preselection
+        cfg["validation_dir"] = shape_paths.validation
+    else:
+        cfg["tag"] = cfg["tag"] or "default"
+        cfg["output_dir"] = cfg["output_dir"] or "output"
+        cfg["presel_dir"] = cfg["presel_dir"] or ""
+        cfg["validation_dir"] = "validation_database"
 
     if mode == "XSEC":
         return mode_xsec(cfg, extra)

@@ -49,7 +49,7 @@ logger = setup_logging(logger=logging.getLogger(__name__))
 
 def _run(cmd, logger, **kwargs):
     logger.info("Running: %s", " ".join(cmd))
-    result = subprocess.run(cmd, **kwargs)
+    result = subprocess.run(["nice", "-n", "19", *cmd], **kwargs)
     if result.returncode != 0:
         raise RuntimeError(f"Command failed (rc={result.returncode}): {' '.join(cmd)}")
     return result

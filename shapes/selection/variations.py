@@ -186,15 +186,29 @@ def set_ff_type(ff_type):
 
     logger.info(f"Setting fake factor option to {ff_type}= {FF_OPTIONS[ff_type]}")
     RuntimeVariables.FF_name_lt = FF_OPTIONS[ff_type]["lt"]
-    RuntimeVariables.FF_name_tt_1 = FF_OPTIONS[ff_type]["tt_1"]
-    RuntimeVariables.FF_name_tt_2 = FF_OPTIONS[ff_type]["tt_2"]
-    logger.warning(
-        """
-            Setting fake factor option for tt_1 and tt_2 is in parts not implemented yet.
-            Will not change the fake factor for tt_1 and tt_2 for now, only for lt.
-            Please make sure to set the fake factor for tt_1 and tt_2 accordingly if needed.
-        """
-    )
+    # Only "none"/"fake_factor"/"raw_fake_factor" define "tt_1"/"tt_2" in
+    # FF_OPTIONS -- the other options are lt-only diagnostic variants for
+    # investigating individual fake-factor components/corrections (raw/bias-
+    # corrected/DR-SR-corrected pieces) and were never given a tt-channel
+    # equivalent. Previously this did `FF_OPTIONS[ff_type]["tt_1"]`
+    # unconditionally, which raised a bare KeyError for those options instead
+    # of leaving tt_1/tt_2 alone as the (until now inaccurate) warning below
+    # claimed -- checked here instead, so the fallback the message describes
+    # actually happens.
+    if "tt_1" in FF_OPTIONS[ff_type] and "tt_2" in FF_OPTIONS[ff_type]:
+        RuntimeVariables.FF_name_tt_1 = FF_OPTIONS[ff_type]["tt_1"]
+        RuntimeVariables.FF_name_tt_2 = FF_OPTIONS[ff_type]["tt_2"]
+    else:
+        logger.warning(
+            f"Fake factor option {ff_type!r} only defines an 'lt' fake factor "
+            "(no 'tt_1'/'tt_2' entry in FF_OPTIONS) -- it is one of the lt-only "
+            "diagnostic variants for investigating individual fake-factor "
+            "components/corrections. Leaving the tt channel's fake factor "
+            f"unchanged (tt_1={RuntimeVariables.FF_name_tt_1!r}, "
+            f"tt_2={RuntimeVariables.FF_name_tt_2!r}); set ff_type to 'none', "
+            "'fake_factor', or 'raw_fake_factor' if the tt channel's fake "
+            "factor needs to change too."
+        )
 
 
 class RuntimeVariables(object):
@@ -384,172 +398,266 @@ anti_iso_tt = LazyVariable(  # requieres LazyVariation since Used.FF_name_lt may
     )
 )
 
-# Pileup reweighting
-pileup_reweighting = [
-    ReplaceVariable("CMS_PileUpUp", "PileUpUp"),
-    ReplaceVariable("CMS_PileUpDown", "PileUpDown")
-]
+# Pileup reweighting. CROWN registers f"CMS_pileup_{shift_era_tag}" -- era-tagged,
+# same convention as recoil/met_unclustered above.
+def pileup_reweighting(era):
+    era_tag = JES_ERA_MAP[era]
+    return [
+        ReplaceVariable(f"CMS_pileup_{era_tag}Up", f"CMS_pileup_{era_tag}Up"),
+        ReplaceVariable(f"CMS_pileup_{era_tag}Down", f"CMS_pileup_{era_tag}Down"),
+    ]
 
 # Energy scales.
-# Previously defined with 2017 in name.
-tau_es_3prong = [
-    ReplaceVariable("CMS_scale_t_3prong_EraUp", "tauEs3prong0pizeroUp"),
-    ReplaceVariable("CMS_scale_t_3prong_EraDown", "tauEs3prong0pizeroDown"),
-]
-tau_es_3prong1pizero = [
-    ReplaceVariable("CMS_scale_t_3prong1pizero_EraUp", "tauEs3prong1pizeroUp"),
-    ReplaceVariable("CMS_scale_t_3prong1pizero_EraDown", "tauEs3prong1pizeroDown"),
-]
-tau_es_1prong = [
-    ReplaceVariable("CMS_scale_t_1prong_EraUp", "tauEs1prong0pizeroUp"),
-    ReplaceVariable("CMS_scale_t_1prong_EraDown", "tauEs1prong0pizeroDown"),
-]
-tau_es_1prong1pizero = [
-    ReplaceVariable("CMS_scale_t_1prong1pizero_EraUp", "tauEs1prong1pizeroUp"),
-    ReplaceVariable("CMS_scale_t_1prong1pizero_EraDown", "tauEs1prong1pizeroDown"),
-]
-emb_tau_es_3prong = [
-    ReplaceVariable("CMS_scale_t_emb_3prong_EraUp", "tauEs3prong0pizeroUp"),
-    ReplaceVariable("CMS_scale_t_emb_3prong_EraDown", "tauEs3prong0pizeroDown"),
-]
-emb_tau_es_3prong1pizero = [
-    ReplaceVariable("CMS_scale_t_emb_3prong1pizero_EraUp", "tauEs3prong1pizeroUp"),
-    ReplaceVariable("CMS_scale_t_emb_3prong1pizero_EraDown", "tauEs3prong1pizeroDown"),
-]
-emb_tau_es_1prong = [
-    ReplaceVariable("CMS_scale_t_emb_1prong_EraUp", "tauEs1prong0pizeroUp"),
-    ReplaceVariable("CMS_scale_t_emb_1prong_EraDown", "tauEs1prong0pizeroDown"),
-]
-emb_tau_es_1prong1pizero = [
-    ReplaceVariable("CMS_scale_t_emb_1prong1pizero_EraUp", "tauEs1prong1pizeroUp"),
-    ReplaceVariable("CMS_scale_t_emb_1prong1pizero_EraDown", "tauEs1prong1pizeroDown"),
-]
-
-# Jet energy scale split by sources.
-jet_es_hem = [
-#    ReplaceVariable("CMS_scale_j_HEMIssue_EraUp", "jesUncHEMIssueUp"),
-#    ReplaceVariable("CMS_scale_j_HEMIssue_EraDown", "jesUncHEMIssueDown"),
-]
-jet_es = [
-    ReplaceVariable(name, variation)
-    for shift in SHIFT_DIRECTIONS
-    for name, variation in [
-        (f"CMS_scale_j_Total{shift}", f"jesUncTotal{shift}"),
-        (f"CMS_scale_j_SinglePionECAL{shift}", f"jesUncSinglePionECAL{shift}"),
-        (f"CMS_scale_j_SinglePionHCAL{shift}", f"jesUncSinglePionHCAL{shift}"),
-        (f"CMS_scale_j_AbsoluteMPFBias{shift}", f"jesUncAbsoluteMPFBias{shift}"),
-        (f"CMS_scale_j_AbsoluteScale{shift}", f"jesUncAbsoluteScale{shift}"),
-        (f"CMS_scale_j_Fragmentation{shift}", f"jesUncFragmentation{shift}"),
-        (f"CMS_scale_j_PileUpDataMC{shift}", f"jesUncPileUpDataMC{shift}"),
-        (f"CMS_scale_j_RelativeFSR{shift}", f"jesUncRelativeFSR{shift}"),
-        (f"CMS_scale_j_PileupPtRef{shift}", f"jesUncPileUpPtRef{shift}"),
-        (f"CMS_scale_j_AbsoluteStat{shift}", f"jesUncAbsoluteStat{shift}"),
-        (f"CMS_scale_j_TimePtEta{shift}", f"jesUncTimePtEta{shift}"),
-        (f"CMS_scale_j_RelativeStatFSR{shift}", f"jesUncRelativeStatFSR{shift}"),
-        (f"CMS_scale_j_FlavorQCD{shift}", f"jesUncFlavorQCD{shift}"),
-        (f"CMS_scale_j_PileupPtEC1{shift}", f"jesUncPileUpPtEC1{shift}"),
-        (f"CMS_scale_j_PileUpPtBB{shift}", f"jesUncPileUpPtBB{shift}"),
-        (f"CMS_scale_j_RelativePtBB{shift}", f"jesUncRelativePtBB{shift}"),
-        (f"CMS_scale_j_RelativeJEREC1{shift}", f"jesUncRelativeJEREC1{shift}"),
-        (f"CMS_scale_j_RelativePtEC1{shift}", f"jesUncRelativePtEC1{shift}"),
-        (f"CMS_scale_j_RelativeStatEC{shift}", f"jesUncRelativeStatEC{shift}"),
-        (f"CMS_scale_j_RelativePtHF{shift}", f"jesUncRelativePtHF{shift}"),
-        (f"CMS_scale_j_PileUpPtHF{shift}", f"jesUncPileUpPtHF{shift}"),
-        (f"CMS_scale_j_RelativeJERHF{shift}", f"jesUncRelativeJERHF{shift}"),
-        (f"CMS_scale_j_RelativeStatHF{shift}", f"jesUncRelativeStatHF{shift}"),
-        (f"CMS_scale_j_PileUpPtEC2{shift}", f"jesUncPileUpPtEC2{shift}"),
-        (f"CMS_scale_j_RelativeJEREC2{shift}", f"jesUncRelativeJEREC2{shift}"),
-        (f"CMS_scale_j_RelativePtEC2{shift}", f"jesUncRelativePtEC2{shift}"),
-        (f"CMS_scale_j_RelativeBal{shift}", f"jesUncRelativeBal{shift}"),
-        (f"CMS_scale_j_RelativeSample{shift}", f"jesUncRelativeSample{shift}"),
-        #(f"CMS_scale_j_Absolute{shift}", f"jesUncAbsolute{shift}"),
-        #(f"CMS_scale_j_Absolute_Era{shift}", f"jesUncAbsoluteYear{shift}"),
-        #(f"CMS_scale_j_FlavorQCD{shift}", f"jesUncFlavorQCD{shift}"),
-        #(f"CMS_scale_j_BBEC1{shift}", f"jesUncBBEC1{shift}"),
-        #(f"CMS_scale_j_BBEC1_Era{shift}", f"jesUncBBEC1Year{shift}"),
-        #(f"CMS_scale_j_HF{shift}", f"jesUncHF{shift}"),
-        #(f"CMS_scale_j_HF_Era{shift}", f"jesUncHFYear{shift}"),
-        #(f"CMS_scale_j_EC2{shift}", f"jesUncEC2{shift}"),
-        #(f"CMS_scale_j_EC2_Era{shift}", f"jesUncEC2Year{shift}"),
-        #(f"CMS_scale_j_RelativeBal{shift}", f"jesUncRelativeBal{shift}"),
-        #(f"CMS_scale_j_RelativeSample_Era{shift}", f"jesUncRelativeSampleYear{shift}"),
-        #(f"CMS_res_j_Era{shift}", f"jerUnc{shift}"),
+#
+# CROWN's genuine-tau MC energy scale ("Tau energy scale shifts" block, MC
+# non-dyjets/ewk path) is DM-indexed and its era regime changes the branch
+# suffix structure entirely (the registered shift name IS the suffix, same
+# convention as jet_energy_scale/recoil/etc above):
+#   era < 2022:        CMS_scale_t_DM{dm}_genTau_pT{pt}{Up,Down}, pt in [20to40, 40toInf]
+#   2022 <= era < 2024: CMS_scale_t_DM{dm}_genTau_{era_tag}{Up,Down}            (no pt split)
+#   era >= 2024:        CMS_scale_t_DM{dm}_genTau_pT{pt}_{era_tag}{Up,Down}, pt in [20to40, 40to60, 60toInf]
+# dm: 0=1prong0pizero, 1=1prong1pizero, 10=3prong0pizero, 11=3prong1pizero.
+def _tau_es_group(dm, era):
+    era_num = int(era[:4])
+    if era_num < 2022:
+        return [
+            ReplaceVariable(f"CMS_scale_t_DM{dm}_genTau_pT{pt}{shift}", f"CMS_scale_t_DM{dm}_genTau_pT{pt}{shift}")
+            for pt in ["20to40", "40toInf"]
+            for shift in SHIFT_DIRECTIONS
+        ]
+    era_tag = JES_ERA_MAP[era]
+    if era_num < 2024:
+        return [
+            ReplaceVariable(f"CMS_scale_t_DM{dm}_genTau_{era_tag}{shift}", f"CMS_scale_t_DM{dm}_genTau_{era_tag}{shift}")
+            for shift in SHIFT_DIRECTIONS
+        ]
+    return [
+        ReplaceVariable(f"CMS_scale_t_DM{dm}_genTau_pT{pt}_{era_tag}{shift}", f"CMS_scale_t_DM{dm}_genTau_pT{pt}_{era_tag}{shift}")
+        for pt in ["20to40", "40to60", "60toInf"]
+        for shift in SHIFT_DIRECTIONS
     ]
-]
 
-# LHE/PS  variations
-LHE_scale_norm_muR = [
-    AddWeight("LHE_scale_muR_normUp", Weight("(lhe_scale_weight__LHEScaleMuRWeightUp)", "muR2p0_muF1p0_weight")),
-    AddWeight("LHE_scale_muR_normDown", Weight("(lhe_scale_weight__LHEScaleMuRWeightDown)", "muR0p5_muF1p0_weight"))
-]
-LHE_scale_norm_muF = [
-    AddWeight("LHE_scale_muF_normUp", Weight("(lhe_scale_weight__LHEScaleMuFWeightUp)", "muR1p0_muF2p0_weight")),
-    AddWeight("LHE_scale_muF_normDown", Weight("(lhe_scale_weight__LHEScaleMuFWeightDown)", "muR1p0_muF0p5_weight"))
-]
-PS_scale_norm_Fsr = [
-    AddWeight("PS_scale_Fsr_normUp", Weight('(ps_weight__FsrWeightUp)', "FsR2p0_weight")),
-    AddWeight("PS_scale_Fsr_normDown", Weight('(ps_weight__FsrWeightDown)', "FsR0p5_weight")),
-]
-PS_scale_norm_Isr = [
-    AddWeight("PS_scale_Isr_normUp", Weight('(ps_weight__IsrWeightUp)', "IsR2p0_weight")),
-    AddWeight("PS_scale_Isr_normDown", Weight('(ps_weight__IsrWeightDown)', "IsR0p5_weight")),
-]
-LHE_pdf = [
-    AddWeight("LHE_pdfUp", Weight("(lhe_pdf_weight__PdfWeightUp)", "lhe_pdf_up_weight")),
-    AddWeight("LHE_pdfDown", Weight("(lhe_pdf_weight__PdfWeightDown)", "lhe_pdf_down_weight")),
-]
-LHE_alphaS = [
-    AddWeight("LHE_alphaSUp", Weight("(lhe_alphaS_weight__AlphaSWeightUp)", "lhe_alphaS_up_weight")),
-    AddWeight("LHE_alphaSDown", Weight("(lhe_alphaS_weight__AlphaSWeightDown)", "lhe_alphaS_down_weight")),
-]
+
+def tau_es_1prong(era):
+    return _tau_es_group("0", era)
+
+
+def tau_es_1prong1pizero(era):
+    return _tau_es_group("1", era)
+
+
+def tau_es_3prong(era):
+    return _tau_es_group("10", era)
+
+
+def tau_es_3prong1pizero(era):
+    return _tau_es_group("11", era)
+
+
+def tau_energy_scale(era):
+    return tau_es_1prong(era) + tau_es_1prong1pizero(era) + tau_es_3prong(era) + tau_es_3prong1pizero(era)
+
+
+# Embedding tau ES: CROWN registers f"tauEs{dm}{var}" (name IS the branch
+# suffix, no era tag -- the add_shift loop in tau_embedding_settings.py's
+# vsJet ID/ES block, ~line 1405-1408, isn't era-gated) for et/mt only, where
+# dm is the decay-mode string used below and `var` comes from the active
+# ES_ID_SCHEME.pt_binning (scripts/SpecialSetups.py). NOTE: the actual scheme
+# selection (`configuration.ES_ID_SCHEME = ES_ID_SCHEME(scheme=...)`) is not
+# set anywhere in analysis_configurations/tau in this checkout, so this uses
+# the dataclass's documented default ("dm_pt_binned" -> pt_binning =
+# ["20to40", "40toInf"]) -- NOT independently verified against the actual
+# active scheme. This is currently dead code (not booked in produce_shapes.py);
+# if/when it gets booked, confirm the active scheme first.
+def _emb_tau_es_group(dm):
+    return [
+        ReplaceVariable(f"CMS_scale_t_emb_{dm}_{pt}{shift}", f"tauEs{dm}{pt}{shift}")
+        for pt in ["20to40", "40toInf"]
+        for shift in SHIFT_DIRECTIONS
+    ]
+
+
+emb_tau_es_3prong = _emb_tau_es_group("3prong0pizero")
+emb_tau_es_3prong1pizero = _emb_tau_es_group("3prong1pizero")
+emb_tau_es_1prong = _emb_tau_es_group("1prong0pizero")
+emb_tau_es_1prong1pizero = _emb_tau_es_group("1prong1pizero")
+
+# Jet Energy Scale / Resolution + fixed-WP b-tag SF variations.
+#
+# Branch names are read as-is from the CROWN ntuples (not renamed) -- see
+# jet_variations.py's add_jetVariations(). For Run3 (the only eras this
+# analysis produces signals for -- see config/analysis.py:RUN3_ERAS),
+# JES_CONFIG.REGROUPED is unconditionally True, so CROWN only ever emits the
+# 6 regrouped JES sources (+ their per-era-decorrelated siblings for
+# Absolute/BBEC1/HF/EC2/RelativeSample) and the fixed-WP b-tag scheme -- the
+# old per-individual-source list (SinglePionECAL, AbsoluteMPFBias, ...) and
+# full-shape b-tag names (CMS_btag_b_HF, CMS_btag_j_LF, ...) below never
+# matched any branch CROWN actually produces here; that was the Run2
+# non-regrouped scheme. The registered shift name IS the branch suffix (see
+# CROWNWrapper.get_adjusted_add_shift_SystematicShift), so name and variation
+# are identical here -- no separate branch-name derivation needed.
+JES_ERA_MAP = {
+    "2018": "2018",
+    "2022preEE": "2022",
+    "2022postEE": "2022EE",
+    "2023preBPix": "2023",
+    "2023postBPix": "2023BPix",
+    "2024": "2024",
+    "2025": "2025",
+    "2026": "2026",
+}
+# btag_fixedWP(era) below is Run3-only: jet_variations.py gates on
+# `int(era[:4]) < 2022` and uses a different (full-shape btagging_SF, not
+# fixed-WP btaggingWP_SF) scheme for 2018 -- not implemented here since
+# 2018 shape production only covers backgrounds (see
+# config/analysis.py:RUN2_PRODUCTION_ERAS docstring), no signal categories.
+BTAG_FIXEDWP_ERAS = frozenset(JES_ERA_MAP) - {"2018"}
+
+_JES_FULLY_CORRELATED_SOURCES = ["Total", "Absolute", "FlavorQCD", "BBEC1", "HF", "EC2", "RelativeBal"]
+_JES_PER_ERA_SOURCES = ["Absolute", "BBEC1", "HF", "EC2", "RelativeSample"]
+
+
+def jet_energy_scale(era):
+    era_tag = JES_ERA_MAP[era]
+    names = (
+        [f"CMS_scale_j_{source}" for source in _JES_FULLY_CORRELATED_SOURCES]
+        + [f"CMS_scale_j_{source}_{era_tag}" for source in _JES_PER_ERA_SOURCES]
+    )
+    return [
+        ReplaceVariable(f"{name}{shift}", f"{name}{shift}")
+        for shift in SHIFT_DIRECTIONS
+        for name in names
+    ]
+
+
+def jet_energy_resolution(era):
+    era_tag = JES_ERA_MAP[era]
+    return [
+        ReplaceVariable(f"CMS_res_j_{era_tag}{shift}", f"CMS_res_j_{era_tag}{shift}")
+        for shift in SHIFT_DIRECTIONS
+    ]
+
+
+def btag_fixedWP(era):
+    era_tag = JES_ERA_MAP[era]
+    names = [
+        "CMS_btag_fixedWP_bc_correlated",
+        f"CMS_btag_fixedWP_bc_uncorrelated_{era_tag}",
+        "CMS_btag_fixedWP_light_correlated",
+        f"CMS_btag_fixedWP_light_uncorrelated_{era_tag}",
+    ]
+    return [
+        ReplaceVariable(f"{name}{shift}", f"{name}{shift}")
+        for shift in SHIFT_DIRECTIONS
+        for name in names
+    ]
+
+
+# CMS_scale_j_HEMIssue_2018 (2018-only HEM15/16 issue shift, jet_variations.py
+# line ~85) is not implemented here: 2018 shape production is background-only
+# (see config/analysis.py:RUN2_PRODUCTION_ERAS docstring), so there is no
+# process to book it onto yet.
+
+# LHE/PS variations.
+#
+# Branch names below are read as-is from the CROWN ntuples (not renamed) --
+# see analysis_configurations/tau/config.py's "LHE Scale Weight variations"
+# block. CROWN produces a postfixed set per STXS stage-0 Higgs production
+# mode (_ggH/_qqH/_VH/_ttH), since the underlying LHE_Scale_weight/PS_weight/
+# LHE_PDF_weight/LHE_alphaS_weight branches are shared but the theory
+# variations are treated as uncorrelated nuisances per production mode.
+# _ggH and _qqH datasets are unambiguous (ggh_htautau/vbf_htautau sample
+# types); the WminusH/WplusH/ZH/TTH datasets all share the "rem_htautau"
+# sample type in CROWN, so CROWN emits both _VH and _ttH branches for them --
+# only the postfix matching the process being booked below is ever read.
+def _lhe_scale_norm_muR(postfix):
+    return [
+        AddWeight(f"LHE_scale_muR_norm_{postfix}Up", Weight(f"(lhe_scale_weight__QCDscale_ren_{postfix}Up)", "muR2p0_muF1p0_weight")),
+        AddWeight(f"LHE_scale_muR_norm_{postfix}Down", Weight(f"(lhe_scale_weight__QCDscale_ren_{postfix}Down)", "muR0p5_muF1p0_weight")),
+    ]
+
+
+def _lhe_scale_norm_muF(postfix):
+    return [
+        AddWeight(f"LHE_scale_muF_norm_{postfix}Up", Weight(f"(lhe_scale_weight__QCDscale_fac_{postfix}Up)", "muR1p0_muF2p0_weight")),
+        AddWeight(f"LHE_scale_muF_norm_{postfix}Down", Weight(f"(lhe_scale_weight__QCDscale_fac_{postfix}Down)", "muR1p0_muF0p5_weight")),
+    ]
+
+
+def _ps_scale_norm_fsr(postfix):
+    return [
+        AddWeight(f"PS_scale_Fsr_norm_{postfix}Up", Weight(f"(ps_weight__ps_fsr_{postfix}Up)", "FsR2p0_weight")),
+        AddWeight(f"PS_scale_Fsr_norm_{postfix}Down", Weight(f"(ps_weight__ps_fsr_{postfix}Down)", "FsR0p5_weight")),
+    ]
+
+
+def _ps_scale_norm_isr(postfix):
+    return [
+        AddWeight(f"PS_scale_Isr_norm_{postfix}Up", Weight(f"(ps_weight__ps_isr_{postfix}Up)", "IsR2p0_weight")),
+        AddWeight(f"PS_scale_Isr_norm_{postfix}Down", Weight(f"(ps_weight__ps_isr_{postfix}Down)", "IsR0p5_weight")),
+    ]
+
+
+def _lhe_pdf(postfix):
+    return [
+        AddWeight(f"LHE_pdf_{postfix}Up", Weight(f"(lhe_pdf_weight__pdf_Higgs_{postfix}Up)", "lhe_pdf_up_weight")),
+        AddWeight(f"LHE_pdf_{postfix}Down", Weight(f"(lhe_pdf_weight__pdf_Higgs_{postfix}Down)", "lhe_pdf_down_weight")),
+    ]
+
+
+def _lhe_alphaS(postfix):
+    return [
+        AddWeight(f"LHE_alphaS_{postfix}Up", Weight(f"(lhe_alphaS_weight__pdf_alphas_{postfix}Up)", "lhe_alphaS_up_weight")),
+        AddWeight(f"LHE_alphaS_{postfix}Down", Weight(f"(lhe_alphaS_weight__pdf_alphas_{postfix}Down)", "lhe_alphaS_down_weight")),
+    ]
 
 # MET variations.
-met_unclustered = [
-    ReplaceVariable("CMS_scale_met_unclustered_EraUp", "metUnclusteredEnUp"),
-    ReplaceVariable("CMS_scale_met_unclustered_EraDown", "metUnclusteredEnDown"),
-]
-
-# Recoil correction uncertainties
-recoil_resolution = [
-    ReplaceVariable("CMS_htt_boson_res_met_EraUp", "metRecoilResolutionUp"),
-    ReplaceVariable("CMS_htt_boson_res_met_EraDown", "metRecoilResolutionDown"),
-]
-recoil_response = [
-    ReplaceVariable("CMS_htt_boson_scale_met_EraUp", "metRecoilResponseUp"),
-    ReplaceVariable("CMS_htt_boson_scale_met_EraDown", "metRecoilResponseDown"),
-]
-
-# B-tagging uncertainties.
-btagging = [
-    ReplaceVariable(name, variation)
-    for shift in SHIFT_DIRECTIONS
-    for name, variation in [
-        (f"CMS_btag_b_HF{shift}", f"btagUncHF{shift}"),
-        (f"CMS_btag_b_HFstats1_Era{shift}", f"btagUncHFstats1{shift}"),
-        (f"CMS_btag_b_HFstats2_Era{shift}", f"btagUncHFstats2{shift}"),
-        (f"CMS_btag_j_LF_{shift}", f"btagUncLF{shift}"),
-        (f"CMS_btag_j_LFstats1_Era{shift}", f"btagUncLFstats1{shift}"),
-        (f"CMS_btag_j_LFstats2_Era{shift}", f"btagUncLFstats2{shift}"),
-        (f"CMS_btag_c_CFerr1{shift}", f"btagUncCFerr1{shift}"),
-        (f"CMS_btag_c_CFerr2{shift}", f"btagUncCFerr2{shift}"),
+#
+# CROWN registers these as two standalone SystematicShiftByQuantity shifts
+# named f"CMS_scale_met_unclustered_energyUp_{shift_era_tag}" / "...Down..."
+# (see analysis_configurations/tau/variations.py's "MET Shifts" block) -- the
+# registered shift name IS the branch suffix, era-tagged like recoil above.
+def met_unclustered(era):
+    era_tag = JES_ERA_MAP[era]
+    return [
+        ReplaceVariable(f"CMS_scale_met_unclustered_energyUp_{era_tag}", f"CMS_scale_met_unclustered_energyUp_{era_tag}"),
+        ReplaceVariable(f"CMS_scale_met_unclustered_energyDown_{era_tag}", f"CMS_scale_met_unclustered_energyDown_{era_tag}"),
     ]
-]
 
-btagging_2024 = [
-    ReplaceVariable(name, variation)
-    for shift in SHIFT_DIRECTIONS
-    for name, variation in [
-        (f"CMS_btag_{shift}", f"btagUnc{shift}"),
-        (f"CMS_btag_fsr_{shift}", f"btagUncfsr{shift}"),
-        (f"CMS_btag_hdamp_{shift}", f"btagUnchdamp{shift}"),
-        (f"CMS_btag_isr_{shift}", f"btagUnisr{shift}"),
-        (f"CMS_btag_jer_{shift}", f"btagUncjer{shift}"),
-        (f"CMS_btag_jes_{shift}", f"btagUncjes{shift}"),
-        (f"CMS_btag_mass_{shift}", f"btagUncmass{shift}"),
-        (f"CMS_btag_stat_{shift}", f"btagUncstat{shift}"),
-        (f"CMS_btag_tune_{shift}", f"btagUnctune{shift}"),
+# Recoil correction uncertainties.
+#
+# For era >= 2022, CROWN's ApplyRecoilUncertainty shift is registered as
+# f"CMS_scale_met_recoil_response_{shift_era_tag}" /
+# f"CMS_res_met_recoil_resolution_{shift_era_tag}" (see analysis_configurations/
+# tau/variations.py's "MET Recoil Shifts" block) -- the registered shift name
+# IS the branch suffix, same convention as jet_energy_scale/jet_energy_resolution
+# above, so name and variation must match and be era-tagged. The old hardcoded
+# "metRecoilResolutionUp"/"metRecoilResponseUp" branch names don't exist in the
+# ntuple for these eras and raise NameError in ntuple_processor.variations.
+def recoil_resolution(era):
+    era_tag = JES_ERA_MAP[era]
+    return [
+        ReplaceVariable(f"CMS_res_met_recoil_resolution_{era_tag}{shift}", f"CMS_res_met_recoil_resolution_{era_tag}{shift}")
+        for shift in SHIFT_DIRECTIONS
     ]
-]
+
+
+def recoil_response(era):
+    era_tag = JES_ERA_MAP[era]
+    return [
+        ReplaceVariable(f"CMS_scale_met_recoil_response_{era_tag}{shift}", f"CMS_scale_met_recoil_response_{era_tag}{shift}")
+        for shift in SHIFT_DIRECTIONS
+    ]
+
+# B-tagging scale-factor uncertainties: see btag_fixedWP(era) above. The
+# "btagging" full-shape-scheme list formerly here matched CROWN's Run2
+# btagging_SF names (e.g. CMS_btag_fullShape_hf), not this analysis's Run3
+# fixed-WP scheme (btaggingWP_SF/CMS_btag_fixedWP_*), and was never booked;
+# removed in favour of btag_fixedWP(era). A separate "btagging_2024" list
+# (CMS_btag_fsr/hdamp/isr/jer/jes/mass/stat/tune -- ttbar-modeling sources
+# for a b-tag *efficiency* measurement, unrelated to jet_variations.py's SF
+# shifts) was also removed: it didn't correspond to any shift in
+# jet_variations.py and was never booked either.
 
 # Eta binned uncertainty
 ele_fake_es_1prong = [
@@ -570,50 +678,85 @@ ele_fake_es_1prong1pizero = [
 ]
 ele_fake_es = ele_fake_es_1prong + ele_fake_es_1prong1pizero
 
-# Electron ES Resolution
-ele_es_res = [ReplaceVariable(f"CMS_res_e{shift}", f"eleEsReso{shift}") for shift in SHIFT_DIRECTIONS]
-ele_es_scale = [ReplaceVariable(f"CMS_scale_e{shift}", f"eleEsScale{shift}") for shift in SHIFT_DIRECTIONS]
+# Electron ES Resolution. CROWN registers name="CMS_res_e"/"CMS_scale_e"
+# (no era tag, both eras) -- the branch suffix is the shift name, not the old
+# "eleEsReso"/"eleEsScale" strings.
+ele_es_res = [ReplaceVariable(f"CMS_res_e{shift}", f"CMS_res_e{shift}") for shift in SHIFT_DIRECTIONS]
+ele_es_scale = [ReplaceVariable(f"CMS_scale_e{shift}", f"CMS_scale_e{shift}") for shift in SHIFT_DIRECTIONS]
 
-# TODO add split by decay mode?
-# Mu Fake uncertainties
-mu_fake_es_inc = [
-    ReplaceVariable("CMS_ZLShape_mt_EraUp", "tauMuFakeEsUp"),
-    ReplaceVariable("CMS_ZLShape_mt_EraDown", "tauMuFakeEsDown"),
-]
+# Mu Fake uncertainties (mt only, booked on zl).
+#
+# CROWN (MC, "Tau energy scale shifts" block, dyjets/electroweak_boson-only
+# branch, mt scope):
+#   era < 2022: CMS_scale_t_genMuon{Up,Down}                          (no DM split)
+#   era >= 2022: CMS_scale_t_DM{dm}_genMuon_{era_tag}{Up,Down}, dm in [0,1,10,11]
+def mu_fake_es_inc(era):
+    era_num = int(era[:4])
+    if era_num < 2022:
+        return [
+            ReplaceVariable(f"CMS_scale_t_genMuon{shift}", f"CMS_scale_t_genMuon{shift}")
+            for shift in SHIFT_DIRECTIONS
+        ]
+    era_tag = JES_ERA_MAP[era]
+    return [
+        ReplaceVariable(f"CMS_scale_t_DM{dm}_genMuon_{era_tag}{shift}", f"CMS_scale_t_DM{dm}_genMuon_{era_tag}{shift}")
+        for dm in ["0", "1", "10", "11"]
+        for shift in SHIFT_DIRECTIONS
+    ]
 
-# TODO add high pt tau ID efficiency?
 # Efficiency corrections.
-# Tau ID efficiency.
-tau_id_eff_lt = [
-    ReplaceVariable(name, variation)
-    for shift in SHIFT_DIRECTIONS
-    for name, variation in [
-        (f"CMS_eff_t_30-35_Era{shift}", f"vsJetTau30to35{shift}"),
-        (f"CMS_eff_t_35-40_Era{shift}", f"vsJetTau35to40{shift}"),
-        (f"CMS_eff_t_40-500_Era{shift}", f"vsJetTau40to500{shift}"),
-        (f"CMS_eff_t_500-1000_Era{shift}", f"vsJetTau500to1000{shift}"),
-        (f"CMS_eff_t_1000-Inf_Era{shift}", f"vsJetTau1000toInf{shift}"),
+# Tau ID efficiency (MC vsJet SF, et/mt scope).
+#
+# CROWN ("TauID scale factor shifts" block, et/mt path):
+#   era < 2022:        CMS_eff_t_DeepTau2017v2p1_VSjet_DM{dm}_pT{pt}{Up,Down}, dm in [0,1,10,11], pt in [20to40, 40toInf]
+#   2022 <= era < 2024: CMS_eff_t_DeepTau2018v2p5_VSjet_DM{dm}_{era_tag}{Up,Down}, dm in [0,1,10,11]  (no pt split)
+#   era >= 2024:        CMS_eff_t_DeepTau2018v2p5_VSjet_DM{dm}_pT{pt}_{era_tag}{Up,Down}, dm in [0,1,10,11], pt in [20to40, 40to60, 60toInf]
+def tau_id_eff_lt(era):
+    era_num = int(era[:4])
+    dms = ["0", "1", "10", "11"]
+    if era_num < 2022:
+        return [
+            ReplaceVariable(f"CMS_eff_t_DeepTau2017v2p1_VSjet_DM{dm}_pT{pt}{shift}", f"CMS_eff_t_DeepTau2017v2p1_VSjet_DM{dm}_pT{pt}{shift}")
+            for dm in dms
+            for pt in ["20to40", "40toInf"]
+            for shift in SHIFT_DIRECTIONS
+        ]
+    era_tag = JES_ERA_MAP[era]
+    if era_num < 2024:
+        return [
+            ReplaceVariable(f"CMS_eff_t_DeepTau2018v2p5_VSjet_DM{dm}_{era_tag}{shift}", f"CMS_eff_t_DeepTau2018v2p5_VSjet_DM{dm}_{era_tag}{shift}")
+            for dm in dms
+            for shift in SHIFT_DIRECTIONS
+        ]
+    return [
+        ReplaceVariable(f"CMS_eff_t_DeepTau2018v2p5_VSjet_DM{dm}_pT{pt}_{era_tag}{shift}", f"CMS_eff_t_DeepTau2018v2p5_VSjet_DM{dm}_pT{pt}_{era_tag}{shift}")
+        for dm in dms
+        for pt in ["20to40", "40to60", "60toInf"]
+        for shift in SHIFT_DIRECTIONS
     ]
-]
+# Embedding vsJet ID SF (et/mt). CROWN registers f"vsJetTau{dm}{var}" (name IS
+# the branch suffix, no era tag -- tau_embedding_settings.py's vsJet ID SF
+# add_shift loop, ~line 1401-1403), DM-indexed with the same pt_binning
+# uncertainty noted on _emb_tau_es_group above (assumed dm_pt_binned default:
+# pt_binning=["20to40","40toInf"]) -- NOT independently verified against the
+# active scheme. Previously this was flat pt-only-binned ("vsJetTau30to35" etc,
+# no DM component at all), which doesn't match CROWN's DM+pt structure.
+_EMB_TAU_ID_EFF_LT_DMS = ["1prong0pizero", "1prong1pizero", "3prong0pizero", "3prong1pizero"]
+
 emb_tau_id_eff_lt = [
-    ReplaceVariable(name, variation)
+    ReplaceVariable(f"CMS_eff_t_emb_{dm}_{pt}{shift}", f"vsJetTau{dm}{pt}{shift}")
+    for dm in _EMB_TAU_ID_EFF_LT_DMS
+    for pt in ["20to40", "40toInf"]
     for shift in SHIFT_DIRECTIONS
-    for name, variation in [
-        (f"CMS_eff_t_emb_30-35_Era{shift}", f"vsJetTau30to35{shift}"),
-        (f"CMS_eff_t_emb_35-40_Era{shift}", f"vsJetTau35to40{shift}"),
-        (f"CMS_eff_t_emb_40-Inf_Era{shift}", f"vsJetTau40toInf{shift}"),
-    ]
 ]
 
-# tauid variations used for correlation with mc ones
+# tauid variations used for correlation with mc ones -- same branch, shared
+# (non-"_emb") nuisance name so MC and embedding are fit as one parameter.
 emb_tau_id_eff_lt_corr = [
-    ReplaceVariable(name, variation)
+    ReplaceVariable(f"CMS_eff_t_{dm}_{pt}{shift}", f"vsJetTau{dm}{pt}{shift}")
+    for dm in _EMB_TAU_ID_EFF_LT_DMS
+    for pt in ["20to40", "40toInf"]
     for shift in SHIFT_DIRECTIONS
-    for name, variation in [
-        (f"CMS_eff_t_30-35_Era{shift}", f"vsJetTau30to35{shift}"),
-        (f"CMS_eff_t_35-40_Era{shift}", f"vsJetTau35to40{shift}"),
-        (f"CMS_eff_t_40-500_Era{shift}", f"vsJetTau40toInf{shift}"),
-    ]
 ]
 tau_id_eff_tt = [
     ReplaceVariable(name, variation)
@@ -665,36 +808,42 @@ zll_mt_fake_rate = [
     for region in ["1", "2", "3", "4", "5"]
 ]
 
-# # Trigger efficiency uncertainties.
-# mt
+# Trigger efficiency uncertainties.
+#
+# Branch names are read as-is from the CROWN ntuples (not renamed) -- see
+# tau_triggersetup.py's "trigger shifts" blocks. Note CROWN's suffix casing
+# here is upper-case UP/DOWN (from `_variation.upper()` on "up"/"down"), NOT
+# the Up/Down convention used elsewhere in CROWN -- this is intentional on
+# CROWN's side, not a typo to "fix" here.
+#
+# mt/et vary the single-lepton trigger SF only (mc_weights.yaml's
+# single_trigger term -- there is no cross-trigger term in the nominal mt/et
+# weight, so CMS_trig_mutau_cross/CMS_trig_etau_cross would have no effect
+# and are intentionally not booked here); tt varies the combined ditau
+# cross-trigger SF (both legs in one shift, matching double_trigger).
 trigger_eff_mt = [
-    ReplaceVariable("CMS_eff_trigger_mt_EraUp", "singleMuTriggerSFUP"),
-    ReplaceVariable("CMS_eff_trigger_mt_EraDown", "singleMuTriggerSFDOWN"),
-]
-trigger_eff_mt_emb = [
-    ReplaceVariable("CMS_eff_trigger_emb_mt_EraUp", "singleMuonTriggerSFUp"),
-    ReplaceVariable("CMS_eff_trigger_emb_mt_EraDown", "singleMuonTriggerSFDown"),
+    ReplaceVariable("CMS_eff_m_triggerUP", "CMS_eff_m_triggerUP"),
+    ReplaceVariable("CMS_eff_m_triggerDOWN", "CMS_eff_m_triggerDOWN"),
 ]
 
 # et
 trigger_eff_et = [
-    ReplaceVariable("CMS_eff_trigger_et_EraUp", "singleEleTriggerSFUP"),
-    ReplaceVariable("CMS_eff_trigger_et_EraDown", "singleEleTriggerSFDOWN"),
-]
-trigger_eff_et_emb = [
-    ReplaceVariable("CMS_eff_trigger_emb_et_EraUp", "singleElectronTriggerSFUp"),
-    ReplaceVariable("CMS_eff_trigger_emb_et_EraDown", "singleElectronTriggerSFDown"),
+    ReplaceVariable("CMS_eff_e_triggerUP", "CMS_eff_e_triggerUP"),
+    ReplaceVariable("CMS_eff_e_triggerDOWN", "CMS_eff_e_triggerDOWN"),
 ]
 
 # tt
 trigger_eff_tt = [
-    ReplaceVariable("CMS_eff_trigger_tt_EraUp", "DoubleTauTriggerSFUP"),
-    ReplaceVariable("CMS_eff_trigger_tt_EraDown", "DoubleTauTriggerSFDOWN"),
+    ReplaceVariable("CMS_trig_t_ditau_crossUP", "CMS_trig_t_ditau_crossUP"),
+    ReplaceVariable("CMS_trig_t_ditau_crossDOWN", "CMS_trig_t_ditau_crossDOWN"),
 ]
-trigger_eff_tt_emb = [
-    ReplaceVariable("CMS_eff_trigger_emb_tt_EraUp", "DoubleTauTriggerSFUp"),
-    ReplaceVariable("CMS_eff_trigger_emb_tt_EraDown", "DoubleTauTriggerSFDown"),
-]
+# The "_emb" variants formerly here (trigger_eff_mt_emb/et_emb/tt_emb) are
+# removed: mt_emb/et_emb pointed at singleMuonTriggerSFUp/
+# singleElectronTriggerSFUp, which tau_triggersetup.py explicitly computes
+# with exclude_samples=["data","embedding","embedding_mc"] -- i.e. that
+# branch does not exist for embedded samples at all, so booking it onto embS
+# would crash ("Variation not found"), and tt_emb had no matching CROWN
+# branch whatsoever. None of the three were ever booked.
 
 # Embedding specific variations.
 emb_e_es = [  # TODO Embedding electron scale, check if right
@@ -718,22 +867,29 @@ prefiring = [
     for shift in SHIFT_DIRECTIONS
 ]
 
-# Z pT reweighting, assuming NNLO samples with 9 parameters
-zpt = [
-    ReplaceVariable(name, variation)
-    for shift in SHIFT_DIRECTIONS
-    for name, variation in [
-        (f"CMS_htt_dyShape_{shift}_1", f"zPtReweightWeight{shift}1"),
-        (f"CMS_htt_dyShape_{shift}_2", f"zPtReweightWeight{shift}2"),
-        (f"CMS_htt_dyShape_{shift}_3", f"zPtReweightWeight{shift}3"),
-        (f"CMS_htt_dyShape_{shift}_4", f"zPtReweightWeight{shift}4"),
-        (f"CMS_htt_dyShape_{shift}_5", f"zPtReweightWeight{shift}5"),
-        (f"CMS_htt_dyShape_{shift}_6", f"zPtReweightWeight{shift}6"),
-        (f"CMS_htt_dyShape_{shift}_7", f"zPtReweightWeight{shift}7"),
-        (f"CMS_htt_dyShape_{shift}_8", f"zPtReweightWeight{shift}8"),
-        (f"CMS_htt_dyShape_{shift}_9", f"zPtReweightWeight{shift}9"),
+# Z pT reweighting.
+#
+# CROWN only registers a zpt shift for era >= 2022 ("Z pt DY uncertainties"
+# block: event.ZPtReweighting, single shift f"CMS_htt_zptReweight_{era_tag}",
+# plain Up/Down -- no 9-parameter split). For era < 2022, CROWN uses
+# event.ZPtReweighting_Run2 (producers/event.py's ZPtReweighting_Run2),
+# which outputs a single nominal ZPtMassReweightWeight branch with no
+# systematic-shift variants at all -- the old 9-component
+# "CMS_htt_dyShape_*_1..9" -> "zPtReweightWeight*1..9" scheme this used to be
+# doesn't correspond to anything CROWN currently produces for either era
+# regime. Booking zpt() for era < 2022 must be gated out in produce_shapes.py.
+def zpt(era):
+    era_num = int(era[:4])
+    if era_num < 2022:
+        raise ValueError(
+            f"CROWN defines no zpt systematic shift for era {era!r} (Run2 -- "
+            "ZPtReweighting_Run2 has no shift variants); gate this booking by era."
+        )
+    era_tag = JES_ERA_MAP[era]
+    return [
+        ReplaceVariable(f"CMS_htt_zptReweight_{era_tag}Up", f"CMS_htt_zptReweight_{era_tag}Up"),
+        ReplaceVariable(f"CMS_htt_zptReweight_{era_tag}Down", f"CMS_htt_zptReweight_{era_tag}Down"),
     ]
-]
 
 # Top pT reweighting
 top_pt = [
@@ -1089,12 +1245,18 @@ for unc in [
     qqh_acceptance.append(AddWeight(f"{unc}Up", Weight(f"({unc})", f"{unc}_weight")))
     qqh_acceptance.append(AddWeight(f"{unc}Down", Weight(f"(2.0-{unc})", f"{unc}_weight")))
 
-ggh_muRmuF_acceptance, qqh_muRmuF_acceptance = [], []
-for _container, _scheme, _cuts in [
-    (ggh_muRmuF_acceptance, scheme_ggH, ggH_htxs),
-    (qqh_muRmuF_acceptance, scheme_qqH, qqH_htxs),
+ggh_muRmuF_acceptance, qqh_muRmuF_acceptance, vh_as_qqh_muRmuF_acceptance = [], [], []
+for _container, _scheme, _cuts, _postfix in [
+    (ggh_muRmuF_acceptance, scheme_ggH, ggH_htxs, "ggH"),
+    (qqh_muRmuF_acceptance, scheme_qqH, qqH_htxs, "qqH"),
+    # Same qqH STXS-1.2 categorization/cuts as qqh_muRmuF_acceptance above, but for
+    # the hadronic-decay WminusH/WplusH/ZH events booked as the "vh_as_qqh" process
+    # (see shapes/produce_shapes.py) -- those ntuples only carry "_VH"-postfixed
+    # lhe_scale_weight branches (CROWN's "rem_htautau" sample type), never "_qqH".
+    (vh_as_qqh_muRmuF_acceptance, scheme_qqH, qqH_htxs, "VH"),
 ]:
     for shift, scale_type in product(("Up", "Down"), ("muR", "muF")):
+        _qcd_scale_kind = "ren" if scale_type == "muR" else "fac"
         for scheme, scheme_collection in _scheme.items():
             _container.append(
                 AddWeight(
@@ -1104,7 +1266,7 @@ for _container, _scheme, _cuts in [
                             f"""(
                                 1.0 + (
                                     (
-                                        lhe_scale_weight__LHEScale{scale_type}Weight{shift} - 1.0
+                                        lhe_scale_weight__QCDscale_{_qcd_scale_kind}_{_postfix}{shift} - 1.0
                                     ) * ({_cuts[scheme_parts]})
                                 )
                             )"""
@@ -1186,25 +1348,24 @@ class FullyHadronicFFEstimations(_VariationCollection):
 
 # ------------------------------------------------------------------------------------------
 
-class LHE_scale(_VariationCollection):
-    LHE_scale_norm_muR = LHE_scale_norm_muR
-    LHE_scale_norm_muF = LHE_scale_norm_muF
-    PS_scale_norm_Fsr = PS_scale_norm_Fsr
-    PS_scale_norm_Isr = PS_scale_norm_Isr
-    LHE_pdf = LHE_pdf
-    LHE_alphaS = LHE_alphaS
+def _lhe_scale_variation_collection(postfix):
+    class _LHEScaleForMode(_VariationCollection):
+        LHE_scale_norm_muR = _lhe_scale_norm_muR(postfix)
+        LHE_scale_norm_muF = _lhe_scale_norm_muF(postfix)
+        PS_scale_norm_Fsr = _ps_scale_norm_fsr(postfix)
+        PS_scale_norm_Isr = _ps_scale_norm_isr(postfix)
+        LHE_pdf = _lhe_pdf(postfix)
+        LHE_alphaS = _lhe_alphaS(postfix)
+    return _LHEScaleForMode
 
 
-class Recoil(_VariationCollection):
-    recoil_resolution = recoil_resolution
-    recoil_response = recoil_response
-
-
-class TauEnergyScale(_VariationCollection):
-    tau_es_3prong = tau_es_3prong
-    tau_es_3prong1pizero = tau_es_3prong1pizero
-    tau_es_1prong = tau_es_1prong
-    tau_es_1prong1pizero = tau_es_1prong1pizero
+# One collection per STXS stage-0 Higgs production mode -- booked onto the
+# matching signal process only (see shapes/produce_shapes.py), since the
+# LHE-scale/PS/PDF theory variations are uncorrelated nuisances per mode.
+LHE_scale_ggH = _lhe_scale_variation_collection("ggH")
+LHE_scale_qqH = _lhe_scale_variation_collection("qqH")
+LHE_scale_VH = _lhe_scale_variation_collection("VH")
+LHE_scale_ttH = _lhe_scale_variation_collection("ttH")
 
 
 class TauEmbeddingEnergyScale(_VariationCollection):
@@ -1238,17 +1399,19 @@ class FakeProcessEstimationVariations(_VariationCollection):
 
 
 class EnergyScaleVariations(_VariationCollection):
-    tau_es_3prong = tau_es_3prong
-    tau_es_3prong1pizero = tau_es_3prong1pizero
-    tau_es_1prong = tau_es_1prong
-    tau_es_1prong1pizero = tau_es_1prong1pizero
-    mu_fake_es_inc = mu_fake_es_inc
+    # tau_es_3prong/tau_es_3prong1pizero/tau_es_1prong/tau_es_1prong1pizero
+    # live in tau_energy_scale(era) now (era-parameterized, not a static
+    # list) -- see shapes/produce_shapes.py for how it's booked.
+    # mu_fake_es_inc lives in mu_fake_es_inc(era) now (era-parameterized,
+    # not a static list) -- see shapes/produce_shapes.py for how it's booked.
     ele_fake_es = ele_fake_es
     emb_tau_es_3prong = emb_tau_es_3prong
     emb_tau_es_3prong1pizero = emb_tau_es_3prong1pizero
     emb_tau_es_1prong = emb_tau_es_1prong
     emb_tau_es_1prong1pizero = emb_tau_es_1prong1pizero
-    jet_es = jet_es
+    # jet_es lives in jet_energy_scale(era)/jet_energy_resolution(era) now
+    # (era-parameterized, not a static list) -- see shapes/produce_shapes.py
+    # for how it's booked.
     # TODO add missing ES
     # mu_fake_es_1prong = mu_fake_es_1prong
     # mu_fake_es_1prong1pizero = mu_fake_es_1prong1pizero
@@ -1261,13 +1424,16 @@ class EnergyScaleVariations(_VariationCollection):
 
 
 class METVariations(_VariationCollection):
-    met_unclustered = met_unclustered
-    recoil_resolution = recoil_resolution
-    recoil_response = recoil_response
+    # met_unclustered/recoil_resolution/recoil_response live in
+    # met_unclustered(era)/recoil_resolution(era)/recoil_response(era) now
+    # (era-parameterized, not a static list) -- see shapes/produce_shapes.py
+    # for how they're booked.
+    pass
 
 
 class EffifiencyVariations(_VariationCollection):
-    tau_id_eff_lt = tau_id_eff_lt
+    # tau_id_eff_lt lives in tau_id_eff_lt(era) now (era-parameterized, not a
+    # static list) -- see shapes/produce_shapes.py for how it's booked.
     tau_id_eff_tt = tau_id_eff_tt
     emb_tau_id_eff_lt = emb_tau_id_eff_lt
     emb_tau_id_eff_tt = emb_tau_id_eff_tt
@@ -1280,21 +1446,19 @@ class FakeRateVariations(_VariationCollection):
     zll_mt_fake_rate = zll_mt_fake_rate
 
 
-class TriggerEfficiencyVariations(_VariationCollection):
-    trigger_eff_mt = trigger_eff_mt
-    trigger_eff_et = trigger_eff_et
-    trigger_eff_tt = trigger_eff_tt
-    trigger_eff_et_emb = trigger_eff_et_emb
-    trigger_eff_mt_emb = trigger_eff_mt_emb
-    trigger_eff_tt_emb = trigger_eff_tt_emb
+# trigger_eff_mt/et/tt are booked directly in shapes/produce_shapes.py
+# (per-channel, not through a _VariationCollection) -- the
+# TriggerEfficiencyVariations class formerly here was unused (never
+# .unrolled()'d anywhere) and referenced the removed _emb variants; removed.
 
 
 # Additional uncertainties
 class AdditionalVariations(_VariationCollection):
     prefiring = prefiring
-    zpt = zpt
     top_pt = top_pt
-    pileup_reweighting = pileup_reweighting
+    # zpt/pileup_reweighting live in zpt(era)/pileup_reweighting(era) now
+    # (era-parameterized, not a static list) -- see shapes/produce_shapes.py
+    # for how they're booked.
     # TODO add missing uncertainties
     # btag_eff = btag_eff
     # mistag_eff = mistag_eff

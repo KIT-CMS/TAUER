@@ -26,7 +26,7 @@ from config.shapes.taues_measurement_binning import categorization as taues_cate
 import tau_es.energy_scales as tau_es_energy_scales
 from shapes.selection.channel_selection import channel_selection
 from config.shapes.control_binning import control_binning as default_control_binning
-from config.analysis import build_files_dict
+from config.analysis import build_files_dict, build_presel_files_dict, vs_ele_wp_for
 from ntuple_processor import GraphManager, RunManager, UnitManager
 
 
@@ -45,15 +45,20 @@ def parse_arguments():
         "--vs-jet-wp", required=True, type=str, help="Tau-vs-jet ID WP."
     )
     parser.add_argument(
-        "--vs-ele-wp", required=True, type=str, help="Tau-vs-ele ID WP."
+        "--vs-ele-wp", required=False, default=None, type=str,
+        help="Tau-vs-ele ID WP. Default: per-channel, matching smhtt_ul's Run3 "
+             "configs (Tight for et, VVLoose otherwise) -- see "
+             "config.analysis.vs_ele_wp_for(). Given a value, it is used for "
+             "every channel instead.",
     )
     parser.add_argument(
         "--apply-tauid", action="store_true",
         help="Apply tau ID scale factors."
     )
     parser.add_argument(
-        "--directory", required=True, type=str,
-        help="Directory with CROWN ntuple outputs. With --xrootd, this must be the "
+        "--directory", default=None, type=str,
+        help="Directory with CROWN ntuple outputs. Required unless --presel-dir is given. "
+             "With --xrootd, this must be the "
              "bare xrootd store path (e.g. /store/user/<user>/CROWN/ntuples/<tag>/CROWNRun/), "
              "NOT a full root://host/... URL -- ntuple_processor/booking.py's xrootd branch "
              "prepends the xrootd host itself, so a full URL here double-prefixes it and "
@@ -61,6 +66,17 @@ def parse_arguments():
              "iterable'. See common/sample_paths.py's UlSamplePaths.ntuples for the exact "
              "convention (formerly utils/setup_ul_samples.sh's $NTUPLES; converted to Python "
              "in Phase 6d).",
+    )
+    parser.add_argument(
+        "--presel-dir", default=None, type=str,
+        help="Preselection output tree (shapes/preselect.py's --output-dir / "
+             "build_shape_output_paths().preselection), read instead of raw CROWN "
+             "--directory. Mutually exclusive with --directory. Sets preselected=True "
+             "(tau-ID/trigger cuts and per-sample MC weights are skipped -- already "
+             "applied/baked into the preselection's `weight` column upstream), uses build_presel_files_dict() "
+             "instead of build_files_dict() to locate samples, and reads the flat "
+             "{dir}/{era}/{channel}/{key}.root preselection layout instead of CROWN's "
+             "directory-per-sample one.",
     )
     parser.add_argument("--et-friend-directory", type=str, default=[], nargs="+")
     parser.add_argument("--mt-friend-directory", type=str, default=[], nargs="+")
@@ -141,6 +157,11 @@ def parse_arguments():
         help="Tag used for sample validation."
     )
     parser.add_argument(
+        "--validation-db-root", default="validation_database", type=str,
+        help="Base directory for the on-disk validation_database/ cache "
+             "(default: CWD-relative 'validation_database')."
+    )
+    parser.add_argument(
         "--selection-option",
         help="Signal/control region selection.",
         choices=["CR", "DR;ff;wjet", "DR;ff;qcd", "DR;ff;ttbar"],
@@ -150,6 +171,14 @@ def parse_arguments():
         "--ff-type",
         help=f"Type of fake factor. Set to 'none' to skip anti-iso variations.\n{variations.__FF_OPTION_info__}",
         default="none",
+    )
+    parser.add_argument(
+        "--ff-only", action="store_true",
+        help="Book ONLY the FF-weighted anti-iso variations (requires --ff-type != none); "
+             "skip signals/same_sign/systematics entirely. For a fast follow-up run once FF "
+             "friend trees exist, on top of an already-produced non-FF shapes file (same "
+             "era/channels/validation-tag) -- see run.py's SHAPES ff qcd-label handling, "
+             "which hadd's this output onto that earlier file instead of redoing it."
     )
     parser.add_argument(
         "--no-dnn-categorization", action="store_true",
@@ -209,6 +238,23 @@ def add_processes(add_fn, datasets, select_fn, channel):
     _add("ggh",  "ggH",  lambda: select_fn(selection.ggH125))
     _add("tth",  "ttH",  lambda: select_fn(selection.ttH))
     _add("vh",   "VH",   lambda: select_fn(selection.VH))
+    # STXS stage 0 (HTXS_stage_0) merges genuine VBF with hadronically-decaying
+    # -V associated production (WH/ZH with W/Z -> qq) under the same "VBF" code
+    # -- only leptonically-decaying WH/ZH get their own stage-0 codes. So the
+    # WminusH/WplusH/ZH files (dataset key "VH") also contain events that
+    # belong in the qqH shape (selection.qqH125 cuts on HTXS_stage_0==VBF);
+    # they're booked here as a *separate* process ("vh_as_qqh") rather than
+    # merged into the "qqH" dataset itself, because CROWN only ever writes
+    # "_qqH"-postfixed LHE scale/PDF/alphaS/PS branches into the actual VBF
+    # ntuples -- the WminusH/WplusH/ZH ntuples carry "_VH"/"_ttH"-postfixed
+    # branches instead (same "rem_htautau" CROWN sample type as ttH). A
+    # single merged RDataFrame chain can't reference a column that's absent
+    # from some of its files, so the "_qqH"-postfixed weight expressions used
+    # to crash with "undeclared identifier" whenever the loop reached a
+    # WminusH/WplusH/ZH file. do_estimations.py's qqH_merge_estimation sums
+    # "qqh" + "vh_as_qqh" back into one physical qqH125 shape for the
+    # datacard, same as smhtt_ul's qqH125/WH125/ZH125 merge.
+    _add("vh_as_qqh", "VH", lambda: select_fn(selection.qqH125))
 
 
 def get_select_function(channel_selection_obj, selection_kwargs, selection_memo):
@@ -311,8 +357,20 @@ def main(args):
     }
     output_file = args.output_file if ".root" in args.output_file else f"{args.output_file}.root"
 
-    files = build_files_dict(channels=args.channels, era=args.era)
-    ntuple_directory = args.directory
+    if args.directory and args.presel_dir:
+        raise SystemExit("--directory and --presel-dir are mutually exclusive.")
+    if not args.directory and not args.presel_dir:
+        raise SystemExit("One of --directory or --presel-dir is required.")
+    if args.ff_only and args.ff_type == "none":
+        raise SystemExit("--ff-only requires --ff-type to be set (nothing to book otherwise).")
+
+    preselected = args.presel_dir is not None
+    if preselected:
+        files = build_presel_files_dict(channels=args.channels, era=args.era)
+        ntuple_directory = args.presel_dir
+    else:
+        files = build_files_dict(channels=args.channels, era=args.era)
+        ntuple_directory = args.directory
 
     unit_manager = UnitManager()
     logger.info(f"Apply tau ID: {args.apply_tauid}")
@@ -320,6 +378,7 @@ def main(args):
     nominals = {args.era: {"datasets": {}, "units": {}}}
 
     for channel in args.channels:
+        channel_vs_ele_wp = vs_ele_wp_for(channel, args.vs_ele_wp)
         nominals[args.era]["datasets"][channel] = shape_utils.get_nominal_datasets(
             era=args.era, channel=channel,
             friend_directories=friend_directories,
@@ -327,15 +386,17 @@ def main(args):
             directory=ntuple_directory,
             xrootd=args.xrootd,
             validation_tag=args.validation_tag,
+            validation_db_root=args.validation_db_root,
+            flat_layout=preselected,
         )
         common_kwargs = dict(
             era=args.era, channel=channel,
             datasets=nominals[args.era]["datasets"][channel],
             apply_tauid=args.apply_tauid,
             vs_jet_wp=args.vs_jet_wp,
-            vs_ele_wp=args.vs_ele_wp,
+            vs_ele_wp=channel_vs_ele_wp,
             selection_option=args.selection_option,
-            preselected=False,
+            preselected=preselected,
         )
         if args.control_plots:
             nominals[args.era]["units"][channel] = get_control_units(
@@ -398,18 +459,20 @@ def main(args):
                 selections=[
                     channel_selection(
                         channel=channel, era=args.era, special="TauES",
-                        vs_jet_wp=args.vs_jet_wp, vs_ele_wp=args.vs_ele_wp,
+                        vs_jet_wp=args.vs_jet_wp, vs_ele_wp=channel_vs_ele_wp,
                         selection_option=args.selection_option,
                     ),
                     selection.ZTT_embedded(
                         channel=channel, era=args.era,
                         apply_wps=args.apply_tauid, vs_jet_wp=args.vs_jet_wp,
-                        vs_ele_wp=args.vs_ele_wp,
+                        vs_ele_wp=channel_vs_ele_wp,
                     ),
                 ],
                 categorization=taues_categorization,
                 additional_emb_procS=additional_emb_procS,
                 validation_tag=args.validation_tag,
+                validation_db_root=args.validation_db_root,
+                flat_layout=preselected,
                 xrootd=args.xrootd,
             )
             nominals[args.era].setdefault("tauES_procS", {})[channel] = additional_emb_procS
@@ -420,7 +483,7 @@ def main(args):
 
     procS = args.process_selection if args.process_selection is not None else {
         "data", "ztt", "zl", "zj", "ttt", "ttl", "ttj",
-        "vvt", "vvl", "vvj", "w", "ggh", "qqh", "tth", "vh",
+        "vvt", "vvl", "vvj", "w", "ggh", "qqh", "tth", "vh", "vh_as_qqh",
     }
 
     dataS = {"data"} & procS
@@ -432,10 +495,10 @@ def main(args):
     }
     leptonFakesS = {"zl", "ttl", "vvl"} & procS
     trueTauBkgS  = {"ztt", "ttt", "vvt"} & procS
-    sm_signalsS  = {"ggh", "qqh", "tth", "vh"} & procS
+    sm_signalsS  = {"ggh", "qqh", "tth", "vh", "vh_as_qqh"} & procS
     signalsS     = sm_signalsS
     if (args.control_plots or args.gof_inputs) and not args.control_plots_full_samples:
-        signalsS = signalsS & {"ggh", "qqh", "vh", "tth"}
+        signalsS = signalsS & {"ggh", "qqh", "vh", "tth", "vh_as_qqh"}
     simulatedProcsDS = {
         ch: jetFakesDS[ch] | leptonFakesS | trueTauBkgS | signalsS
         for ch in ["et", "mt", "tt", "em"]
@@ -450,62 +513,106 @@ def main(args):
             enable_check=args.enable_booking_check,
         )
 
+    def _book_nonff(processes, vlist):
+        # --ff-only: every FF-dependent _book() call in this loop is already
+        # explicitly gated behind `if args.ff_type != "none":` (or a
+        # channel-specific elif) in the code below -- so skipping every OTHER
+        # (non-FF) _book() call via this wrapper, and leaving those existing
+        # gated calls as plain _book(), is a complete and exact partition:
+        # nothing FF-dependent is skipped, nothing FF-independent survives.
+        if args.ff_only:
+            return
+        _book(processes, vlist)
+
     for channel in args.channels:
         if args.special_analysis == "TauES":
             # TauES fit inputs: nominal background/embedded shapes in the
             # tauES categorization, plus one embedded template per tau-ES
             # shift (booked via book_tauES_histograms below). The regular
             # systematic-variation stack below is not relevant to this mode.
-            _book(embS | dataS | trueTauBkgS | leptonFakesS | jetFakesDS[channel], [variations.same_sign])
-            shape_utils.book_tauES_histograms(
-                manager=unit_manager,
-                additional_emb_procS=nominals[args.era]["tauES_procS"][channel],
-                datasets=nominals[args.era]["units"][channel],
-                variations=[variations.same_sign],
-                enable_check=args.enable_booking_check,
-            )
+            # Not FF-dependent (no ff_type branching anywhere in this special
+            # analysis) -- --ff-only + --special-analysis TauES books nothing.
+            _book_nonff(embS | dataS | trueTauBkgS | leptonFakesS | jetFakesDS[channel], [variations.same_sign])
+            if not args.ff_only:
+                shape_utils.book_tauES_histograms(
+                    manager=unit_manager,
+                    additional_emb_procS=nominals[args.era]["tauES_procS"][channel],
+                    datasets=nominals[args.era]["units"][channel],
+                    variations=[variations.same_sign],
+                    enable_check=args.enable_booking_check,
+                )
             continue
-        _book(signalsS, [])
+        _book_nonff(signalsS, [])
         if channel in {"mt", "et", "tt"}:
-            _book(embS | dataS | trueTauBkgS | leptonFakesS | jetFakesDS[channel], [variations.same_sign])
+            _book_nonff(embS | dataS | trueTauBkgS | leptonFakesS | jetFakesDS[channel], [variations.same_sign])
         if channel in {"mt", "et"} and args.ff_type != "none":
             _book(embS | dataS | trueTauBkgS | leptonFakesS | jetFakesDS[channel], variations.SemiLeptonicFFEstimations.unrolled())
         elif channel == "tt" and args.ff_type != "none":
             _book(dataS | embS | trueTauBkgS | leptonFakesS | jetFakesDS[channel], variations.FullyHadronicFFEstimations.unrolled())
         elif channel == "em":
-            _book((dataS | embS | simulatedProcsDS[channel]) - signalsS, [variations.same_sign_em])
+            _book_nonff((dataS | embS | simulatedProcsDS[channel]) - signalsS, [variations.same_sign_em])
         elif channel in {"mm", "ee"}:
-            _book(procS, [variations.same_sign])
+            _book_nonff(procS, [variations.same_sign])
         if not args.skip_systematic_variations:
-            _book({"ggh"} & procS, [variations.ggh_acceptance, variations.ggh_muRmuF_acceptance])
-            _book({"qqh"} & procS, [variations.qqh_acceptance, variations.qqh_muRmuF_acceptance])
-            _book(signalsS, variations.LHE_scale.unrolled())
-            _book({"ztt", "zj", "zl", "w"} & procS | signalsS, variations.Recoil.unrolled())
-            _book(simulatedProcsDS[channel], [variations.met_unclustered, variations.pileup_reweighting])
-            _book({"ztt", "zl", "zj"} & procS, [variations.zpt])
-            _book({"ttt", "ttl", "ttj"} & procS, [variations.top_pt])
+            _book_nonff({"ggh"} & procS, [variations.ggh_acceptance, variations.ggh_muRmuF_acceptance])
+            _book_nonff({"qqh"} & procS, [variations.qqh_acceptance, variations.qqh_muRmuF_acceptance])
+            # vh_as_qqh reads the same STXS-1.2 qqH categorization (QQH_WG1_Uncertainties
+            # is booked by CROWN for "rem_htautau" too, so THU_qqH_* branches exist on
+            # these files) but only "_VH"-postfixed LHE scale/PDF/alphaS branches exist
+            # for it -- see vh_as_qqh_muRmuF_acceptance in variations.py.
+            _book_nonff({"vh_as_qqh"} & procS, [variations.qqh_acceptance, variations.vh_as_qqh_muRmuF_acceptance])
+            _book_nonff({"ggh"} & procS, variations.LHE_scale_ggH.unrolled())
+            _book_nonff({"qqh"} & procS, variations.LHE_scale_qqH.unrolled())
+            _book_nonff({"vh"} & procS, variations.LHE_scale_VH.unrolled())
+            _book_nonff({"vh_as_qqh"} & procS, variations.LHE_scale_VH.unrolled())
+            _book_nonff({"tth"} & procS, variations.LHE_scale_ttH.unrolled())
+            _book_nonff({"ztt", "zj", "zl", "w"} & procS | signalsS, variations.recoil_resolution(args.era) + variations.recoil_response(args.era))
+            _book_nonff(simulatedProcsDS[channel], variations.met_unclustered(args.era) + variations.pileup_reweighting(args.era))
+            _jet_variations = variations.jet_energy_scale(args.era) + variations.jet_energy_resolution(args.era)
+            if args.era in variations.BTAG_FIXEDWP_ERAS:
+                _jet_variations += variations.btag_fixedWP(args.era)
+            _book_nonff(simulatedProcsDS[channel], _jet_variations)
+            if int(args.era[:4]) >= 2022:
+                _book_nonff({"ztt", "zl", "zj"} & procS, variations.zpt(args.era))
+            _book_nonff({"ttt", "ttl", "ttj"} & procS, [variations.top_pt])
             if channel in ["et", "mt", "tt"]:
-                _book(jetFakesDS[channel], [variations.jet_to_tau_fake])
-                _book((trueTauBkgS | leptonFakesS | signalsS) - {"zl"}, variations.TauEnergyScale.unrolled())
+                _book_nonff(jetFakesDS[channel], [variations.jet_to_tau_fake])
+                _book_nonff((trueTauBkgS | leptonFakesS | signalsS) - {"zl"}, variations.tau_energy_scale(args.era))
+                if channel == "mt":
+                    _book_nonff(simulatedProcsDS[channel], variations.trigger_eff_mt)
+                elif channel == "et":
+                    _book_nonff(simulatedProcsDS[channel], variations.trigger_eff_et)
+                elif channel == "tt":
+                    _book_nonff(simulatedProcsDS[channel], variations.trigger_eff_tt)
             if channel in ["et", "mt"]:
-                _book((trueTauBkgS | leptonFakesS | signalsS) - {"zl"}, [variations.tau_id_eff_lt])
-                _book(embS, [variations.emb_tau_id_eff_lt, variations.emb_tau_id_eff_lt_corr])
+                _book_nonff((trueTauBkgS | leptonFakesS | signalsS) - {"zl"}, variations.tau_id_eff_lt(args.era))
+                _book_nonff(embS, [variations.emb_tau_id_eff_lt, variations.emb_tau_id_eff_lt_corr])
                 if args.ff_type != "none":
                     _book(dataS | embS | leptonFakesS | trueTauBkgS, variations.FakeFactorLT.unrolled())
                     _book(leptonFakesS | trueTauBkgS | embS, [variations.ff_variations_tau_es_lt])
                     _book(embS, [variations.ff_variations_tau_es_emb_lt])
             if channel in ["et", "em"]:
-                _book(simulatedProcsDS[channel], [variations.ele_es_res, variations.ele_es_scale])
-                _book(embS, [variations.emb_e_es])
+                _book_nonff(simulatedProcsDS[channel], [variations.ele_es_res, variations.ele_es_scale])
+                # CROWN only defines the embedding electron-ES shift for era < 2022
+                # (tau_embedding_settings.py: "not yet measured for run 3") -- no
+                # eleEsBarrel/eleEsEndcap branch exists in Run3 embedding ntuples.
+                if int(args.era[:4]) < 2022:
+                    _book_nonff(embS, [variations.emb_e_es])
             if channel == "mt":
-                _book({"zl"} & procS, [variations.mu_fake_es_inc])
-                _book(embS, [variations.emb_mu_fake_es_inc, variations.emb_mu_fake_es_inc_corr])
+                _book_nonff({"zl"} & procS, variations.mu_fake_es_inc(args.era))
+                # No embedding booking here: CROWN never produces a muon-fake-ES
+                # branch for embedding samples (the MC genMuon/DM-split shifts in
+                # analysis_configurations/tau/variations.py explicitly
+                # exclude_samples=["data","embedding","embedding_mc"], and
+                # tau_embedding_settings.py defines no muon-fake-ES shift at all)
+                # -- variations.emb_mu_fake_es_inc/emb_mu_fake_es_inc_corr were
+                # referenced here but never defined anywhere in variations.py.
                 if args.ff_type != "none":
                     _book(dataS | embS | leptonFakesS | trueTauBkgS, variations.FakeFactorLT.unrolled())
                     _book(leptonFakesS | trueTauBkgS | embS, [variations.ff_variations_tau_es_lt])
                     _book(embS, [variations.ff_variations_tau_es_emb_lt])
             if channel == "tt":
-                _book((trueTauBkgS | leptonFakesS | signalsS) - {"zl"}, variations.TauEnergyScale.unrolled())
+                _book_nonff((trueTauBkgS | leptonFakesS | signalsS) - {"zl"}, variations.tau_energy_scale(args.era))
                 if args.ff_type != "none":
                     _book(dataS | embS | leptonFakesS | trueTauBkgS, variations.FullyHadronicFFEstimations.unrolled())
 
@@ -538,6 +645,11 @@ def main(args):
 
 
 if __name__ == "__main__":
+    # Self-nice regardless of how this got invoked (run.py already wraps it in
+    # `nice -n 19`, but this covers direct invocation too -- e.g. the 2018/Run2
+    # path documented in the README, which calls this script directly). Safe
+    # to call even when already niced (os.nice() clamps at the max of 19).
+    os.nice(19)
     args = parse_arguments()
     log_file = args.output_file.replace(".root", ".log") if ".root" in args.output_file else f"{args.output_file}.log"
     logger = setup_logging(logger=logging.getLogger(__name__))

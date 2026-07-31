@@ -38,3 +38,5 @@ mc_weights:
         double_trigger: "(trg_wgt_doubletau30_leg1 * trg_wgt_doubletau30_leg2)"
       '2025':
         double_trigger: "(trg_wgt_doubletau30_leg1 * trg_wgt_doubletau30_leg2)"
+      '2026':
+        double_trigger: "(trg_wgt_doubletau30_leg1 * trg_wgt_doubletau30_leg2)"

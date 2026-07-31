@@ -60,6 +60,7 @@ RUN3_ERAS = (
     "2023postBPix",
     "2024",
     "2025",
+    "2026",
 )
 
 # Run2 UL eras. Only relevant to plotting (era-correct CMS labels, see
@@ -155,6 +156,7 @@ def get_training_variables() -> list[str]:
 def _signal_samples() -> dict[str, dict[str, list[str]]]:
     return _load_samples()["signals"]
 
+
 # Module-level alias; consumed directly by shapes/preselect.py
 # (`from config.analysis import SIGNAL_SAMPLES as signal_files`).
 SIGNAL_SAMPLES: dict[str, dict[str, list[str]]] = {}
@@ -168,6 +170,19 @@ _lazy_init_signals()
 
 
 # ── Background sample access ──────────────────────────────────────────────────
+
+def get_background_processes(era: str) -> dict[str, dict]:
+    """
+    Raw per-TFF-process background info from config/samples.yaml for the
+    given era: {tff_process: {"samples": [...], "tau_gen_modes": [...], ...}}.
+
+    Unlike get_background_samples(), this preserves the original TFF process
+    names (e.g. "DYjets") and each process's tau_gen_modes list -- needed by
+    shapes/preselect.py's central background preselection and by
+    build_presel_files_dict() to know how each process is split.
+    """
+    return _load_samples()["backgrounds"].get(era, {})
+
 
 def get_background_samples(era: str, channel: str) -> dict[str, list[str]]:
     """
@@ -215,6 +230,22 @@ def get_channels() -> list[str]:
     channel list.
     """
     return list(_load_cuts()["preselection"].keys())
+
+
+def vs_ele_wp_for(channel: str, override: str | None = None) -> str:
+    """
+    Default tau-vs-electron discriminator WP for the given channel, matching
+    TauFakeFactors/configs/smhtt_ul's Run3 preselection configs: "Tight" for
+    et (electron leg needs the tighter cut against electron fakes), "VVLoose"
+    for every other channel (mt, tt, ...).
+
+    Single source of truth -- callers (run.py, shapes/produce_shapes.py,
+    condor/submit_shapes.py) must use this instead of hardcoding a parallel
+    per-channel default. `override`, if given, always wins.
+    """
+    if override:
+        return override
+    return "Tight" if channel == "et" else "VVLoose"
 
 
 # ── Preselection cuts access ──────────────────────────────────────────────────
@@ -268,6 +299,31 @@ def get_channel_selection_cuts(channel: str, era: str | None = None) -> dict[str
     if era is not None and era in era_overrides:
         result.update(era_overrides[era])
     return result
+
+
+# ── MC ntuple production-era override ────────────────────────────────────────
+
+# For 2026, no dedicated MC campaign exists yet -- the same 2025 Summer24 MC
+# campaign is reused as-is (see samples.yaml:backgrounds.2026/signals.2026,
+# whose MC sample names are identical to 2025's). Those physical CROWN
+# ntuples/friends were never copied into a "2026" subdirectory on disk --
+# they only exist under "2025". This map tells shape production which
+# *directory* era to actually read MC ntuples/friends from, while DATA (the
+# real 2026 datasets) is still read from its own "2026" directory. Update
+# this (and nowhere else) if/when 2026 gets its own dedicated MC campaign.
+MC_NTUPLE_ERA_OVERRIDE = {
+    "2026": "2025",
+}
+
+
+def get_mc_ntuple_era(era: str) -> str:
+    """
+    Physical CROWN-production era directory to read MC ntuples/friends from
+    for the given (analysis) era -- see MC_NTUPLE_ERA_OVERRIDE. Returns `era`
+    unchanged for every era not explicitly overridden. Never applies to data
+    (or embedding) -- those always read from their own real era's directory.
+    """
+    return MC_NTUPLE_ERA_OVERRIDE.get(era, era)
 
 
 # ── Luminosity ───────────────────────────────────────────────────────────────
@@ -335,24 +391,32 @@ def build_files_dict(channels: list[str], era: str) -> dict:
 
 def build_presel_files_dict(channels: list[str], era: str) -> dict:
     """
-    Files dict for preselected ntuples produced by shapes/preselect.py.
+    Files dict for preselected ntuples produced by shapes/preselect.py
+    (central background preselection) / TauFakeFactors' preselection.py.
 
-    Background sample names are expanded with tau_gen_mode suffix so
-    ntuple_processor can locate the CROWN-compatible preselected directories.
+    After preselection there is exactly ONE physical file per
+    (process, tau_gen_mode) -- all original per-sample physical files (and,
+    for "data", all per-run-period files) have already been concatenated by
+    the preselection step, matching TauFakeFactors'
+    helper.functions.get_output_name() naming convention: the "all" mode
+    suffix is dropped (bare "<process>.root"), every other mode is
+    "<process>_<mode>.root". So both the ntuple_processor.booking sample-key
+    AND its one-element file_names list must be that same generated name --
+    NOT the pre-preselection list of original physical sample names (that
+    would make booking glob for a per-original-sample directory that no
+    longer exists after concatenation).
 
-        {presel_dir}/{era}/{tff_process}_{gen_mode}/{channel}/ntuple.root
+        {presel_dir}/{era}/{key}/{channel}/{key}.root   where
+        key = tff_process if tau_gen_mode == "all" else f"{tff_process}_{tau_gen_mode}"
     """
     result: dict = {era: {}}
-    bg_raw = _load_samples()["backgrounds"].get(era, {})
+    bg_raw = get_background_processes(era)
     for channel in channels:
         ch_dict: dict = {}
         for tff_proc, info in bg_raw.items():
-            if tff_proc == "data":
-                ch_dict["data"] = info.get("by_channel", {}).get(channel, [])
-                continue
             for mode in info.get("tau_gen_modes", ["all"]):
-                key = f"{tff_proc}_{mode}"
-                ch_dict[key] = info.get("samples", [])
+                key = tff_proc if mode == "all" else f"{tff_proc}_{mode}"
+                ch_dict[key] = [key]
         for sig_key, sig_samples in _signal_samples().get(era, {}).items():
             ch_dict[sig_key] = list(sig_samples)
         result[era][channel] = ch_dict

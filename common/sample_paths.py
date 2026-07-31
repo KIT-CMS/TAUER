@@ -26,6 +26,7 @@ RUN3_ERAS_SUPPORTED = (
     "2023postBPix",
     "2024",
     "2025",
+    "2026",
 )
 
 
@@ -61,4 +62,39 @@ def build_ul_sample_paths(ntupletag: str, era: str, user: str | None = None) -> 
         kingmaker_basedir_xrootd=kingmaker_basedir_xrootd,
         xsec_friends=xsec_friends,
         ntuples=ntuples,
+    )
+
+
+@dataclass(frozen=True)
+class ShapeOutputPaths:
+    base: str
+    preselection: str
+    output: str
+    validation: str
+
+
+def build_shape_output_paths(ntupletag: str, user: str | None = None) -> ShapeOutputPaths:
+    """Single source of truth for the unified TauKITFlow shape-production output
+    tree, replacing the previously scattered bare "output"/CWD-relative
+    "validation_database" defaults and TFF's own separate /ceph/.../CMS_FF/<tag>
+    output area.
+
+        /ceph/$USER/TauKITFlow_shapes/$ntupletag/
+        |-- preselection/<era>/<channel>/<process>[_<tau_gen_mode>].root
+        |-- output/<tag>/<ss-os|ff>/<era>/<channels>/shapes.root
+        `-- validation/<tag>/...
+
+    One preselection directory, in one layout, consumed directly by BOTH
+    shape production (shapes/produce_shapes.py --presel-dir, via
+    ntuple_processor.booking's flat_layout branch) and TauFakeFactors'
+    ff_calculation.py/ff_corrections.py (run.py's --ff-input-dir). No
+    second CROWN-shaped mirror of it is needed.
+    """
+    user = user or getpass.getuser()
+    base = f"/ceph/{user}/TauKITFlow_shapes/{ntupletag}"
+    return ShapeOutputPaths(
+        base=base,
+        preselection=f"{base}/preselection",
+        output=f"{base}/output",
+        validation=f"{base}/validation",
     )

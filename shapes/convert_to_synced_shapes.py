@@ -358,8 +358,14 @@ def main(args):
                 process  = "EMB"
 
         name_output = "{process}".format(process=process)
-        # rename signal processes from ggH to ggH_htt
-        if process in ["ggH125", "qqH125", "WH125", "ZH125", "ttH125"]:
+        # Rename signal processes from e.g. ggH125 to ggH_htt125, matching
+        # combine_datacards/processes.py::get_signals()'s process names.
+        # "WH125"/"ZH125" here used to stand in for the vh category, but
+        # shapes/produce_shapes.py only ever books the combined
+        # VH_process_selection (Selection name "VH125") for the "vh" process
+        # -- WH125/ZH125 (WH_process_selection/ZH_process_selection alone)
+        # are never produced, so that never actually matched anything.
+        if process in ["ggH125", "qqH125", "VH125", "ttH125"]:
             name_output = process.replace("125", "_htt125")
         if "Nominal" not in variation:
             name_output += "_" + variation

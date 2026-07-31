@@ -22,6 +22,12 @@ central `config/*.yaml`. The only things left as genuinely external dependencies
   measurement code itself (`preselection.py`/`ff_calculation.py`/`ff_corrections.py`).
   TauKITFlow generates its config from central `config/*.yaml` and drives it, but does not
   reimplement it.
+- **`datasets`** (git submodule, `KIT-CMS/KingMaker_sample_database`) — the sample database
+  (`nanoAOD_v9/v12/v15/datasets.json`: per-sample xsec/nevents/DAS-path info). A top-level
+  submodule (not nested inside `TauFakeFactors/` anymore, see "Submodules" below), read
+  directly by `run.py`/`xsec/build_friend_tree.py`/the STXS helper in
+  `common/helper_collection.py`, and by TauFakeFactors' own scripts via each
+  `common_settings.yaml`'s explicit `sample_database:` override.
 - **`trainings/uncertainty-aware-training`** (git submodule) — the actual NN training-loop
   task graph (still `law`-orchestrated internally; TauKITFlow's own code around it is plain
   Python, see "NN training" below).
@@ -43,9 +49,8 @@ supported).
 ```
 TauKITFlow/
 ├── run.py                        # Main pipeline entry point (all MODEs, see below)
-├── run_fake_factor_measurement.py # Chains GEN-TFF-CONFIGS -> PRESEL -> FF -> FF-CORR
-├── environment.yml                # `taukitflow` conda env (shape production/training)
-├── environment-plotting.yml       # Separate env for PLOT (adds ROOT to the plotting stack)
+├── run_fake_factor_measurement.py # Standalone TFF chain (its own preselection.py, not run.py PRESEL)
+├── environment.yml                # `taukitflow` conda env (shape production/training/plotting)
 │
 ├── config/                        # Central, single-sourced analysis config
 │   ├── analysis.py                #   getters: get_luminosity, get_preselection_cuts,
@@ -121,7 +126,7 @@ TauKITFlow/
 │   ├── cmsenv.py                     #   run_in_cmsenv()/get_fitdir() -- shells out to
 │   │                                 #   utils/setup_cmssw.sh once, for datacards/*.py & tau_es/
 │   ├── conda_env.py                  #   run_in_conda() -- activates `taukitflow`, for run.py
-│   ├── lcg_env.py                    #   get_output_features() under the CVMFS LCG view (PRESEL)
+│   ├── lcg_env.py                    #   get_output_features() under the CVMFS LCG view
 │   ├── sample_paths.py               #   Run3 CROWN ntuple/friend-tree path construction
 │   ├── helper_collection.py          #   ObjBuildingDict/NestedDefaultDict/STXS helpers
 │   └── ntuple_processor_config_helper.py  # booking-graph glue for ntuple_processor
@@ -176,7 +181,7 @@ ROOT view sets `PYTHONHOME` to the LCG interpreter, and a subsequent `conda acti
 conda's Python first on `PATH` without clearing `PYTHONHOME` — the mismatch crashes Python at
 startup with `Fatal Python error: init_fs_encoding`).
 
-### 1. `taukitflow` conda env — shape production, training, condor submission
+### 1. `taukitflow` conda env — shape production, training, plotting, condor submission
 
 ```bash
 conda env create -f environment.yml   # creates the "taukitflow" env
@@ -185,24 +190,20 @@ conda activate taukitflow
 
 Includes ROOT + XRootD bindings, `numpy`/`scipy`/`pandas`/`uproot`/`awkward`/`mplhep`/
 `scikit-learn`/`tensorflow`/`keras`. This is what `run.py`'s XSEC/SHAPES/SHAPES-NOSYS/
-TRAIN-SHAPES/CONFIGS/PRESEL/FF-MEASURE/TRAIN-DATASET modes activate automatically via
+TRAIN-SHAPES/CONFIGS/FF-MEASURE/TRAIN-DATASET modes activate automatically via
 `common/conda_env.py` — you generally don't need to `conda activate` it yourself before
 running `run.py`, only for running the underlying scripts (`shapes/produce_shapes.py`, etc.)
 directly.
 
-### 2. `environment-plotting.yml` env — PLOT mode only
+`run.py PLOT` uses this same env — it does not auto-activate any conda env itself, so
+activate `taukitflow` yourself first if running `plotting/plot_shapes_control.py` directly.
+(There used to be a separate `environment-plotting.yml`/`taukitflow-plotting` env just to get
+`root` for `plot_shapes_control.py`'s histogram reads; `root` is now declared directly in
+`environment.yml` and the separate env/yml were removed as redundant — every other stage
+already had a working ROOT install available in `taukitflow`, e.g. `condor/submit_plotting.py`'s
+jobs already ran PLOT under plain `taukitflow`.)
 
-```bash
-conda env create -f environment-plotting.yml
-conda activate taukitflow-plotting
-```
-
-Same scientific-Python stack as `taukitflow` plus `root` (needed because
-`plotting/plot_shapes_control.py` reads histograms via `ROOT` directly), kept as a **separate**
-env from `taukitflow` on purpose (see `run.py`'s module docstring) — `run.py PLOT` does not
-auto-activate any conda env; activate `taukitflow-plotting` yourself first.
-
-### 3. CMSSW / `cmsenv` — Combine, datacards, GoF/Impacts, tauES fit
+### 2. CMSSW / `cmsenv` — Combine, datacards, GoF/Impacts, tauES fit
 
 ```bash
 source utils/setup_cmssw.sh          # override CMSSW_BASE_DIR/CMSSW_RELEASE/SCRAM_ARCH first
@@ -219,17 +220,18 @@ ported to Python (`subprocess.run` can't mutate its own parent shell's `PATH`/`P
 `common/cmsenv.py` is the one place Python code shells back out to it.
 
 **`utils/setup_root.sh`** is the third, similar bash shim (sources a CVMFS LCG ROOT view,
-`LCG_102` or `LCG_106` depending on hostname) — used only lazily, by `run.py`'s PRESEL mode
-via `common/lcg_env.py`, to read `config.analysis.get_output_features()` under an
+`LCG_102` or `LCG_106` depending on hostname) — used only lazily, via
+`common/lcg_env.py`, to read `config.analysis.get_output_features()` under an
 interpreter that has `pyyaml`. You should not normally need to source it yourself.
 
-### 4. `fake_factors` conda env — TauFakeFactors' own scripts
+### 3. `fake_factors` conda env — TauFakeFactors' own scripts
 
 `TauFakeFactors/preselection.py`/`ff_calculation.py`/`ff_corrections.py` (and
 `btag_efficiencies/calculate_efficiency.py`, which reuses TFF's `helper` package) import
 `ruamel.yaml`, which is **not** in `taukitflow`. A separate `fake_factors` conda env (see
-`TauFakeFactors/environment.yml`) has the right dependencies. `run.py`'s PRESEL/FF/FF-CORR/
-FF-MEASURE modes invoke these scripts via a plain `subprocess.run` with whatever Python is on
+`TauFakeFactors/environment.yml`) has the right dependencies. `run.py`'s PRESEL mode
+activates it automatically (it reuses TFF's `helper` modules); the FF/FF-CORR/FF-MEASURE
+modes invoke these scripts via a plain `subprocess.run` with whatever Python is on
 `PATH` — activate `fake_factors` yourself before running them (this is a pre-existing
 requirement, not something this framework's own code manages for you).
 
@@ -239,9 +241,16 @@ requirement, not something this framework's own code manages for you).
 git submodule update --init --recursive
 ```
 
-Initializes `TauFakeFactors/` and `ntuple_processor/`. `trainings/uncertainty-aware-training/`
+Initializes `TauFakeFactors/`, `ntuple_processor/`, and `datasets/`. `trainings/uncertainty-aware-training/`
 is also a submodule; only needed for `run.py TRAIN` (the actual NN training-loop, not the
 dataset-prep step).
+
+`datasets/` (`KIT-CMS/KingMaker_sample_database`) used to live nested inside
+`TauFakeFactors/datasets` — it's now a direct top-level submodule instead, so it's not tied to
+TauFakeFactors' own checkout. Every reader of it (`run.py`'s XSEC mode, `xsec/build_friend_tree.py`'s
+`--dataset-config` default, `common/helper_collection.py`'s STXS helper, and every
+`common_settings.yaml` under `TauFakeFactors/configs/*` and `btag_efficiencies/configs/*` via
+their `sample_database:` key) points at this top-level path now, not the old nested one.
 
 ---
 
@@ -270,7 +279,40 @@ production, writing `crossSectionPerEventWeight`/`negative_events_fraction`/
 `numberGeneratedEventsWeight` friend trees under `.../CROWNFriends/xsec/`. Required before any
 real MC shape production — these branches are not present on the bare CROWN ntuple.
 
-### 2. SHAPES / SHAPES-NOSYS — shape production
+### 2. PRESEL — preselection (the basis for shapes and fake factors)
+
+```bash
+NTUPLETAG=htt_260602_2024-25_v5 ERA=2024 CHANNELS=et,mt,tt python3 run.py PRESEL
+```
+
+Runs `shapes/preselect.py` (auto-activates `fake_factors`), applying the central
+`config/cuts.yaml` event selection and `config/weights.yaml` weights to the CROWN ntuples and
+writing ONE flat tree:
+
+```
+/ceph/$USER/TauKITFlow_shapes/<ntupletag>/preselection/<era>/<channel>/<key>.root
+```
+
+one file per dataset key (`DYjets_T`, `Wjets`, `data`, … for backgrounds — concatenated over
+samples and split by tau gen. mode; one per physical sample name for signals), with the event
+weight baked into a `weight` column (the same branch name TauFakeFactors uses).
+
+That single tree is read as-is by **both** downstream consumers — no second copy or mirror of
+it exists:
+
+* shape production — `run.py SHAPES --presel-dir <that dir>` (step 3);
+* the fake-factor measurement — `run.py FF/FF-CORR --ff-input-dir <that dir>` (step 7).
+
+This fully replaces TauFakeFactors' own `preselection.py` for this pipeline. That file is
+untouched on disk and still works for running TauFakeFactors standalone (see step 7), but
+nothing here uses it, and neither its generated `configs/smhtt_ul/<era>/preselection_<ch>.yaml`
+nor `GEN-TFF-CONFIGS` is involved. Output *naming* is deliberately identical to it, which is
+what lets TauFakeFactors read this tree unchanged.
+
+All four Run3 channels are covered, `em` included — it plays no part in the fake-factor steps
+but is preselected like the rest so shape production reads one consistent input everywhere.
+
+### 3. SHAPES / SHAPES-NOSYS — shape production
 
 ```bash
 NTUPLETAG=htt_260602_2024-25_v5 ERA=2024 CHANNELS=mt VS_JET_WP=Medium \
@@ -281,8 +323,24 @@ NTUPLETAG=htt_260602_2024-25_v5 ERA=2024 CHANNELS=mt \
 
 Runs `shapes/produce_shapes.py` (booking/execution via the `ntuple_processor` submodule),
 then `shapes/do_estimations.py` for fake-factor/QCD/embedding post-processing, writing
-`output/<era>-<channels>-shapes.root`. Pass `FF_FRIENDS_DIR=...` to also enable the
-fake-factor friend-tree path. **Note:** `--directory` (and the store path this mode builds
+
+```
+/ceph/$USER/TauKITFlow_shapes/<ntupletag>/output/<tag>/<ss-os|ff>/<era>/<channels>/shapes.root
+```
+
+Pass `--presel-dir` (step 2's output) to build on the preselection instead of reading raw CROWN.
+
+
+`<tag>` defaults to `<ntupletag>`; `<ss-os|ff>` follows whether `FF_FRIENDS_DIR`/
+`--ff-friends-dir` is set, which also selects `do_estimations.py`'s `--do-qcd` vs `--do-ff`.
+The `same_sign` histograms both estimations need are booked unconditionally, so an **ff run
+reuses an existing ss-os run** for the same tag/era/channels: it books only the FF-weighted
+variations (`--ff-only`) and `hadd`s them onto a copy of the ss-os file rather than repeating
+the expensive event loop. (The FF weight is read per event from the friend tree during the
+event loop, so it cannot be applied to already-filled histograms afterwards — hence the
+second, scoped pass.)
+
+**Note:** `--directory` (and the store path this mode builds
 for you) must be the bare `/store/user/.../CROWNRun` path, not a full `root://host/...` URL,
 when reading via xrootd — `run.py`/`condor/submit_shapes.py` already build it correctly;
 this only matters if you invoke `shapes/produce_shapes.py` directly.
@@ -304,17 +362,17 @@ processes for 2018 — `numberGeneratedEventsWeight`/`crossSectionPerEventWeight
 `negative_events_fraction` live in a friend tree there, not as bare branches, same convention
 as Run3.)
 
-### 3. PLOT — control plots
+### 4. PLOT — control plots
 
 ```bash
-conda activate taukitflow-plotting
+conda activate taukitflow
 ERA=2024 CHANNELS=mt VARIABLES=m_vis,pt_1,pt_2 python3 run.py PLOT
 ```
 
 Runs `plotting/plot_shapes_control.py` (mplhep/CMS-style) against the shapes ROOT file
 `SHAPES`/`SHAPES-NOSYS` produced, writing PNG/PDF control plots.
 
-### 4. TRAIN-SHAPES — shapes for DNN training input
+### 5. TRAIN-SHAPES — shapes for DNN training input
 
 ```bash
 NTUPLETAG=htt_260602_2024-25_v5 ERA=2024 CHANNELS=mt python3 run.py TRAIN-SHAPES
@@ -323,7 +381,7 @@ NTUPLETAG=htt_260602_2024-25_v5 ERA=2024 CHANNELS=mt python3 run.py TRAIN-SHAPES
 Same production step as SHAPES but nominal-only with training-specific binning; feeds
 `TRAIN-DATASET` below.
 
-### 5. CONFIGS — collect ntuple_processor configs without producing histograms
+### 6. CONFIGS — collect ntuple_processor configs without producing histograms
 
 ```bash
 NTUPLETAG=htt_260602_2024-25_v5 ERA=2024 CHANNELS=mt python3 run.py CONFIGS
@@ -331,24 +389,28 @@ NTUPLETAG=htt_260602_2024-25_v5 ERA=2024 CHANNELS=mt python3 run.py CONFIGS
 
 Useful for debugging the sample/selection/cut wiring without a real RDataFrame run.
 
-### 6. Fake-factor measurement: GEN-TFF-CONFIGS → PRESEL → FF → FF-CORR (or FF-MEASURE)
+### 7. Fake-factor measurement: FF → FF-CORR
+
+The fake factors are measured **from the preselection produced in step 2** (`run.py PRESEL`) — `--ff-input-dir` points TauFakeFactors' `file_path`/`output_path` at it, via a
+generated tmp config, so its real YAMLs on disk are never touched:
 
 ```bash
-python3 run_fake_factor_measurement.py --era 2024 --channels et,mt,tt   # chains all 4 steps
-# equivalently, step by step (each also exists as its own run.py mode for granular reruns):
-python3 run.py GEN-TFF-CONFIGS --era 2024 --channels et,mt,tt   # regenerate TFF YAMLs
-conda activate fake_factors
-python3 run.py PRESEL   --era 2024 --channels et,mt,tt          # TauFakeFactors/preselection.py
-python3 run.py FF       --era 2024 --channels et,mt,tt          # TauFakeFactors/ff_calculation.py
-python3 run.py FF-CORR  --era 2024 --channels et,mt,tt          # TauFakeFactors/ff_corrections.py
+PRESEL_DIR=/ceph/$USER/TauKITFlow_shapes/<ntupletag>/preselection
+python3 run.py FF       --era 2024 --channels et,mt,tt --ff-input-dir $PRESEL_DIR
+python3 run.py FF-CORR  --era 2024 --channels et,mt,tt --ff-input-dir $PRESEL_DIR
 ```
 
-Also `run.py FF-MEASURE --era 2024 --channels et,mt,tt` runs the same chain in one call.
-Always run `GEN-TFF-CONFIGS` first after any `config/cuts.yaml`/`config/weights.yaml` edit —
-it's the build step that keeps TauFakeFactors' own generated YAMLs in sync with central
-config; nothing runs it automatically on every edit.
+Applying the measured fake factors to the ntuples as friend trees (what
+`SHAPES --ff-friends-dir` then reads) is a separate CROWN-side step, outside this repo.
 
-### 7. Datacards / Combine (needs `cmsenv`, see Environment setup above)
+**Standalone TauFakeFactors** (not this pipeline): `run_fake_factor_measurement.py` /
+`run.py FF-MEASURE` chains `GEN-TFF-CONFIGS → TauFakeFactors' own preselection.py → FF →
+FF-CORR`. Note its preselection step is TauFakeFactors' own, *not* `run.py PRESEL`. Run
+`GEN-TFF-CONFIGS` first after any `config/cuts.yaml`/`config/weights.yaml` edit — it's the
+build step that regenerates TauFakeFactors' own `preselection_{ch}.yaml` from central
+config, and it is only relevant for this standalone path.
+
+### 8. Datacards / Combine (needs `cmsenv`, see Environment setup above)
 
 ```bash
 source utils/setup_cmssw.sh
@@ -371,7 +433,7 @@ category/process/systematics/CardWriter logic) plus real external
 per script — some take `ntuple_tag` last, `produce_gof_datacard.py` also takes
 `--use-asimov`/`--embedding`/`--jetfakes` flags).
 
-### 8. TauES measurement (needs `cmsenv`; validated mechanism, see gap note below)
+### 9. TauES measurement (needs `cmsenv`; validated mechanism, see gap note below)
 
 ```bash
 source utils/setup_cmssw.sh
@@ -387,7 +449,7 @@ RooMorphing parameter) → `tau_es/run_taues_fit.py workspace` → `tau_es/run_t
 `shapes/do_estimations.py --special TauES` →
 `shapes/convert_to_synced_shapes.py --special TauES`.
 
-### 9. B-tag efficiency measurement
+### 10. B-tag efficiency measurement
 
 ```bash
 conda activate fake_factors
@@ -399,7 +461,7 @@ python3 btag_efficiencies/run_btag_efficiency.py --era 2024 --channel mt --step 
 `btag_efficiencies/calculate_efficiency.py`. Pass `--regenerate-configs` to rebuild the
 preselection YAML from central config first (needed after a `config/cuts.yaml` edit).
 
-### 10. NN training
+### 11. NN training
 
 ```bash
 NTUPLETAG=htt_260602_2024-25_v5 ERA=2024 CHANNELS=mt python3 run.py TRAIN-SHAPES

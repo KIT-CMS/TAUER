@@ -4,23 +4,34 @@ Triggers, lepton isolation, tau ID WPs, and veto cuts for
 et, mt, tt, em channels in Run3 eras (2022preEE … 2025), plus
 2018 (mt/mm only — see config.analysis.RUN2_PRODUCTION_ERAS, Phase 2a).
 
-Tau ID (vsEle/vsMu) and trigger cuts for mt/et/tt are read from
-TauFakeFactors preselection YAMLs via tff_adapter, so they stay
-in sync with the FF measurement selection automatically. The TFF
-submodule already ships a configs/smhtt_ul/2018 preselection set
-whose event_selection block for mt matches the real 2018 CROWN
-branch names (verified against the Phase 2a validation ntuples),
-with one exception worked around in `_apply_wp_params` below: that
-YAML's `had_tau_id_vs_mu` cut omits the vsEle-WP slot from the vsMu
-discriminator branch name (a bug in the YAML itself, not fixed
-there since that means touching the TauFakeFactors submodule).
+Tau ID (vsEle/vsMu) and trigger cuts for mt/et/tt, Run3 eras (2022preEE…2026):
+read directly from config/cuts.yaml via get_preselection_cuts() — this is the
+same call generate_tff_configs.py uses to populate the TFF submodule's
+preselection_{ch}.yaml event_selection block, so the two are guaranteed
+identical without needing the TauFakeFactors submodule/config present at all
+for shape production (Phase 6f: TFF configs were a generated mirror of
+cuts.yaml for these eras, so shapes now reads the source directly).
+
+2018 is the one exception: it's outside RUN3_ERAS (generate_tff_configs.py
+never regenerates it), so its TFF preselection_mt.yaml is genuinely
+hand-maintained upstream content with real Run2-UL branch-naming differences
+not mirrored in cuts.yaml — for 2018 we still read the real TFF YAML via
+tff_adapter. That YAML's `had_tau_id_vs_mu` cut also omits the vsEle-WP slot
+from the vsMu discriminator branch name (a bug in the YAML itself, not fixed
+there since that means touching the TauFakeFactors submodule); worked around
+in `_apply_wp_params` below.
 """
 import logging
 import re
 
 from ntuple_processor.utils import Selection, WarnDict
 from config.logging_setup_configs import setup_logging
-from config.analysis import SUPPORTED_ERAS, get_channel_selection_cuts, get_preselection_cuts
+from config.analysis import (
+    RUN2_PRODUCTION_ERAS,
+    SUPPORTED_ERAS,
+    get_channel_selection_cuts,
+    get_preselection_cuts,
+)
 from config.shapes.tff_adapter import get_tff_event_selection
 
 logger = setup_logging(logger=logging.getLogger(__name__))
@@ -113,9 +124,9 @@ def channel_selection(
     # config/cuts.yaml's preselection.*.jet_veto entries were already fixed to
     # the correct lowercase branch name (see STATUS.md Blocker #1); this used
     # to carry its own separate hardcoded copy of the same fix, now removed.
-    # "em" has no jet_veto entry in cuts.yaml's preselection: block (only
-    # et/mt/tt are defined there), so the historical default is kept as a
-    # fallback for that channel only.
+    # Every Run3 channel (et/mt/tt/em) now defines jet_veto in cuts.yaml's
+    # preselection: block; the default is kept only as a guard for eras/
+    # channels configured without one (e.g. Run2 2018).
     cuts["jet_vetomap"] = get_preselection_cuts(era, channel).get(
         "jet_veto", "(jet_vetomap < 0.5)"
     )
@@ -148,11 +159,15 @@ def channel_selection(
         # and the additional per-shift embedded datasets differ (see
         # shapes/produce_shapes.py's --special-analysis TauES wiring).
         if channel in ("mt", "et", "tt"):
-            # Tau ID (vsEle/vsMu) and trigger are read from TFF preselection YAML,
-            # keeping them in sync with the FF measurement selection per era.
+            # Tau ID (vsEle/vsMu) and trigger cuts. Run3 eras read cuts.yaml
+            # directly (see module docstring); 2018 reads the real TFF YAML
+            # since it isn't generated from cuts.yaml.
             # When reading from preselected files these cuts are already applied.
             if not preselected:
-                tff_sel = get_tff_event_selection(era, channel)
+                if era in RUN2_PRODUCTION_ERAS:
+                    tff_sel = get_tff_event_selection(era, channel)
+                else:
+                    tff_sel = get_preselection_cuts(era, channel)
                 cuts["againstElectronDiscriminator"] = (
                     f"({_apply_wp_params(tff_sel['had_tau_id_vs_ele'], vs_ele_wp)})"
                 )
@@ -180,18 +195,18 @@ def channel_selection(
             return Selection(name=channel, cuts=cuts)
 
         if "em" in channel:
-            cuts["ele_iso"] = "(iso_1 < 0.15)"
-            cuts["muon_iso"] = "(iso_2 < 0.15)"
-            cuts["electron_eta"] = "(abs(eta_1) < 2.5)"
-            cuts["trg_selection"] = """(
-                (pt_2 > 26) &&
-                (
-                    (pt_1 > 25) &&
-                    (
-                        (trg_single_mu24 > 0.5)
-                    )
-                )
-            )"""
+            # Same split as mt/et/tt above: the preselection-level cuts
+            # (electron acceptance + trigger leg) come from cuts.yaml's
+            # preselection: block and are skipped when the input has already
+            # been preselected; isolation is shape-production-only and always
+            # applied, from cuts.yaml's channel_selection: block.
+            if not preselected:
+                _presel = get_preselection_cuts(era, channel)
+                cuts["electron_eta"] = f"({_presel['electron_eta']})"
+                cuts["trg_selection"] = f"({_presel['lep_pt']})"
+            _cs_cuts = get_channel_selection_cuts(channel, era)
+            cuts["ele_iso"] = _cs_cuts["ele_iso"]
+            cuts["muon_iso"] = _cs_cuts["muon_iso"]
             return Selection(name="em", cuts=cuts)
 
         raise ValueError(f"Channel '{channel}' is not supported (Run3: et, mt, tt, em).")

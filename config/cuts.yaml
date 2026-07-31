@@ -24,7 +24,17 @@ preselection:
         had_tau_pt: (pt_1 > 35) && (pt_2 > 35) && (trg_double_tau30_mediumiso_pnet> 0.5)
       '2025':
         had_tau_pt: (pt_1 > 35) && (pt_2 > 35) && (trg_double_tau30_mediumiso_pnet> 0.5)
+      '2026':
+        had_tau_pt: (pt_1 > 35) && (pt_2 > 35) && (trg_double_tau30_mediumiso_pnet> 0.5)
     had_tau_pt: (pt_1 > 40) && (pt_2 > 40) && (trg_double_tau35_mediumiso_hps > 0.5)
+  em:
+    # No hadronic tau in this channel, so no had_tau_* / tau-ID entries -- the
+    # preselection-level cuts here are the electron acceptance and the trigger
+    # leg (`lep_pt`, same key/role as et/mt's). Isolation lives in
+    # channel_selection: below, matching et's ele_iso / mt's muon_iso.
+    electron_eta: (abs(eta_1) < 2.5)
+    lep_pt: (pt_2 > 26) && ((pt_1 > 25) && (trg_single_mu24 > 0.5))
+    jet_veto: (jet_vetomap < 0.5)
 
 channel_selection:
   # ── Cuts applied during shape production (NOT read by TFF) ───────────────────
@@ -46,3 +56,6 @@ channel_selection:
     mt_cut: "(mt_1 < 70)"
   tt:
     tau_iso: "(id_tau_vsJet_{vs_jet_wp}_1 > 0.5) && (id_tau_vsJet_{vs_jet_wp}_2 > 0.5)"
+  em:
+    ele_iso: "(iso_1 < 0.15)"
+    muon_iso: "(iso_2 < 0.15)"

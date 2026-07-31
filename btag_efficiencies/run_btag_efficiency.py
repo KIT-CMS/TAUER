@@ -58,7 +58,7 @@ def _run(cmd: list[str], *, need_tff_on_path: bool = False) -> None:
         # assuming TauFakeFactors/ itself is on sys.path (same as run.sh's
         # `PRESEL`/`FF`/`FF-CORR` modes: `PYTHONPATH=...:$PWD/TauFakeFactors`).
         env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(_TFF_ROOT), env.get("PYTHONPATH", "")]))
-    subprocess.run(cmd, check=True, cwd=_REPO_ROOT, env=env)
+    subprocess.run(["nice", "-n", "19", *cmd], check=True, cwd=_REPO_ROOT, env=env)
 
 
 def main() -> int:

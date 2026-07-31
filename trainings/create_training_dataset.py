@@ -363,6 +363,10 @@ def combine_folds(
 
 
 if __name__ == "__main__":
+    # Self-nice regardless of invocation method (run.py already wraps this in
+    # `nice -n 19`, but this also covers direct invocation). Safe to call even
+    # when already niced (os.nice() clamps at the max of 19).
+    os.nice(19)
 
     logger = setup_logging(logger=logging.getLogger(__name__))
     args = parse_args()

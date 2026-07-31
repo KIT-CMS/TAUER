@@ -321,7 +321,7 @@ def main():
         cmd = [combine_cards_exe] + [f"{label}={path}" for label, path in sorted(card_map.items())]
         logger.info(f"Running: {' '.join(cmd)}")
         with open(output_card, "w") as fout:
-            result = subprocess.run(cmd, stdout=fout, stderr=subprocess.PIPE, text=True)
+            result = subprocess.run(["nice", "-n", "19", *cmd], stdout=fout, stderr=subprocess.PIPE, text=True)
         if result.returncode != 0:
             logger.error(f"combineCards.py failed:\n{result.stderr}")
         else:

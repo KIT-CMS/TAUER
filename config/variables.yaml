@@ -53,9 +53,9 @@ output_features:
   - mt_tot
   - pt_tt
   - pt_ttjj
-  - met
-  - m_fastmtt
-  - pt_fastmtt
+  - puppimet
+  # - m_fastmtt
+  # - pt_fastmtt
   - nbtag
   - njets
 flags:
@@ -68,3 +68,4 @@ flags:
   - is_2023postBPix
   - is_2024
   - is_2025
+  - is_2026

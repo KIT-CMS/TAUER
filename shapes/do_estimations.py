@@ -153,7 +153,7 @@ def parse_histograms_for_qqh(inputfile):
     qqh_procs = {}
     for key in inputfile.GetListOfKeys():
         dataset, selection, variation, variable = key.GetName().split("#")
-        if dataset in ["qqH", "ZH", "WH"] and not variation.startswith("THU"):
+        if dataset in ["qqH", "VH"] and not variation.startswith("THU"):
             sel_split = selection.split("-", maxsplit=1)
             # Set category to default since not present in control plots.
             category = ""
@@ -180,6 +180,13 @@ def parse_histograms_for_qqh(inputfile):
                     # Set only process if no categorization applied.
                     process = sel_split[1]
             if category == "":
+                continue
+            # dataset "VH" carries both the leptonic-decay "VH125" shape (the
+            # "vh" process) and the hadronic-decay-as-qqH "qqH125" shape (the
+            # "vh_as_qqh" process, see shapes/produce_shapes.py) -- only the
+            # latter belongs in the qqH merge, otherwise qqH_merge_estimation
+            # would look for a nonexistent qqH125 histogram in VH125 categories.
+            if dataset == "VH" and process != "qqH125":
                 continue
             add_input_to_inputdict(
                 qqh_procs, channel, category, variable, variation, process
@@ -298,7 +305,14 @@ def main(args):
                         estimated_hist = qqH_merge_estimation(
                             input_file, channel, category, var, variation=variation
                         )
-                        estimated_hist.Write()
+                        # Overwrite in place: this replaces the incomplete,
+                        # VBF-only "qqH125" histogram already in the file with
+                        # the merged (VBF + hadronic-VH) one, same key name --
+                        # a plain Write() would instead add a second ROOT
+                        # "cycle" under the same name, leaving both versions
+                        # in the file and breaking anything that iterates
+                        # GetListOfKeys() expecting one entry per name.
+                        estimated_hist.Write(estimated_hist.GetName(), ROOT.TObject.kOverwrite)
     if args.do_emb_tt:
         emb_categories = parse_histograms_for_emb_estimation(input_file)
         logger.info("Producing embedding ttbar variations.")

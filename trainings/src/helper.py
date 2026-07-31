@@ -68,6 +68,7 @@ _TRAINING_VARIABLES_FALLBACK = [
     "is_vbf_htautau",
     "is_wjets",
     # --- era flags ---
+    "is_2026",
     "is_2025",
     "is_2024",
     "is_2023postBPix",
@@ -103,7 +104,7 @@ class Keys:
     Collection of keys used in the configuration files and for columns in training dataframes.
     To be adjusted according to the actual analysis if needed.
     """
-    ERAS = {"2016preVFP", "2016postVFP", "2017", "2018", "2022preEE", "2022postEE", "2023preBPix", "2023postBPix", "2024", "2025"}
+    ERAS = {"2016preVFP", "2016postVFP", "2017", "2018", "2022preEE", "2022postEE", "2023preBPix", "2023postBPix", "2024", "2025", "2026"}
     CHANNELS = {"mt", "et", "tt"}
 
     COMMON = "common"

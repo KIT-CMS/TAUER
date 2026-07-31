@@ -66,6 +66,7 @@ RUN3_ERAS = [
     "2023postBPix",
     "2024",
     "2025",
+    "2026",
 ]
 CHANNELS = ["et", "mt", "tt"]  # "em" is intentionally excluded -- see module docstring
 
