@@ -49,7 +49,7 @@ _CFG_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(_REPO_ROOT))
 
 from config.logging_setup_configs import setup_logging
-from config.analysis import get_preselection_cuts, get_mc_weights
+from config.analysis import get_preselection_cuts, get_mc_weights, get_region_mask_names
 
 logger = setup_logging(logger=logging.getLogger(__name__))
 
@@ -121,7 +121,27 @@ def regenerate_config(
     # merge logic that config.analysis already implements).
     event_selection = get_preselection_cuts(era, channel)
     mc_weights = get_mc_weights(era, channel)
+    # output_features = analysis variables + the CROWN selection-mask branches
+    # for this scope. The masks are NOT in variables.yaml's `output_features:`
+    # key on purpose (that list also defines training/control-plot variables —
+    # see the comment in the YAML); they are appended here so they SURVIVE the
+    # skim, which is what lets TauFakeFactors' ff_calculation.py/
+    # ff_corrections.py filter their regions on `region_mask` instead of
+    # re-composing the cut strings.
+    #
+    # Note for old (maskless) ntuples: this pipeline's own skim
+    # (shapes/preselect.py) filters the list through _existing_columns() and
+    # merely warns. TauFakeFactors' standalone preselection.py (:196) still
+    # *raises* on a missing output_feature — making it tolerate absent mask
+    # branches is step 11 of the feature/selection-masks plan and lives in the
+    # TauFakeFactors submodule, not here. Until that lands, running TFF's own
+    # preselection.py (NOT used by run.py PRESEL, which uses
+    # shapes/preselect.py) against maskless ntuples needs --force-legacy-cuts-
+    # style handling on that side.
     output_features = list(variables.get("output_features", []))
+    output_features += [
+        m for m in get_region_mask_names(era, channel) if m not in output_features
+    ]
 
     new_cfg: dict = {
         "channel": channel,

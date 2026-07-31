@@ -58,6 +58,91 @@ output_features:
   # - pt_fastmtt
   - nbtag
   - njets
+
+selection_masks:
+  # CROWN-precomputed boolean selection masks (feature/selection-masks).
+  #
+  # These are branch names, NOT training/plotting variables -- that is exactly
+  # why they live in their own top-level key instead of being appended to
+  # `output_features` above. `output_features` is consumed by
+  # config.analysis.get_output_features(), which also feeds
+  # get_training_variables() (trainings/src/helper.py, trainings/
+  # create_training_dataset.py) and plotting/plot_shapes_control.py's variable
+  # set -- putting mask branches there would silently turn every mask into a
+  # DNN input feature and a control-plot variable. Instead, the two consumers
+  # that genuinely need the branches *kept on disk* -- shapes/preselect.py's
+  # Snapshot column list and config/generate_tff_configs.py's generated
+  # `output_features:` block in TauFakeFactors' preselection_{ch}.yaml -- ask
+  # for them explicitly via config.analysis.get_region_mask_names(era, channel)
+  # and concatenate. Masks MUST survive the skim: the downstream fake-factor
+  # calculation (TauFakeFactors) filters its regions on them.
+  #
+  # Availability is per scope, matching what CROWN's selection.py books:
+  # every channel gets the `common` three; et/mt/tt additionally get their
+  # channel's FF-region masks; em gets only the common three (no hadronic tau,
+  # so no FF regions are defined for it).
+  #
+  # Missing branches are never fatal: shapes/preselect.py filters the list
+  # through _existing_columns(), so old (maskless) ntuples just log a warning.
+  common:
+    - presel_mask
+    - sel_os
+    - sel_ss
+  et: &lt_masks
+    # target_processes.QCD  (SRlike/ARlike) of fake_factors_{ch}.yaml
+    - ff_qcd_SRlike
+    - ff_qcd_ARlike
+    # target_processes.Wjets (SRlike/ARlike), plus the in-code same-sign
+    # QCD-estimation variants FF_calculation/FF_Wjets.py builds by flipping
+    # tau_pair_sign to (q_1*q_2) > 0
+    - ff_wjets_SRlike
+    - ff_wjets_ARlike
+    - ff_wjets_SRlike_ss
+    - ff_wjets_ARlike_ss
+    # target_processes.ttbar: SR/AR (MC-derived FF) and SRlike/ARlike
+    # (inverted lepton-veto control regions) + FF_ttbar.py's SS variants
+    - ff_ttbar_SR
+    - ff_ttbar_AR
+    - ff_ttbar_SRlike
+    - ff_ttbar_ARlike
+    - ff_ttbar_SRlike_ss
+    - ff_ttbar_ARlike_ss
+    # process_fractions SR/AR
+    - ff_fraction_SR
+    - ff_fraction_AR
+    # corrections_{ch}.yaml DR_SR / AR_SR overrides merged onto the base
+    # region (helper.functions.modify_config semantics)
+    - ff_qcd_DR_SR_SRlike
+    - ff_qcd_DR_SR_ARlike
+    - ff_qcd_AR_SR_SRlike
+    - ff_qcd_AR_SR_ARlike
+    - ff_wjets_DR_SR_SRlike
+    - ff_wjets_DR_SR_ARlike
+    - ff_wjets_AR_SR_SRlike
+    - ff_wjets_AR_SR_ARlike
+  mt: *lt_masks
+  tt:
+    # tt has no Wjets/ttbar FF regions; instead QCD is measured twice, for the
+    # leading and the subleading tau leg (`_sub` = QCD_subleading /
+    # process_fractions_subleading).
+    - ff_qcd_SRlike
+    - ff_qcd_ARlike
+    - ff_qcd_sub_SRlike
+    - ff_qcd_sub_ARlike
+    - ff_fraction_SR
+    - ff_fraction_AR
+    - ff_fraction_sub_SR
+    - ff_fraction_sub_AR
+    - ff_qcd_DR_SR_SRlike
+    - ff_qcd_DR_SR_ARlike
+    - ff_qcd_AR_SR_SRlike
+    - ff_qcd_AR_SR_ARlike
+    - ff_qcd_sub_DR_SR_SRlike
+    - ff_qcd_sub_DR_SR_ARlike
+    - ff_qcd_sub_AR_SR_SRlike
+    - ff_qcd_sub_AR_SR_ARlike
+  em: []
+
 flags:
   # Combined with output_features to form the full training variable list.
   # process flags not needed here since they will be made in the config setup of trianing from shapes

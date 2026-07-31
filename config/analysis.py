@@ -150,6 +150,107 @@ def get_training_variables() -> list[str]:
     return get_output_features() + get_flags()
 
 
+# ── CROWN selection masks ─────────────────────────────────────────────────────
+
+def get_region_mask_names(era: str, channel: str) -> list[str]:
+    """
+    Names of the CROWN-precomputed boolean selection-mask branches available
+    for the given era/channel, read from config/variables.yaml's
+    `selection_masks:` block.
+
+    Returns `common` (presel_mask, sel_os, sel_ss -- every scope) followed by
+    the channel's fake-factor region masks (et/mt: QCD/Wjets/ttbar/fractions
+    + DR_SR/AR_SR correction regions; tt: leading + subleading QCD; em: none).
+
+    Deliberately NOT part of get_output_features(): those are analysis
+    variables (they feed get_training_variables() and the control-plot
+    variable set), these are pure bookkeeping branches. Callers that need the
+    branches *kept on disk* -- shapes/preselect.py's Snapshot column list and
+    config/generate_tff_configs.py's generated TFF `output_features:` block --
+    concatenate the two lists explicitly.
+
+    `era` is accepted (and validated) because the mask *content* is
+    era-dependent (see the plan's era groups: tt trigger/pt, mt/et QCD lep_iso,
+    Wjets mt_1, ttbar nbtag all change between 2022-23 and 2024+) even though
+    the mask *names* are era-independent by design -- so downstream code never
+    has to special-case an era, and this signature does not have to change if a
+    future era ever gains or loses a region.
+    """
+    if era not in SUPPORTED_ERAS:
+        raise ValueError(f"Era '{era}' not in supported eras: {SUPPORTED_ERAS}")
+    cfg = _load_variables().get("selection_masks", {})
+    names = list(cfg.get("common", []))
+    names += list(cfg.get(channel, []) or [])
+    # Preserve order, drop accidental duplicates (a channel block repeating a
+    # common name would otherwise produce a duplicated Snapshot column).
+    seen: set[str] = set()
+    return [n for n in names if not (n in seen or seen.add(n))]
+
+
+# The one branch whose presence decides "these ntuples were produced with
+# CROWN's selection.py". Every scope gets it (em included), so a single name
+# is enough for the per-file detection below.
+PRESELECTION_MASK_BRANCH = "presel_mask"
+
+
+def masks_available(file_or_dir: str | Path, tree: str = "ntuple") -> bool:
+    """
+    True if the given ROOT input carries the `presel_mask` branch, i.e. was
+    produced by a CROWN version that books the selection masks.
+
+    `file_or_dir` may be a single .root file or a directory -- in the latter
+    case the first .root file found (recursively, sorted for reproducibility)
+    is inspected. Returns False, never raises, when nothing can be opened or
+    read: this is a *capability probe* driving an automatic fallback to the
+    legacy cut strings, so an unreachable/odd input must degrade to "no masks"
+    rather than kill the job.
+
+    Uses uproot (already a dependency here -- common/helper_collection.py,
+    datasets/samplemanager/calculate_genweights.py) rather than PyROOT, so
+    that it stays importable/cheap from the plain `taukitflow` conda env and
+    from run.py's driver process, which never imports ROOT itself.
+    """
+    path = str(file_or_dir)
+    if not path:
+        return False
+
+    candidate = path
+    local = Path(path)
+    # Only treat it as a directory to search when it's a local, non-remote path;
+    # xrootd/remote URLs are always passed straight through to uproot.
+    if "://" not in path and local.is_dir():
+        found = sorted(local.rglob("*.root"))
+        if not found:
+            logger.warning(f"masks_available: no .root file under {path} — assuming no masks")
+            return False
+        candidate = str(found[0])
+
+    try:
+        import uproot
+    except ImportError:  # pragma: no cover - uproot is a declared dependency
+        logger.warning("masks_available: uproot not importable — assuming no masks")
+        return False
+
+    try:
+        with uproot.open(candidate) as fh:
+            obj = fh.get(tree, None)
+            if obj is None:
+                logger.warning(
+                    f"masks_available: no '{tree}' tree in {candidate} — assuming no masks"
+                )
+                return False
+            have = PRESELECTION_MASK_BRANCH in obj.keys()
+    except Exception as exc:  # noqa: BLE001 -- probe must never be fatal
+        logger.warning(f"masks_available: could not read {candidate} ({exc}) — assuming no masks")
+        return False
+
+    logger.info(
+        f"masks_available: {candidate} "
+        f"{'HAS' if have else 'does NOT have'} '{PRESELECTION_MASK_BRANCH}'"
+    )
+    return have
+
+
 # ── Signal sample access ──────────────────────────────────────────────────────
 
 @lru_cache(maxsize=None)

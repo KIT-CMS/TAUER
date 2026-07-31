@@ -63,6 +63,7 @@ import ROOT
 ROOT.gROOT.SetBatch(True)
 
 from config.analysis import (
+    PRESELECTION_MASK_BRANCH,
     SIGNAL_SAMPLES as signal_files,
     get_background_processes,
     get_luminosity,
@@ -70,6 +71,7 @@ from config.analysis import (
     get_mc_weights,
     get_output_features,
     get_preselection_cuts,
+    get_region_mask_names,
 )
 from config.logging_setup_configs import setup_logging
 
@@ -280,6 +282,45 @@ def _existing_columns(rdf, requested: list[str], label: str) -> list[str]:
     return [c for c in requested if c in have]
 
 
+def _apply_preselection(rdf, event_selection: dict, label: str, force_legacy: bool = False):
+    """Apply the preselection to `rdf`, preferring CROWN's `presel_mask` branch.
+
+    Two equivalent paths, chosen per input file:
+
+    * **mask path** — the ntuples carry CROWN's precomputed ``presel_mask``
+      (booked by CROWN's ``selection.py``, feature/selection-masks): ONE
+      ``Filter("presel_mask > 0.5")`` replaces the whole per-cut loop. The mask
+      is the same per-channel ``preselection:`` block of config/cuts.yaml,
+      evaluated once at ntuple-production time — so the selection is defined in
+      exactly one place instead of being re-composed as C++ strings here.
+    * **legacy path** — old (maskless) ntuples, or ``--force-legacy-cuts``:
+      the historical loop, one named Filter per cut in `event_selection`.
+
+    Detection reuses the same "does the RDataFrame have this column" mechanism
+    as _existing_columns() (branch-existence, per file), so a mixed set of old
+    and new productions just works, file by file. Both paths log which one was
+    taken — that log line is the A/B-validation breadcrumb.
+    """
+    if force_legacy:
+        logger.info(f"{label}: preselection via legacy cut strings (--force-legacy-cuts)")
+    elif PRESELECTION_MASK_BRANCH in {str(c) for c in rdf.GetColumnNames()}:
+        logger.info(
+            f"{label}: preselection via CROWN mask branch "
+            f"'{PRESELECTION_MASK_BRANCH}' (1 filter replaces "
+            f"{len(event_selection)} cut strings)"
+        )
+        return rdf.Filter(f"{PRESELECTION_MASK_BRANCH} > 0.5", "presel:mask")
+    else:
+        logger.info(
+            f"{label}: no '{PRESELECTION_MASK_BRANCH}' branch in these ntuples — "
+            f"falling back to the legacy cut strings ({len(event_selection)} filters)"
+        )
+
+    for cut_name, cut_expr in event_selection.items():
+        rdf = rdf.Filter(f"({cut_expr})", f"presel:{cut_name}")
+    return rdf
+
+
 def _build_weight_expr(mc_weights: dict, process: str, era: str) -> str:
     """
     Build a C++ event-weight expression for a signal or MC background process.
@@ -329,6 +370,7 @@ def process_background_process(
     samples: list,
     tau_gen_modes: list,
     nthreads: int,
+    force_legacy_cuts: bool = False,
 ) -> None:
     """
     Preselect + weight one background process (e.g. "DYjets", "data"),
@@ -358,7 +400,16 @@ def process_background_process(
     # config/variables.yaml's output_features is the branch whitelist for
     # this tree; it already contains `weight` (see _define_weight), which is
     # the single weight column both consumers read.
+    # Plus the CROWN selection-mask branches for this scope: they must SURVIVE
+    # the skim so the downstream fake-factor calculation can filter its regions
+    # on them (they are kept out of `output_features` itself because that list
+    # doubles as the training/control-plot variable set -- see the comment in
+    # config/variables.yaml). Absent on old ntuples -> _existing_columns()
+    # drops them with a warning, exactly as for any other missing branch.
     output_features = get_output_features()
+    output_features += [
+        m for m in get_region_mask_names(era, channel) if m not in output_features
+    ]
 
     per_mode_files: dict = {mode: [] for mode in tau_gen_modes}
 
@@ -387,8 +438,9 @@ def process_background_process(
         _enable_mt(nthreads)
         rdf = ROOT.RDataFrame(chain)
 
-        for cut_name, cut_expr in event_selection.items():
-            rdf = rdf.Filter(f"({cut_expr})", f"presel:{cut_name}")
+        rdf = _apply_preselection(
+            rdf, event_selection, f"{tff_process}/{sample}", force_legacy=force_legacy_cuts
+        )
 
         if is_data:
             rdf = _define_weight(rdf, "1.0")
@@ -449,7 +501,8 @@ def process_background_process(
 
 
 def run_central_backgrounds(era: str, channel: str, directory: str, xsec_friends: str,
-                             flat_output_dir: str, nthreads: int) -> None:
+                             flat_output_dir: str, nthreads: int,
+                             force_legacy_cuts: bool = False) -> None:
     """Preselect every background process for one era/channel centrally (see
     process_background_process()) into the TFF-native flat layout."""
     os.makedirs(flat_output_dir, exist_ok=True)
@@ -475,6 +528,7 @@ def run_central_backgrounds(era: str, channel: str, directory: str, xsec_friends
             samples=samples,
             tau_gen_modes=tau_gen_modes,
             nthreads=nthreads,
+            force_legacy_cuts=force_legacy_cuts,
         )
 
 
@@ -494,6 +548,7 @@ def process_signal_sample(
     mc_weights: dict,
     process: str,
     nthreads: int,
+    force_legacy_cuts: bool = False,
 ) -> None:
     """Apply TFF event selection to a signal sample and save ALL columns."""
 
@@ -519,9 +574,10 @@ def process_signal_sample(
     _enable_mt(nthreads)
     rdf = ROOT.RDataFrame(chain)
 
-    # Apply TFF event selection
-    for cut_name, cut_expr in event_selection.items():
-        rdf = rdf.Filter(f"({cut_expr})", f"presel:{cut_name}")
+    # Apply the preselection (CROWN presel_mask when present, else legacy cuts)
+    rdf = _apply_preselection(
+        rdf, event_selection, f"signal/{sample}", force_legacy=force_legacy_cuts
+    )
 
     # Compute the event weight using TFF mc_weights (adapted for CROWN xsec columns)
     w_expr = _build_weight_expr(mc_weights, process, era)
@@ -590,6 +646,11 @@ def parse_args():
                         help="Skip signal processing (backgrounds/data only).")
     parser.add_argument("--skip-backgrounds", action="store_true",
                         help="Skip background/data processing (signals only).")
+    parser.add_argument("--force-legacy-cuts", action="store_true",
+                        help="Never use CROWN's precomputed `presel_mask` branch; always apply "
+                             "the per-cut preselection loop from config/cuts.yaml, even when the "
+                             "mask is present. Escape hatch for A/B validation of the two paths "
+                             "(they must agree event-by-event) and for debugging a suspect mask.")
     return parser.parse_args()
 
 
@@ -606,6 +667,7 @@ def main():
             xsec_friends=args.xsec_friends or "",
             flat_output_dir=os.path.join(args.output_dir, args.era, args.channel),
             nthreads=args.nthreads,
+            force_legacy_cuts=args.force_legacy_cuts,
         )
 
     # ── Signals: process from CROWN ntuples ────────────────────────────────────
@@ -638,6 +700,7 @@ def main():
                 mc_weights=mc_weights,
                 process=sig_key,
                 nthreads=args.nthreads,
+                force_legacy_cuts=args.force_legacy_cuts,
             )
 
 
