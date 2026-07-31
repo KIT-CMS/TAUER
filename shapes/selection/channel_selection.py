@@ -192,20 +192,6 @@ def channel_selection(
         cuts["jet_vetomap"] = get_preselection_cuts(era, channel).get(
             "jet_veto", "(jet_vetomap < 0.5)"
         )
-    # Phase 5.1 (2026-07-15) root-cause + fix: these two global cuts exist,
-    # active (uncommented), in smhtt_ul's live reference channel_selection()
-    # (config/shapes/channel_selection.py, applied unconditionally for every
-    # channel before the per-channel branch) but were entirely missing here.
-    # This was the dominant contributor to the TT-TTT/TTL/TTJ and VV-VVT/VVL/VVJ
-    # residuals: a real bin-by-bin comparison of a fresh 2024/mt rerun against
-    # smhtt_ul (before this fix) showed new/legacy raw ratios of 0.61-0.78 for
-    # every TT/VV subprocess, not explained by the (much smaller) lumi/btag/
-    # ttbar_em_weight differences alone — TauKITFlow was passing strictly more
-    # events through by missing this extra pt_2 threshold and the tighter mt
-    # cut. See STATUS.md Phase 5.1 for the full before/after numbers.
-    cuts["pt"] = "(pt_2 > 25)"
-    cuts["mt"] = "(mt_1 < 60)"
-
     if "DR;ff" in selection_option:
         modify_for_ff_DR(obj=cuts, region=selection_option.split(";")[-1], channel=None)
 
