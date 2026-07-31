@@ -27,6 +27,7 @@ import re
 from ntuple_processor.utils import Selection, WarnDict
 from config.logging_setup_configs import setup_logging
 from config.analysis import (
+    PRESELECTION_MASK_BRANCH,
     RUN2_PRODUCTION_ERAS,
     SUPPORTED_ERAS,
     get_channel_selection_cuts,
@@ -83,6 +84,7 @@ def channel_selection(
     vs_ele_wp: str = "VVLoose",
     selection_option: str = "CR",
     preselected: bool = False,
+    use_masks: bool = False,
     **kwargs,
 ) -> Selection:
     """
@@ -98,6 +100,39 @@ def channel_selection(
         All cuts that are *not* part of the TFF preselection — opposite-sign,
         extra-lepton vetoes, jet-veto-map, tau-vs-jet WP, lepton isolation, and
         mt cut — are always applied.
+    use_masks:
+        When *True* (and ``preselected`` is False) the input ntuples carry
+        CROWN's precomputed ``presel_mask`` branch, so every preselection-derived
+        cut — the tau decay mode, the vsEle/vsMu discriminators, the tau-pt +
+        trigger cut, the jet veto map, and em's electron_eta — collapses into
+        the single named cut ``Cut("presel_mask > 0.5", "presel_mask")``.
+        Detected once per (era, channel) by ``shapes/produce_shapes.py`` from
+        the first input file via ``config.analysis.masks_available()``;
+        ``--force-legacy-cuts`` pins it to False. Old (maskless) ntuples and
+        Run2 2018 (whose CROWN production predates the masks entirely) simply
+        never see it set, so the tff_adapter path below is untouched.
+
+        Deliberately scoped to the *preselection*-derived cuts only. Every
+        ``channel_selection:`` cut (os, tau_iso, the three vetoes, the lepton
+        isos, mt_cut and the hardcoded pt/mt cuts) stays a named string cut,
+        because ``shapes/selection/variations.py`` replaces cuts BY NAME
+        (``ReplaceCut("same_sign", "os", ...)``,
+        ``ReplaceCut(..., "tau_iso", ...)``) and those variations must keep
+        working identically on masked and unmasked inputs.
+
+        os/ss note: swapping the ``os`` cut's *expression* to ``sel_os > 0.5``
+        was considered and rejected. It would only be correct if the matching
+        same-sign variations also switched to ``sel_ss > 0.5``, and those live
+        as ~12 module-level constants in variations.py
+        (``same_sign``, ``same_sign_em``, ``abcd_same_sign``,
+        ``same_sign_anti_iso_lt``, the per-era em QCD-weight family, …) built
+        at import time, with no access to a per-run ``use_masks``. Making them
+        runtime-parameterised means turning every one into a factory and
+        rewiring produce_shapes.py's variation registration — a large, risky
+        diff for zero physics gain, since ``sel_os``/``sel_ss`` encode exactly
+        ``(q_1*q_2) < 0`` / ``> 0``. So os/ss stay literal charge-product
+        expressions everywhere; ``sel_os``/``sel_ss`` are still written and
+        kept through the skim for TauFakeFactors' use.
     """
     if era not in SUPPORTED_ERAS:
         raise ValueError(f"Era '{era}' is not a supported era. Supported: {SUPPORTED_ERAS}")
@@ -114,6 +149,30 @@ def channel_selection(
     cuts["extramuon_veto"] = _cs_cuts["extramuon_veto"]
     cuts["dilepton_veto"] = _cs_cuts["dilepton_veto"]
     cuts["os"] = _cs_cuts["os"]
+
+    # Mask path: one named cut stands in for every preselection-derived cut.
+    # Only when the input has NOT already been preselected -- a preselected
+    # input had those cuts applied by shapes/preselect.py (whichever path it
+    # took there), so re-applying anything here would be redundant.
+    #
+    # Behaviour note, deliberate and worth knowing: presel_mask is the FULL
+    # per-channel `preselection:` block of config/cuts.yaml, which includes
+    # `had_tau_decay_mode` — a cut the legacy branch below never applied when
+    # reading raw ntuples (it only picks had_tau_id_vs_ele/vs_mu/had_tau_pt/
+    # lep_pt out of that same block, plus jet_veto above). So a raw-ntuple
+    # run with masks is very slightly TIGHTER than the same run with
+    # --force-legacy-cuts, by exactly the decay-mode requirement. That matches
+    # what the preselected (--presel-dir) path has always done, i.e. the mask
+    # path makes raw-ntuple and preselected runs agree where they previously
+    # did not.
+    _use_presel_mask = use_masks and not preselected
+    if _use_presel_mask:
+        logger.info(
+            f"[{era}/{channel}] channel_selection: preselection via CROWN "
+            f"'{PRESELECTION_MASK_BRANCH}' branch (single cut replaces the "
+            f"tau-ID/trigger/tau-pt/decay-mode/jet-veto cut strings)"
+        )
+        cuts["presel_mask"] = f"({PRESELECTION_MASK_BRANCH} > 0.5)"
     # jet_veto is single-sourced from config/cuts.yaml's `preselection:` block
     # (config.analysis.get_preselection_cuts()) -- the same value
     # shapes/preselect.py already applies to signal samples via that function.
@@ -127,9 +186,12 @@ def channel_selection(
     # Every Run3 channel (et/mt/tt/em) now defines jet_veto in cuts.yaml's
     # preselection: block; the default is kept only as a guard for eras/
     # channels configured without one (e.g. Run2 2018).
-    cuts["jet_vetomap"] = get_preselection_cuts(era, channel).get(
-        "jet_veto", "(jet_vetomap < 0.5)"
-    )
+    # (subsumed by presel_mask on the mask path -- jet_veto is part of the
+    # same preselection: block the mask encodes)
+    if not _use_presel_mask:
+        cuts["jet_vetomap"] = get_preselection_cuts(era, channel).get(
+            "jet_veto", "(jet_vetomap < 0.5)"
+        )
     # Phase 5.1 (2026-07-15) root-cause + fix: these two global cuts exist,
     # active (uncommented), in smhtt_ul's live reference channel_selection()
     # (config/shapes/channel_selection.py, applied unconditionally for every
@@ -162,8 +224,12 @@ def channel_selection(
             # Tau ID (vsEle/vsMu) and trigger cuts. Run3 eras read cuts.yaml
             # directly (see module docstring); 2018 reads the real TFF YAML
             # since it isn't generated from cuts.yaml.
-            # When reading from preselected files these cuts are already applied.
-            if not preselected:
+            # When reading from preselected files these cuts are already
+            # applied; on the mask path `presel_mask` above already covers
+            # all three (2018/tff_adapter never takes the mask path -- that
+            # production predates the masks, so masks_available() reports
+            # False for it and the branch below stays exactly as it was).
+            if not preselected and not _use_presel_mask:
                 if era in RUN2_PRODUCTION_ERAS:
                     tff_sel = get_tff_event_selection(era, channel)
                 else:
@@ -200,7 +266,10 @@ def channel_selection(
             # preselection: block and are skipped when the input has already
             # been preselected; isolation is shape-production-only and always
             # applied, from cuts.yaml's channel_selection: block.
-            if not preselected:
+            # (em's presel_mask covers electron_eta + lep_pt + jet_veto -- em
+            # is the one scope with no FF-region masks, but it does get the
+            # common presel_mask/sel_os/sel_ss.)
+            if not preselected and not _use_presel_mask:
                 _presel = get_preselection_cuts(era, channel)
                 cuts["electron_eta"] = f"({_presel['electron_eta']})"
                 cuts["trg_selection"] = f"({_presel['lep_pt']})"

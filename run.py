@@ -95,6 +95,12 @@ Optional:
   VS_ELE_WP        (default: per-channel, matching smhtt_ul's Run3 configs --
                     Tight for et, VVLoose otherwise; set this to force the
                     same WP for every channel instead)
+  FORCE_LEGACY_CUTS  Set to 1 to never select on CROWN's precomputed selection
+                    masks (presel_mask/sel_os/sel_ss/ff_*) and always build the
+                    cuts as strings from config/cuts.yaml. Same as
+                    --force-legacy-cuts. Only needed for A/B validation of the
+                    two paths: PRESEL/SHAPES detect the masks per input and fall
+                    back to the cut strings automatically on old ntuples.
   FF_FRIENDS_DIR   Path to fake factor friend trees (enables FF mode in SHAPES)
   FF_CONFIG        Override config path for FF mode
   FF_CORR_CONFIG   Override config path for FF-CORR mode
@@ -144,6 +150,16 @@ def make_parser() -> argparse.ArgumentParser:
              "string to make SHAPES read raw CROWN ntuples instead.",
     )
     parser.add_argument(
+        "--force-legacy-cuts", dest="force_legacy_cuts", action="store_true", default=None,
+        help="Never select on CROWN's precomputed selection-mask branches (presel_mask, "
+             "sel_os/sel_ss, ff_*); always build the cuts as strings from config/cuts.yaml. "
+             "Passed through to shapes/preselect.py (PRESEL) and shapes/produce_shapes.py "
+             "(SHAPES/SHAPES-NOSYS/TRAIN-SHAPES/CONFIGS). Without it those tools detect the "
+             "masks per input themselves and fall back automatically on old, maskless "
+             "ntuples -- this flag is the A/B-validation escape hatch, not something a "
+             "normal run needs. Env: FORCE_LEGACY_CUTS=1.",
+    )
+    parser.add_argument(
         "--ff-input-dir", dest="ff_input_dir", default=None,
         help="For FF/FF-CORR: override common_settings.yaml's file_path/output_path "
              "(via a generated tmp config, TFF's real YAML on disk is never touched) "
@@ -158,6 +174,18 @@ def parse_args(argv=None):
     parser = make_parser()
     args, extra = parser.parse_known_args(argv)
     return args, extra
+
+
+def _truthy(value) -> bool:
+    """Interpret an env-var-or-flag value as a boolean.
+
+    `--force-legacy-cuts` sets True; the env-var fallback delivers a string,
+    where the usual "0"/"false"/"no"/"" spellings must mean *off* (an
+    inherited `FORCE_LEGACY_CUTS=0` meaning "on" would be a nasty surprise).
+    """
+    if isinstance(value, str):
+        return value.strip().lower() not in ("", "0", "false", "no", "off")
+    return bool(value)
 
 
 def env_or(value, env_name, default):
@@ -257,6 +285,9 @@ def mode_shapes(cfg, extra, mode):
 
     if cfg["vs_ele_wp"]:
         extra_args += ["--vs-ele-wp", cfg["vs_ele_wp"]]
+
+    if cfg["force_legacy_cuts"]:
+        extra_args.append("--force-legacy-cuts")
 
     def _produce(output_file, ff_only=False):
         cmd = [
@@ -389,6 +420,7 @@ def mode_train_shapes(cfg, extra):
 
     print(f"[TRAIN-SHAPES] Producing training shapes: era={cfg['era']} channels={cfg['channels']}")
     vs_ele_wp_args = ["--vs-ele-wp", cfg["vs_ele_wp"]] if cfg["vs_ele_wp"] else []
+    legacy_cuts_args = ["--force-legacy-cuts"] if cfg["force_legacy_cuts"] else []
     cmd = [
         "python",
         "shapes/produce_shapes.py",
@@ -407,6 +439,7 @@ def mode_train_shapes(cfg, extra):
         "--num-threads", str(cfg["nthreads"]),
         "--xrootd",
         "--skip-systematic-variations",
+        *legacy_cuts_args,
         *extra,
     ]
     return run_conda(cmd, env_overrides={"PYTHONPATH": pythonpath_with_tff()}).returncode
@@ -422,6 +455,7 @@ def mode_configs(cfg, extra):
 
     print(f"[CONFIGS] Collecting ntuple_processor configs: era={cfg['era']} channels={cfg['channels']}")
     vs_ele_wp_args = ["--vs-ele-wp", cfg["vs_ele_wp"]] if cfg["vs_ele_wp"] else []
+    legacy_cuts_args = ["--force-legacy-cuts"] if cfg["force_legacy_cuts"] else []
     cmd = [
         "python",
         "shapes/produce_shapes.py",
@@ -439,6 +473,7 @@ def mode_configs(cfg, extra):
         "--collect-config-only",
         "--xrootd",
         "--config-output-file", str(outfile),
+        *legacy_cuts_args,
         *extra,
     ]
     return run_conda(cmd, env_overrides={"PYTHONPATH": pythonpath_with_tff()}).returncode
@@ -484,6 +519,7 @@ def mode_presel(cfg, extra):
             "--directory", ul_paths.ntuples,
             "--xsec-friends", ul_paths.xsec_friends,
             "--nthreads", str(cfg["nthreads"]),
+            *(["--force-legacy-cuts"] if cfg["force_legacy_cuts"] else []),
             *extra,
         ]
         # process_background_process() lazily imports TauFakeFactors'
@@ -725,6 +761,11 @@ def main(argv=None) -> int:
         "ff_config": env_or(args.ff_config, "FF_CONFIG", ""),
         "ff_corr_config": env_or(args.ff_corr_config, "FF_CORR_CONFIG", ""),
         "ff_input_dir": env_or(args.ff_input_dir, "FF_INPUT_DIR", ""),
+        # store_true with default=None so an unset flag still falls through to
+        # the env var, matching every other option's `${VAR:-default}`
+        # semantics above (a plain store_true would default to False and
+        # shadow FORCE_LEGACY_CUTS).
+        "force_legacy_cuts": _truthy(env_or(args.force_legacy_cuts, "FORCE_LEGACY_CUTS", None)),
     }
 
     needs_ntupletag = mode in (
