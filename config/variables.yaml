@@ -120,6 +120,13 @@ selection_masks:
     - ff_wjets_DR_SR_ARlike
     - ff_wjets_AR_SR_SRlike
     - ff_wjets_AR_SR_ARlike
+    # ff_corrections.py feeds the merged DR_SR/AR_SR config back through
+    # FF_Wjets.calculation_Wjets_FFs, which flips tau_pair_sign there too, so
+    # the correction regions need same-sign variants as well
+    - ff_wjets_DR_SR_SRlike_ss
+    - ff_wjets_DR_SR_ARlike_ss
+    - ff_wjets_AR_SR_SRlike_ss
+    - ff_wjets_AR_SR_ARlike_ss
   mt: *lt_masks
   tt:
     # tt has no Wjets/ttbar FF regions; instead QCD is measured twice, for the

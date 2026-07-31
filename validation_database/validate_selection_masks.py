@@ -481,7 +481,12 @@ def main() -> int:
         n_nob = r["n_cuts_no_nbtag"].GetValue()
         mis = r["mismatch"].GetValue()
         mis_p = r["mismatch_presel"].GetValue()
-        ok = (mis == 0) or (mis_p == 0)
+        # CROWN composes the ff_* masks as the region cut set ONLY -- the
+        # preselection is a separate branch (presel_mask) that downstream
+        # applies on its own, and split_categories (njets) stay downstream too.
+        # So the region-only comparison is the one that must hold; the
+        # +presel column is kept as diagnostics for reading a failure.
+        ok = mis == 0
         status = "OK" if ok else "FAIL"
         if not ok:
             n_fail += 1
@@ -496,9 +501,10 @@ def main() -> int:
     print("  N(mask)      events with <mask> > 0.5")
     print("  N(cuts)      events passing the yaml-faithful reconstructed cut string")
     print("  mismatch     events where mask and cut string disagree            -> must be 0")
-    print("  +presel      same, with presel_mask ANDed into the cut string     -> must be 0")
-    print("               (a region passes if EITHER is 0; which one tells you whether the")
-    print("                mask is composed with or without the preselection folded in)")
+    print("  +presel      same, with presel_mask ANDed into the cut string (diagnostic only)")
+    print("               CROWN composes ff_* masks as the region cut set ONLY, so 'mismatch'")
+    print("               is the column that decides PASS/FAIL. If mismatch != 0 but +presel")
+    print("               == 0, someone folded the preselection into the mask upstream.")
     print("  N(no-nbtag)  cut string with nbtag/bb_selection dropped, i.e. what")
     print("               TauFakeFactors' apply_region_filters() selects TODAY")
     print("  delta        N(no-nbtag) - N(mask): the KNOWN, INTENDED difference. Expected")
