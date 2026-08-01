@@ -47,6 +47,10 @@ Usage
       --xsec-friends /store/.../xsec/ \\
       --output-dir /ceph/.../TauKITFlow_shapes/<tag>/preselection \\
       --nthreads 4
+
+Add ``--mask-friends /store/.../selection/`` when the production shipped
+CROWN's selection masks as a friend tree instead of inside the ntuple; the
+mask path is then taken exactly as it is for masks-in-the-ntuple productions.
 """
 import argparse
 import contextlib
@@ -77,7 +81,11 @@ from config.logging_setup_configs import setup_logging
 
 logger = setup_logging(logger=logging.getLogger(__name__))
 
-_TOP_PT_PROCESSES = {"ttbar", "ST"}
+# Top pt reweighting is a ttbar-only correction, and CROWN only books the
+# topPtReweightWeight branch for samples=["ttbar"] (config.py TopPtReweighting)
+# -- including ST here makes the weight expression reference a column that does
+# not exist in the single-top ntuples.
+_TOP_PT_PROCESSES = {"ttbar"}
 _Z_PT_PROCESSES   = {"DYjets"}
 
 # Same redirector ntuple_processor.booking lists CROWN output through.
@@ -186,11 +194,25 @@ def _quiet_empty_tree_warnings():
         ROOT.gErrorIgnoreLevel = prev
 
 
-def _chain_with_friend(ntuple_files: list[str], xsec_files: list[str]) -> ROOT.TChain:
-    """Main chain + (optional) xsec friend chain, built without the empty-tree
-    warning spam. The two are index-aligned file by file, empty files
-    included -- CROWN writes one friend file per ntuple file with the same
-    entry count, so an empty ntuple file has an empty friend next to it."""
+def _chain_with_friend(
+    ntuple_files: list[str],
+    xsec_files: list[str],
+    mask_files: list[str] | None = None,
+) -> ROOT.TChain:
+    """Main chain + (optional) xsec and selection-mask friend chains, built
+    without the empty-tree warning spam. All of them are index-aligned file by
+    file, empty files included -- CROWN writes one friend file per ntuple file
+    with the same entry count, so an empty ntuple file has an empty friend next
+    to it.
+
+    The mask friend is the second of CROWN's two equivalent ways of shipping
+    the selection masks (selection_friends.py writes them next to the ntuple;
+    selection_config.py writes them into it). Attaching it makes
+    `presel_mask`/`sel_*`/`ff_*` visible to _apply_preselection() and to the
+    Snapshot column list under their PLAIN names -- RDataFrame resolves the
+    unqualified name in expressions and Snapshot even though
+    GetColumnNames() only lists the qualified "<friend tree>.<column>" form
+    (see _unqualified_columns)."""
     with _quiet_empty_tree_warnings():
         chain = ROOT.TChain("ntuple")
         for f in ntuple_files:
@@ -203,6 +225,17 @@ def _chain_with_friend(ntuple_files: list[str], xsec_files: list[str]) -> ROOT.T
             # The friend chain is owned by Python and must outlive the
             # TChain it is attached to -- keep a reference on the chain.
             chain._xsec_friend = fchain
+        if mask_files:
+            mchain = ROOT.TChain("ntuple")
+            for f in mask_files:
+                mchain.Add(f)
+            # Tagged: the mask friend's tree is called `ntuple` too, exactly
+            # like the xsec friend's, and two same-named friends on one chain
+            # would be indistinguishable. The tag only changes the *qualified*
+            # column names ("masks.presel_mask"); the unqualified ones the cut
+            # expressions use are unaffected.
+            chain.AddFriend(mchain, "masks")
+            chain._mask_friend = mchain
     return chain
 
 
@@ -267,6 +300,20 @@ def _define_weight(rdf, expr: str):
     return rdf.Define("weight", expr)
 
 
+def _unqualified_columns(rdf) -> set[str]:
+    """Every column of `rdf`, friend columns included under their PLAIN name.
+
+    GetColumnNames() lists a friend's columns ONLY in their qualified form,
+    "<friend tree name>.<column>" (or "<tag>.<column>" for a tagged friend),
+    while RDataFrame resolves the *unqualified* name everywhere else -- in cut
+    and weight expressions and in Snapshot. Both spellings are returned, so a
+    membership test on the plain name is right for ntuple and friend columns
+    alike.
+    """
+    have = {str(c) for c in rdf.GetColumnNames()}
+    return have | {c.split(".", 1)[1] for c in have if "." in c}
+
+
 def _existing_columns(rdf, requested: list[str], label: str) -> list[str]:
     """Restrict `requested` to columns the RDataFrame actually has.
 
@@ -274,8 +321,21 @@ def _existing_columns(rdf, requested: list[str], label: str) -> list[str]:
     (ROOT 6.34 segfaults instead of raising), so a whitelist entry that this
     ntuple version simply doesn't carry would otherwise kill the whole run
     with no message. Warn and carry on with what exists instead.
+
+    Friend columns count as present. GetColumnNames() lists a friend's columns
+    ONLY in their qualified form, "<friend tree name>.<column>" -- and the xsec
+    friend's tree is itself called `ntuple`, so
+    `crossSectionPerEventWeight` shows up as
+    `ntuple.crossSectionPerEventWeight`. RDataFrame resolves the *unqualified*
+    name everywhere else (the weight expression built by _build_weight_expr
+    uses it, and Snapshot both accepts it and writes it under the plain name),
+    so matching on the listed names alone silently dropped every xsec column
+    from the preselection tree on MC -- with a "not in the ntuples" warning
+    that was simply wrong. The same applies to the CROWN selection-mask
+    branches when they arrive as a mask friend rather than inside the ntuple
+    (see _chain_with_friend): they too must stay in the Snapshot column list.
     """
-    have = {str(c) for c in rdf.GetColumnNames()}
+    have = _unqualified_columns(rdf)
     missing = [c for c in requested if c not in have]
     if missing:
         logger.warning(f"{label}: columns not in the ntuples, not written: {missing}")
@@ -298,12 +358,15 @@ def _apply_preselection(rdf, event_selection: dict, label: str, force_legacy: bo
 
     Detection reuses the same "does the RDataFrame have this column" mechanism
     as _existing_columns() (branch-existence, per file), so a mixed set of old
-    and new productions just works, file by file. Both paths log which one was
-    taken — that log line is the A/B-validation breadcrumb.
+    and new productions just works, file by file. It goes through
+    _unqualified_columns(), so it fires both when CROWN wrote the mask INTO
+    the ntuple and when it wrote it into an attached mask FRIEND (where
+    GetColumnNames() only ever lists "masks.presel_mask"). Both paths log
+    which one was taken — that log line is the A/B-validation breadcrumb.
     """
     if force_legacy:
         logger.info(f"{label}: preselection via legacy cut strings (--force-legacy-cuts)")
-    elif PRESELECTION_MASK_BRANCH in {str(c) for c in rdf.GetColumnNames()}:
+    elif PRESELECTION_MASK_BRANCH in _unqualified_columns(rdf):
         logger.info(
             f"{label}: preselection via CROWN mask branch "
             f"'{PRESELECTION_MASK_BRANCH}' (1 filter replaces "
@@ -364,6 +427,7 @@ def process_background_process(
     channel: str,
     directory: str,
     xsec_friends: str,
+    mask_friends: str,
     flat_output_dir: str,
     event_selection: dict,
     mc_weights: dict,
@@ -429,11 +493,20 @@ def process_background_process(
             if not xsec_files:
                 logger.warning(f"No xsec friend files for {tff_process}/{sample}: {xsec_loc}")
 
+        # Selection-mask friend: only when the production put the masks NEXT
+        # to the ntuples instead of inside them. Needed for data too (the
+        # masks are pure selection bookkeeping, unlike the MC-only xsec ones).
+        mask_files: list[str] = []
+        if mask_friends:
+            mask_files, mask_loc = _list_root_files(mask_friends, dataset_era, sample, channel)
+            if not mask_files:
+                logger.warning(f"No mask friend files for {tff_process}/{sample}: {mask_loc}")
+
         logger.info(
             f"[{era}/{channel}] {tff_process} [{i_sample}/{len(samples)}] {sample}: "
             f"{len(ntuple_files)} files -> reading"
         )
-        chain = _chain_with_friend(ntuple_files, xsec_files)
+        chain = _chain_with_friend(ntuple_files, xsec_files, mask_files)
 
         _enable_mt(nthreads)
         rdf = ROOT.RDataFrame(chain)
@@ -502,6 +575,7 @@ def process_background_process(
 
 def run_central_backgrounds(era: str, channel: str, directory: str, xsec_friends: str,
                              flat_output_dir: str, nthreads: int,
+                             mask_friends: str = "",
                              force_legacy_cuts: bool = False) -> None:
     """Preselect every background process for one era/channel centrally (see
     process_background_process()) into the TFF-native flat layout."""
@@ -522,6 +596,7 @@ def run_central_backgrounds(era: str, channel: str, directory: str, xsec_friends
             channel=channel,
             directory=directory,
             xsec_friends=xsec_friends,
+            mask_friends=mask_friends,
             flat_output_dir=flat_output_dir,
             event_selection=event_selection,
             mc_weights=mc_weights,
@@ -544,6 +619,7 @@ def process_signal_sample(
     directory: str,
     xsec_friends: str,
     output_dir: str,
+    mask_friends: str = "",
     event_selection: dict,
     mc_weights: dict,
     process: str,
@@ -568,8 +644,14 @@ def process_signal_sample(
         if not xsec_files:
             logger.warning(f"No xsec friend files for signal {sample}: {xsec_loc}")
 
+    mask_files: list[str] = []
+    if mask_friends:
+        mask_files, mask_loc = _list_root_files(mask_friends, mc_era, sample, channel)
+        if not mask_files:
+            logger.warning(f"No mask friend files for signal {sample}: {mask_loc}")
+
     logger.info(f"[{era}/{channel}] signal {sample}: {len(ntuple_files)} files -> reading")
-    chain = _chain_with_friend(ntuple_files, xsec_files)
+    chain = _chain_with_friend(ntuple_files, xsec_files, mask_files)
 
     _enable_mt(nthreads)
     rdf = ROOT.RDataFrame(chain)
@@ -593,15 +675,18 @@ def process_signal_sample(
     os.makedirs(out_dir, exist_ok=True)
     out_file = os.path.join(out_dir, f"{sample}.root")
 
-    # Strip "ntuple." friend prefix from column names for clean output
+    # Strip the friend qualification ("ntuple." for the xsec friend, "masks."
+    # for the selection-mask one) from column names for clean output:
+    # RDataFrame accepts the unqualified name in Snapshot and writes it under
+    # exactly that plain name, which is what downstream consumers expect.
     raw_cols = [str(c) for c in rdf.GetColumnNames()]
     seen: set[str] = set()
     cols: list[str] = []
     for c in raw_cols:
-        clean = c.replace("ntuple.", "")
+        clean = c.split(".", 1)[1] if "." in c else c
         if clean not in seen:
             seen.add(clean)
-            cols.append(c)
+            cols.append(clean)
 
     # Count + Snapshot in one pass (see _run_graphs): a second pass just to
     # learn the event count costs as much as the write itself over xrootd.
@@ -641,6 +726,14 @@ def parse_args():
                              "(build_shape_output_paths(ntupletag).preselection).")
     parser.add_argument("--directory",    required=True,  help="CROWN ntuple base dir.")
     parser.add_argument("--xsec-friends", default=None,   help="xsec friends base dir (MC weighting).")
+    parser.add_argument("--mask-friends", default=None,
+                        help="Selection-mask friends base dir, for productions where CROWN wrote "
+                             "the masks (presel_mask, sel_os/sel_ss, ff_*) into a FRIEND tree "
+                             "(selection_friends.py) instead of into the ntuple itself "
+                             "(selection_config.py). Same {era}/{sample}/{channel} layout as "
+                             "--xsec-friends. Leave unset for productions with the masks inside "
+                             "the ntuple, or with no masks at all -- both keep working unchanged. "
+                             "Env: MASK_FRIENDS_DIR (via run.py --mask-friends-dir).")
     parser.add_argument("--nthreads",     default=4, type=int, help="ROOT implicit MT threads.")
     parser.add_argument("--skip-signals", action="store_true",
                         help="Skip signal processing (backgrounds/data only).")
@@ -665,6 +758,7 @@ def main():
             channel=args.channel,
             directory=args.directory,
             xsec_friends=args.xsec_friends or "",
+            mask_friends=args.mask_friends or "",
             flat_output_dir=os.path.join(args.output_dir, args.era, args.channel),
             nthreads=args.nthreads,
             force_legacy_cuts=args.force_legacy_cuts,
@@ -695,6 +789,7 @@ def main():
                 channel=args.channel,
                 directory=args.directory,
                 xsec_friends=args.xsec_friends or "",
+                mask_friends=args.mask_friends or "",
                 output_dir=args.output_dir,
                 event_selection=event_selection,
                 mc_weights=mc_weights,

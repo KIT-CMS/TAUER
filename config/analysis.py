@@ -225,62 +225,108 @@ def get_region_mask_names(era: str, channel: str) -> list[str]:
 PRESELECTION_MASK_BRANCH = "presel_mask"
 
 
-def masks_available(file_or_dir: str | Path, tree: str = "ntuple") -> bool:
+def _resolve_root_candidate(file_or_dir: str | Path, what: str = "masks_available") -> str | None:
+    """The single .root file to probe for `file_or_dir`, or None.
+
+    A directory is resolved to the first .root file under it (recursively,
+    sorted for reproducibility). Only *local* paths are searched -- xrootd and
+    other remote URLs are always passed straight through to uproot.
+    """
+    path = str(file_or_dir)
+    if not path:
+        return None
+    local = Path(path)
+    if "://" not in path and local.is_dir():
+        found = sorted(local.rglob("*.root"))
+        if not found:
+            logger.warning(f"{what}: no .root file under {path} — assuming no masks")
+            return None
+        return str(found[0])
+    return path
+
+
+def _probe_mask_branch(candidate: str, tree: str, what: str = "masks_available") -> bool:
+    """Does `candidate`'s `tree` carry PRESELECTION_MASK_BRANCH? Never raises."""
+    try:
+        import uproot
+    except ImportError:  # pragma: no cover - uproot is a declared dependency
+        logger.warning(f"{what}: uproot not importable — assuming no masks")
+        return False
+
+    try:
+        with uproot.open(candidate) as fh:
+            obj = fh.get(tree, None)
+            if obj is None and tree != "ntuple":
+                # Friend files are written with the same folder/tree layout as
+                # the ntuple they accompany, but a hand-made or differently
+                # nested friend may carry the plain top-level tree instead --
+                # try that before giving up, rather than reporting "no masks"
+                # for a friend that does have them.
+                obj = fh.get("ntuple", None)
+            if obj is None:
+                logger.warning(
+                    f"{what}: no '{tree}' tree in {candidate} — assuming no masks"
+                )
+                return False
+            have = PRESELECTION_MASK_BRANCH in obj.keys()
+    except Exception as exc:  # noqa: BLE001 -- probe must never be fatal
+        logger.warning(f"{what}: could not read {candidate} ({exc}) — assuming no masks")
+        return False
+
+    logger.info(
+        f"{what}: {candidate} "
+        f"{'HAS' if have else 'does NOT have'} '{PRESELECTION_MASK_BRANCH}'"
+    )
+    return have
+
+
+def masks_available(
+    file_or_dir: str | Path,
+    tree: str = "ntuple",
+    friend_dirs=None,
+) -> bool:
     """
     True if the given ROOT input carries the `presel_mask` branch, i.e. was
     produced by a CROWN version that books the selection masks.
 
-    `file_or_dir` may be a single .root file or a directory -- in the latter
-    case the first .root file found (recursively, sorted for reproducibility)
-    is inspected. Returns False, never raises, when nothing can be opened or
-    read: this is a *capability probe* driving an automatic fallback to the
-    legacy cut strings, so an unreachable/odd input must degrade to "no masks"
-    rather than kill the job.
+    CROWN can write the masks either INTO the main ntuple (selection_config.py,
+    booked from config.py) or into a separate FRIEND tree
+    (selection_friends.py) -- both produce identical values. `friend_dirs` is
+    the (optional) sequence of friend locations the caller is going to ATTACH
+    to this input: each may be a single friend .root file or a directory to
+    search. The main ntuple is probed first, the friends only if it has no
+    masks, so "masks in the ntuple" costs exactly what it always did and
+    "masks in a friend" is found without the caller having to know which
+    layout its production used.
+
+    `file_or_dir` (and each friend entry) may be a single .root file or a
+    directory -- in the latter case the first .root file found (recursively,
+    sorted for reproducibility) is inspected. Returns False, never raises,
+    when nothing can be opened or read: this is a *capability probe* driving
+    an automatic fallback to the legacy cut strings, so an unreachable/odd
+    input must degrade to "no masks" rather than kill the job.
 
     Uses uproot (already a dependency here -- common/helper_collection.py,
     datasets/samplemanager/calculate_genweights.py) rather than PyROOT, so
     that it stays importable/cheap from the plain `taukitflow` conda env and
     from run.py's driver process, which never imports ROOT itself.
     """
-    path = str(file_or_dir)
-    if not path:
-        return False
+    candidate = _resolve_root_candidate(file_or_dir)
+    if candidate is not None and _probe_mask_branch(candidate, tree):
+        return True
 
-    candidate = path
-    local = Path(path)
-    # Only treat it as a directory to search when it's a local, non-remote path;
-    # xrootd/remote URLs are always passed straight through to uproot.
-    if "://" not in path and local.is_dir():
-        found = sorted(local.rglob("*.root"))
-        if not found:
-            logger.warning(f"masks_available: no .root file under {path} — assuming no masks")
-            return False
-        candidate = str(found[0])
+    for friend in friend_dirs or []:
+        friend_candidate = _resolve_root_candidate(friend)
+        if friend_candidate is None:
+            continue
+        if _probe_mask_branch(friend_candidate, tree):
+            logger.info(
+                f"masks_available: '{PRESELECTION_MASK_BRANCH}' found in the friend "
+                f"{friend_candidate} (masks live in a friend tree, not in the ntuple)"
+            )
+            return True
 
-    try:
-        import uproot
-    except ImportError:  # pragma: no cover - uproot is a declared dependency
-        logger.warning("masks_available: uproot not importable — assuming no masks")
-        return False
-
-    try:
-        with uproot.open(candidate) as fh:
-            obj = fh.get(tree, None)
-            if obj is None:
-                logger.warning(
-                    f"masks_available: no '{tree}' tree in {candidate} — assuming no masks"
-                )
-                return False
-            have = PRESELECTION_MASK_BRANCH in obj.keys()
-    except Exception as exc:  # noqa: BLE001 -- probe must never be fatal
-        logger.warning(f"masks_available: could not read {candidate} ({exc}) — assuming no masks")
-        return False
-
-    logger.info(
-        f"masks_available: {candidate} "
-        f"{'HAS' if have else 'does NOT have'} '{PRESELECTION_MASK_BRANCH}'"
-    )
-    return have
+    return False
 
 
 # ── Signal sample access ──────────────────────────────────────────────────────

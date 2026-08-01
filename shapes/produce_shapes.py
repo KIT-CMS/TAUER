@@ -230,8 +230,14 @@ def detect_masks(datasets, era, channel, force_legacy_cuts=False):
     Decide once per (era, channel) whether to select on CROWN's precomputed
     selection masks or on the legacy cut strings.
 
-    Probes the FIRST booked input file of the first dataset for the
-    `presel_mask` branch (config.analysis.masks_available). One probe per
+    Probes the FIRST booked input file of the first dataset -- and, if that
+    file has no masks, the FRIEND files booked next to it -- for the
+    `presel_mask` branch (config.analysis.masks_available). CROWN writes the
+    masks either into the ntuple (selection_config.py) or into a friend
+    (selection_friends.py); the friends probed here are the very ones
+    ntuple_processor is going to attach to this dataset (they come from the
+    booked Ntuple objects, i.e. from --{channel}-friend-directory), so what is
+    probed is exactly what the booked cuts will see. One probe per
     era/channel, not per file: a single CROWN production is homogeneous, and
     shape production books thousands of files whose paths are mostly remote --
     opening them all would cost more than the production it is meant to speed
@@ -251,11 +257,14 @@ def detect_masks(datasets, era, channel, force_legacy_cuts=False):
 
     probe = None
     tree = None
+    friend_probes: list[str] = []
     for dataset in datasets.values():
         ntuples = getattr(dataset, "ntuples", None) or []
         if ntuples:
             probe = ntuples[0].path
             tree = ntuples[0].directory
+            # `friends` is only set on Ntuple when friends were booked at all.
+            friend_probes = [f.path for f in getattr(ntuples[0], "friends", None) or []]
             break
     if probe is None:
         logger.warning(
@@ -264,11 +273,12 @@ def detect_masks(datasets, era, channel, force_legacy_cuts=False):
         )
         return False
 
-    use_masks = masks_available(probe, tree=tree or "ntuple")
+    use_masks = masks_available(probe, tree=tree or "ntuple", friend_dirs=friend_probes)
     logger.info(
         f"[{era}/{channel}] selection via "
         f"{'CROWN mask branches' if use_masks else 'legacy cut strings'} "
-        f"(probed {probe})"
+        f"(probed {probe}"
+        f"{f' + {len(friend_probes)} friend(s)' if friend_probes else ''})"
     )
     return use_masks
 
@@ -281,7 +291,7 @@ def add_processes(add_fn, datasets, select_fn, channel):
     # present in their samples.yaml entries.
     def _add(name, key, selections_fn):
         dataset = datasets.get(key)
-        if not dataset:
+        if not dataset or not dataset.ntuples:
             return
         add_fn(name=name, dataset=dataset, selections=selections_fn())
 
