@@ -236,34 +236,60 @@ def run_conda(cmd_args, env_overrides=None, conda_env=None):
     return run_in_conda(["nice", "-n", "19", *cmd_args], **kwargs)
 
 
-def friend_directory_args(xsec_friends, mask_friends_dir="", ff_friends_dir=""):
-    """The --{channel}-friend-directory arguments for shapes/produce_shapes.py.
+def crown_friend_tag(path):
+    """CROWN friend tag of `path`: the segment after CROWNFriends/CROWNMultiFriends.
 
-    One occurrence per channel, listing EVERY friend base dir that channel
-    needs: produce_shapes.py declares those options as nargs="+" without
+    Mirrors shapes/utils.py::friend_tag (and ntuple_processor's booking), kept
+    local because shapes.utils imports ntuple_processor/ROOT, which this driver
+    deliberately never loads. Falls back to the last path segment.
+    """
+    segments = [s for s in str(path).split("/") if s]
+    for marker in ("CROWNFriends", "CROWNMultiFriends"):
+        if marker in segments:
+            i = segments.index(marker)
+            if i + 1 < len(segments):
+                return segments[i + 1]
+    return segments[-1] if segments else ""
+
+
+def friend_directory_args(xsec_friends, mask_friends_dir="", ff_friends_dir=""):
+    """Friend-directory arguments for shapes/produce_shapes.py.
+
+    The generic, "inclusive" friends go into one --{channel}-friend-directory
+    occurrence per channel, listing EVERY friend base dir that channel needs:
+    produce_shapes.py declares those options as nargs="+" without
     action="append", so a second occurrence of the same flag *replaces* the
     first and listing the dirs together is the only way to attach more than
     one friend per channel.
 
     * xsec friends -- every channel, always (MC weight columns).
-    * fake-factor friends -- et/mt/tt only, when FF mode is on.
     * selection-mask friends -- every channel, when CROWN wrote the masks as a
       friend tree (selection_friends.py) instead of into the ntuple. They are
       what makes detect_masks() see the masks and what the booked cut
       expressions then read (unqualified `presel_mask`/`sel_*`/`ff_*`).
+
+    Fake-factor friends go into the same per-channel lists (et/mt/tt only --
+    em has no fake factors and the FF production writes no files for it), but
+    their ROLE is declared separately with --ff-friends-tag, which carries the
+    CROWN friend tag of the FF directory. filter_friends() uses that to drop
+    them for signal samples instead of guessing from the directory being
+    *named* something like "fake_factors_...".
     """
     friend_dirs = {ch: [xsec_friends] for ch in ("et", "mt", "tt", "em")}
-    if ff_friends_dir:
-        for ch in ("et", "mt", "tt"):
-            friend_dirs[ch].append(ff_friends_dir)
     if mask_friends_dir:
         for ch in friend_dirs:
             friend_dirs[ch].append(mask_friends_dir)
-    return [
+    if ff_friends_dir:
+        for ch in ("et", "mt", "tt"):
+            friend_dirs[ch].append(ff_friends_dir)
+    args = [
         arg
         for ch, dirs in friend_dirs.items()
         for arg in (f"--{ch}-friend-directory", *dirs)
     ]
+    if ff_friends_dir:
+        args += ["--ff-friends-tag", crown_friend_tag(ff_friends_dir)]
+    return args
 
 
 def mode_xsec(cfg, extra):

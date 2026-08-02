@@ -191,6 +191,10 @@ def _keep_for_xsec(dataset):
 # Adding a new friend type should be a one-line addition here.
 _FRIEND_RULES = (
     # Fake-factor friends: backgrounds/data only, never on signal samples.
+    # NOTE this entry is only the FALLBACK for FF friends whose tag the
+    # caller did not declare (see filter_friends' ff_friends_tags) --
+    # run.py/produce_shapes.py declare the role explicitly via
+    # --ff-friends-tag and do not rely on the tag reading like "fake factors".
     (("fakefactors", "fakefactor", "ff"), _keep_for_non_signal),
     # Same-sign/EMQCD weights: backgrounds/data only, never on signal samples.
     (("emqcdweights", "emqcdweight"), _keep_for_non_signal),
@@ -205,7 +209,22 @@ _FRIEND_RULES = (
 _UNKNOWN_FRIEND_TAGS = set()
 
 
-def filter_friends(dataset, friend):
+def declared_ff_tags(ff_friends_tags):
+    """Normalized lookup set of the friend TAGS declared as fake-factor friends.
+
+    Accepts None/empty (nothing declared) or any iterable of tag names, so any
+    number of tags can be declared per run (e.g. two FF versions). Tags are
+    normalized the same way as the rule table below, so the declaration is
+    insensitive to case and to `_`/`-` separators.
+    """
+    if not ff_friends_tags:
+        return frozenset()
+    if isinstance(ff_friends_tags, frozenset):
+        return ff_friends_tags
+    return frozenset(_normalize_tag(tag) for tag in ff_friends_tags)
+
+
+def filter_friends(dataset, friend, ff_friends_tags=None):
     """Decide whether a friend directory should be attached to a dataset.
 
     Called once per (dataset, friend directory) pair, so any number of friend
@@ -213,8 +232,20 @@ def filter_friends(dataset, friend):
     two directories that normalize to the same rule (e.g. fake_factors_v4 and
     fake_factors_v5). An unknown or underivable tag never raises: the friend is
     attached.
+
+    ``ff_friends_tags`` are the friend TAGS the *caller* declared to be
+    fake-factor friends (produce_shapes.py's ``--ff-friends-tag``, fed by
+    run.py from ``--ff-friends-dir``). A declared tag takes the fake-factors
+    rule regardless of how it reads, so a production directory tagged
+    ``fake_factors_260618_v5`` today and ``myfriends_v2`` tomorrow keeps
+    behaving identically. Tags that were NOT declared fall back to the
+    tag-name inference in _FRIEND_RULES below, which keeps a direct
+    produce_shapes.py invocation that never passes ``--ff-friends-tag``
+    working unchanged.
     """
     tag = friend_tag(friend)
+    if tag is not None and _normalize_tag(tag) in declared_ff_tags(ff_friends_tags):
+        return _keep_for_non_signal(dataset)
     if tag is None:
         if friend not in _UNKNOWN_FRIEND_TAGS:
             _UNKNOWN_FRIEND_TAGS.add(friend)
@@ -243,6 +274,7 @@ def get_nominal_datasets(
     validation_db_root="validation_database",
     flat_layout=False,
     xrootd=False,
+    ff_friends_tags=None,
 ):
     from config.analysis import get_mc_ntuple_era
 
@@ -252,11 +284,17 @@ def get_nominal_datasets(
     # read from the real era's own directory.
     mc_era = get_mc_ntuple_era(era)
 
+    declared_ff = declared_ff_tags(ff_friends_tags)
+
     jobs = []
     for key, names in files[era][channel].items():
         dataset_era = era if key in ("data", "EMB") else mc_era
         friends = (
-            [fdir for fdir in friend_directories[channel] if filter_friends(key, fdir)]
+            [
+                fdir
+                for fdir in friend_directories[channel]
+                if filter_friends(key, fdir, declared_ff)
+            ]
             if friend_directories is not None
             else []
         )
@@ -311,7 +349,9 @@ def add_tauES_datasets(
     flat_layout=False,
     xrootd=False,
     shiftstring="EMBtauESshift",
+    ff_friends_tags=None,
 ):
+    declared_ff = declared_ff_tags(ff_friends_tags)
     for variation in tauESvariations:
         name = str(round(variation, 2)).replace("-", "minus").replace(".", "p")
         processname = f"emb{name}"
@@ -326,7 +366,7 @@ def add_tauES_datasets(
             [
                 fdir
                 for fdir in friend_directories[channel]
-                if filter_friends("EMB", fdir)
+                if filter_friends("EMB", fdir, declared_ff)
             ],
             validate_samples=False,
             validation_tag=validation_tag,

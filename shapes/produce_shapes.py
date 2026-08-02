@@ -35,6 +35,7 @@ from config.analysis import (
 from ntuple_processor import GraphManager, RunManager, UnitManager
 
 
+
 def parse_arguments():
     parser = argparse.ArgumentParser(
         description="Produce shapes for the TauKITFlow SM H→ττ analysis."
@@ -89,6 +90,20 @@ def parse_arguments():
     parser.add_argument("--em-friend-directory", type=str, default=[], nargs="+")
     parser.add_argument("--mm-friend-directory", type=str, default=[], nargs="+")
     parser.add_argument("--ee-friend-directory", type=str, default=[], nargs="+")
+    parser.add_argument(
+        "--ff-friends-tag", type=str, default=[], nargs="+",
+        help="CROWN friend TAG(s) that hold the FAKE-FACTOR friend trees, e.g. "
+             "'fake_factors_260618_v5'. The tag is the directory right after "
+             "CROWNFriends/CROWNMultiFriends in the friend path. Declaring it "
+             "marks those friends as fake-factor friends, so they are dropped "
+             "for signal samples no matter what the directory is called -- the "
+             "role no longer has to be guessed from the name. The friend "
+             "directories themselves are still passed through the usual "
+             "--{channel}-friend-directory options. Several tags may be given "
+             "(e.g. two FF versions); each friend is judged independently. "
+             "Without this option the role falls back to inferring it from the "
+             "tag name, so existing invocations keep working.",
+    )
     parser.add_argument(
         "--output-file", required=True, type=str, help="Output ROOT file."
     )
@@ -428,6 +443,14 @@ def main(args):
         "mm": args.mm_friend_directory,
         "ee": args.ee_friend_directory,
     }
+    # Explicitly-declared fake-factor friends. They join the per-channel friend
+    # lists of the FF-capable channels (so booking is byte-for-byte what
+    # passing them via --{channel}-friend-directory did), and are handed to
+    # shape_utils separately so filter_friends() knows their ROLE instead of
+    # having to guess it from the directory name.
+    ff_friends_tags = list(args.ff_friends_tag)
+    if ff_friends_tags:
+        logger.info(f"Fake-factor friend tags (declared): {ff_friends_tags}")
     output_file = args.output_file if ".root" in args.output_file else f"{args.output_file}.root"
 
     if args.directory and args.presel_dir:
@@ -455,6 +478,7 @@ def main(args):
         nominals[args.era]["datasets"][channel] = shape_utils.get_nominal_datasets(
             era=args.era, channel=channel,
             friend_directories=friend_directories,
+            ff_friends_tags=ff_friends_tags,
             files=files,
             directory=ntuple_directory,
             xrootd=args.xrootd,
@@ -533,7 +557,9 @@ def main(args):
             _es_shifts = tau_es_energy_scales.shift_values()
             shape_utils.add_tauES_datasets(
                 era=args.era, channel=channel,
-                friend_directories=friend_directories, files=files,
+                friend_directories=friend_directories,
+                ff_friends_tags=ff_friends_tags,
+                files=files,
                 directory=ntuple_directory, nominals=nominals,
                 tauESvariations=_es_shifts,
                 selections=[
