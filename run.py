@@ -146,6 +146,7 @@ def make_parser() -> argparse.ArgumentParser:
     parser.add_argument("--vs-jet-wp", dest="vs_jet_wp", default=None)
     parser.add_argument("--vs-ele-wp", dest="vs_ele_wp", default=None)
     parser.add_argument("--nthreads", default=None)
+    parser.add_argument("--nworkers", default=None)
     parser.add_argument("--nprocs", default=None)
     parser.add_argument("--output-dir", dest="output_dir", default=None)
     parser.add_argument("--ff-friends-dir", dest="ff_friends_dir", default=None)
@@ -595,6 +596,7 @@ def mode_presel(cfg, extra):
             "--xsec-friends", ul_paths.xsec_friends,
             *(["--mask-friends", cfg["mask_friends_dir"]] if cfg["mask_friends_dir"] else []),
             "--nthreads", str(cfg["nthreads"]),
+            "--nworkers", str(cfg["nworkers"]),
             *(["--force-legacy-cuts"] if cfg["force_legacy_cuts"] else []),
             *extra,
         ]
@@ -832,6 +834,9 @@ def main(argv=None) -> int:
         # "validation_database" defaults).
         "output_dir": env_or(args.output_dir, "OUTPUT_DIR", None),
         "nthreads": env_or(args.nthreads, "NTHREADS", "4"),
+        # PRESEL only: how many sample jobs run concurrently, each with
+        # `nthreads` ROOT threads (shapes/preselect.py --nworkers).
+        "nworkers": env_or(args.nworkers, "NWORKERS", "4"),
         "nprocs": env_or(args.nprocs, "NPROCS", "1"),
         "presel_dir": env_or(args.presel_dir, "PRESEL_DIR", None),
         "validation_dir": None,
