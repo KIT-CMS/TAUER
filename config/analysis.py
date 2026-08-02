@@ -84,6 +84,36 @@ RUN2_PRODUCTION_ERAS = ("2018",)
 
 SUPPORTED_ERAS = RUN3_ERAS + RUN2_PRODUCTION_ERAS
 
+# Fake factors are measured on the pre- and post-era parts together, so
+# TauFakeFactors ships ONE set of fake_factors_*/corrections_* configs per
+# year, in the combined `2022` / `2023` directories, and applies it identically
+# to both halves. The per-half directories (2022preEE, ...) still hold their own
+# preselection_*.yaml -- only the FF region configs are shared.
+#
+# NOTE: the FF/corrections yamls that still sit in the per-half directories are
+# stale leftovers and are NOT read by anything once this mapping is used. They
+# disagree with the combined ones (different njets splitting, older isolation
+# windows); they are kept only to avoid deleting files nobody asked us to
+# delete, and should be removed upstream.
+_FF_CONFIG_ERA: dict[str, str] = {
+    "2022preEE": "2022",
+    "2022postEE": "2022",
+    "2023preBPix": "2023",
+    "2023postBPix": "2023",
+}
+
+
+def ff_config_era(era: str) -> str:
+    """Return the TauFakeFactors config directory to use for `era`.
+
+    Maps the pre/post halves of 2022 and 2023 onto their combined directory;
+    every other era maps to itself.
+    """
+    if era not in SUPPORTED_ERAS:
+        raise ValueError(f"Era '{era}' not in supported eras: {SUPPORTED_ERAS}")
+    return _FF_CONFIG_ERA.get(era, era)
+
+
 # TFF process name → ntuple_processor dataset key
 _TFF_TO_DATASET: dict[str, str] = {
     "DYjets":  "DY",
@@ -148,6 +178,155 @@ def get_flags() -> list[str]:
 def get_training_variables() -> list[str]:
     """Return the combined training variable list: output_features + flags."""
     return get_output_features() + get_flags()
+
+
+# ── CROWN selection masks ─────────────────────────────────────────────────────
+
+def get_region_mask_names(era: str, channel: str) -> list[str]:
+    """
+    Names of the CROWN-precomputed boolean selection-mask branches available
+    for the given era/channel, read from config/variables.yaml's
+    `selection_masks:` block.
+
+    Returns `common` (presel_mask, sel_os, sel_ss -- every scope) followed by
+    the channel's fake-factor region masks (et/mt: QCD/Wjets/ttbar/fractions
+    + DR_SR/AR_SR correction regions; tt: leading + subleading QCD; em: none).
+
+    Deliberately NOT part of get_output_features(): those are analysis
+    variables (they feed get_training_variables() and the control-plot
+    variable set), these are pure bookkeeping branches. Callers that need the
+    branches *kept on disk* -- shapes/preselect.py's Snapshot column list and
+    config/generate_tff_configs.py's generated TFF `output_features:` block --
+    concatenate the two lists explicitly.
+
+    `era` is accepted (and validated) because the mask *content* can be
+    era-dependent -- the preselection is (the tt double-tau trigger and its pt
+    threshold changed in 2024) -- even though the mask *names* are
+    era-independent by design, so downstream code never has to special-case an
+    era and this signature does not have to change if a future era gains or
+    loses a region. The fake-factor *region* cuts are era-independent: they
+    come from TauFakeFactors' combined `2022`/`2023` config directories (see
+    `ff_config_era`) and are identical there and in 2024/2025/2026.
+    """
+    if era not in SUPPORTED_ERAS:
+        raise ValueError(f"Era '{era}' not in supported eras: {SUPPORTED_ERAS}")
+    cfg = _load_variables().get("selection_masks", {})
+    names = list(cfg.get("common", []))
+    names += list(cfg.get(channel, []) or [])
+    # Preserve order, drop accidental duplicates (a channel block repeating a
+    # common name would otherwise produce a duplicated Snapshot column).
+    seen: set[str] = set()
+    return [n for n in names if not (n in seen or seen.add(n))]
+
+
+# The one branch whose presence decides "these ntuples were produced with
+# CROWN's selection.py". Every scope gets it (em included), so a single name
+# is enough for the per-file detection below.
+PRESELECTION_MASK_BRANCH = "presel_mask"
+
+
+def _resolve_root_candidate(file_or_dir: str | Path, what: str = "masks_available") -> str | None:
+    """The single .root file to probe for `file_or_dir`, or None.
+
+    A directory is resolved to the first .root file under it (recursively,
+    sorted for reproducibility). Only *local* paths are searched -- xrootd and
+    other remote URLs are always passed straight through to uproot.
+    """
+    path = str(file_or_dir)
+    if not path:
+        return None
+    local = Path(path)
+    if "://" not in path and local.is_dir():
+        found = sorted(local.rglob("*.root"))
+        if not found:
+            logger.warning(f"{what}: no .root file under {path} — assuming no masks")
+            return None
+        return str(found[0])
+    return path
+
+
+def _probe_mask_branch(candidate: str, tree: str, what: str = "masks_available") -> bool:
+    """Does `candidate`'s `tree` carry PRESELECTION_MASK_BRANCH? Never raises."""
+    try:
+        import uproot
+    except ImportError:  # pragma: no cover - uproot is a declared dependency
+        logger.warning(f"{what}: uproot not importable — assuming no masks")
+        return False
+
+    try:
+        with uproot.open(candidate) as fh:
+            obj = fh.get(tree, None)
+            if obj is None and tree != "ntuple":
+                # Friend files are written with the same folder/tree layout as
+                # the ntuple they accompany, but a hand-made or differently
+                # nested friend may carry the plain top-level tree instead --
+                # try that before giving up, rather than reporting "no masks"
+                # for a friend that does have them.
+                obj = fh.get("ntuple", None)
+            if obj is None:
+                logger.warning(
+                    f"{what}: no '{tree}' tree in {candidate} — assuming no masks"
+                )
+                return False
+            have = PRESELECTION_MASK_BRANCH in obj.keys()
+    except Exception as exc:  # noqa: BLE001 -- probe must never be fatal
+        logger.warning(f"{what}: could not read {candidate} ({exc}) — assuming no masks")
+        return False
+
+    logger.info(
+        f"{what}: {candidate} "
+        f"{'HAS' if have else 'does NOT have'} '{PRESELECTION_MASK_BRANCH}'"
+    )
+    return have
+
+
+def masks_available(
+    file_or_dir: str | Path,
+    tree: str = "ntuple",
+    friend_dirs=None,
+) -> bool:
+    """
+    True if the given ROOT input carries the `presel_mask` branch, i.e. was
+    produced by a CROWN version that books the selection masks.
+
+    CROWN can write the masks either INTO the main ntuple (selection_config.py,
+    booked from config.py) or into a separate FRIEND tree
+    (selection_friends.py) -- both produce identical values. `friend_dirs` is
+    the (optional) sequence of friend locations the caller is going to ATTACH
+    to this input: each may be a single friend .root file or a directory to
+    search. The main ntuple is probed first, the friends only if it has no
+    masks, so "masks in the ntuple" costs exactly what it always did and
+    "masks in a friend" is found without the caller having to know which
+    layout its production used.
+
+    `file_or_dir` (and each friend entry) may be a single .root file or a
+    directory -- in the latter case the first .root file found (recursively,
+    sorted for reproducibility) is inspected. Returns False, never raises,
+    when nothing can be opened or read: this is a *capability probe* driving
+    an automatic fallback to the legacy cut strings, so an unreachable/odd
+    input must degrade to "no masks" rather than kill the job.
+
+    Uses uproot (already a dependency here -- common/helper_collection.py,
+    datasets/samplemanager/calculate_genweights.py) rather than PyROOT, so
+    that it stays importable/cheap from the plain `taukitflow` conda env and
+    from run.py's driver process, which never imports ROOT itself.
+    """
+    candidate = _resolve_root_candidate(file_or_dir)
+    if candidate is not None and _probe_mask_branch(candidate, tree):
+        return True
+
+    for friend in friend_dirs or []:
+        friend_candidate = _resolve_root_candidate(friend)
+        if friend_candidate is None:
+            continue
+        if _probe_mask_branch(friend_candidate, tree):
+            logger.info(
+                f"masks_available: '{PRESELECTION_MASK_BRANCH}' found in the friend "
+                f"{friend_candidate} (masks live in a friend tree, not in the ntuple)"
+            )
+            return True
+
+    return False
 
 
 # ── Signal sample access ──────────────────────────────────────────────────────

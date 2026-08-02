@@ -4438,3 +4438,165 @@ branch-name-correct, physically sane DNN categorization confirmed against real 2
   validation (nn friends apparently not present for every single file) -- logged but non-fatal, and
   didn't affect the DY-only run actually exercised here; worth checking if/when a wider
   process-selection is run for real.
+
+## Phase 9 — CROWN selection masks: filter on precomputed branches instead of re-composing cut strings
+
+**Branch:** `feature/selection-masks` (this repo, off `master`), paired with the same-named
+branches in CROWN (off `NanoAODv15`) and the `TauFakeFactors` submodule (off `run3_smhtt`).
+This section covers the TauKITFlow half only.
+
+### Problem
+
+The same event selections were written out independently in at least three places: this repo's
+`config/cuts.yaml` (+ hardcoded cuts in `channel_selection.py`/`variations.py`), TauFakeFactors'
+`preselection_{ch}.yaml` / `fake_factors_{ch}.yaml` / `corrections_{ch}.yaml`, and in-code
+overrides (the SS control regions in `FF_Wjets.py` / `FF_ttbar.py`). That duplication had already
+caused real drift — the anti-iso WP hardcoded to `Medium` in `variations.py`, and the `nbtag`
+cuts silently disabled in TauFakeFactors (`helper/ff_functions.py::apply_region_filters` skips
+every `nbtag`/`bb_selection` key). Phases 5.2/6e/6f removed the duplication *within* this repo;
+they could not remove it *across* repos, because each repo re-composed the cuts as C++ strings at
+run time.
+
+### Design
+
+Define every selection ONCE, in CROWN, as boolean mask branches on the ntuples; downstream tools
+filter on a single branch instead of rebuilding the cut string. CROWN writes, per channel:
+`presel_mask`, `sel_os`, `sel_ss` (all scopes incl. em) plus the `ff_*` fake-factor region masks
+(et/mt: QCD/Wjets/ttbar SR/AR/SRlike/ARlike + the in-code `_ss` variants + `process_fractions` +
+the `DR_SR`/`AR_SR` correction regions; tt: the same for leading and subleading QCD; em: none).
+Each mask is the full effective cut set, including `nbtag` and the possibly-inverted lepton-veto
+combination.
+
+### Supersedes the Phase-6-era "keep preselection downstream" decision (STATUS.md l.76)
+
+That decision — preselection stays a downstream skim, not a CROWN producer — is **explicitly
+superseded by the user** for this feature. The reasoning it was based on (moving preselection into
+CROWN makes cut tweaks expensive, because every change means a full re-production) does not apply
+to the mask design: CROWN *writes* the masks but does **not** filter on them by default
+(`APPLY_PRESELECTION_FILTER = False`), so a mask that turns out wrong costs a re-production only
+if you were actually hard-filtering on it. The downstream skim (`shapes/preselect.py`) still
+exists and still does the skimming — it just consults one branch instead of re-evaluating six cut
+strings.
+
+### What changed here
+
+- **`config/variables.yaml`** — new top-level `selection_masks:` block (`common` + per-channel;
+  `em: []`). Deliberately NOT appended to `output_features:`: that list also feeds
+  `get_training_variables()` (`trainings/src/helper.py`, `trainings/create_training_dataset.py`)
+  and `plotting/plot_shapes_control.py`'s variable set, so masks there would have silently become
+  DNN input features and control-plot variables.
+- **`config/analysis.py`** — `get_region_mask_names(era, channel)` (common first, then the
+  channel's FF regions; `era` validated and documented as content- not name-relevant) and
+  `masks_available(file_or_dir, tree=...)`, an uproot-based capability probe for `presel_mask`
+  that accepts a file, an xrootd URL or a directory and **never raises** — an unreadable input
+  degrades to "no masks". Plus the `PRESELECTION_MASK_BRANCH` constant.
+- **`config/generate_tff_configs.py`, `shapes/preselect.py`** — `output_features +
+  get_region_mask_names(...)` for the generated TFF `preselection_{ch}.yaml` and for the skim's
+  Snapshot column list. The masks MUST survive the skim: the downstream FF calculation filters its
+  regions on them.
+- **`shapes/preselect.py`** — new `_apply_preselection()` replaces the per-cut `Filter` loop at
+  BOTH call sites (backgrounds/data and signals) with a single
+  `Filter("presel_mask > 0.5", "presel:mask")` when the branch is present.
+- **`shapes/selection/channel_selection.py`** — new `use_masks` parameter; when True and
+  `preselected=False`, every preselection-derived cut (tau decay mode, vsEle/vsMu discriminators,
+  tau-pt/trigger, `jet_vetomap`, em's `electron_eta`) collapses into one named cut
+  `Cut("presel_mask > 0.5", "presel_mask")`.
+- **`shapes/produce_shapes.py`** — `detect_masks()` probes the first booked input file once per
+  (era, channel) and threads `use_masks` into both `get_analysis_units()` and
+  `get_control_units()`; new `--force-legacy-cuts`.
+- **`run.py`** — `--force-legacy-cuts` with the `FORCE_LEGACY_CUTS` env-var fallback used by every
+  other option, passed through to PRESEL, SHAPES/SHAPES-NOSYS, TRAIN-SHAPES and CONFIGS.
+- **`validation_database/validate_selection_masks.py`** (new) — see below. `.gitignore` gained
+  `!validation_database/*.py`, since that directory is otherwise ignored wholesale as
+  ntuple_processor's generated cache.
+
+### Backward compatibility
+
+Branch-existence detection, the same mechanism `preselect.py::_existing_columns()` already used:
+
+- `shapes/preselect.py` decides **per input file** (it streams file by file anyway).
+- `shapes/produce_shapes.py` decides **once per (era, channel)** from the first booked file — a
+  single CROWN production is homogeneous, and probing thousands of mostly-remote files would cost
+  more than the speed-up. Empty datasets and unreadable probes both fall back.
+- Both paths log which one was taken; that log line is the A/B-validation breadcrumb.
+- `--force-legacy-cuts` / `FORCE_LEGACY_CUTS=1` pins the legacy path for A/B runs.
+
+Old (maskless) ntuples therefore work with no flag and no config change, and **Run2 2018 /
+`tff_adapter` is untouched by construction**: that production predates the masks entirely, so
+`masks_available()` reports False for it and `channel_selection.py`'s 2018 branch runs exactly as
+before.
+
+### Decision: os/ss stay literal `q_1*q_2` expressions — masks are NOT substituted
+
+Swapping the `os` cut's expression to `sel_os > 0.5` was considered and rejected. It would only be
+correct if the matching same-sign *variations* also switched to `sel_ss > 0.5`, and those live as
+~12 **module-level constants** in `shapes/selection/variations.py` (`same_sign`, `same_sign_em`,
+`abcd_same_sign`, `same_sign_anti_iso_lt`, the per-era em QCD-weight family, …) built at import
+time with no access to a per-run `use_masks`. Parameterising them all means turning every one into
+a factory and rewiring `produce_shapes.py`'s variation registration — a large, risky diff for zero
+physics gain, since `sel_os`/`sel_ss` encode exactly `(q_1*q_2) < 0` / `> 0`. So `use_masks`
+touches only the preselection-derived cuts. `sel_os`/`sel_ss` are still written by CROWN and kept
+through the skim, for TauFakeFactors' use.
+
+Correspondingly, **every `channel_selection:` cut stays a named string cut** — `os`, `tau_iso`,
+the three vetoes, the lepton isos, `mt_cut`, and the hardcoded `pt_2 > 25` / `mt_1 < 60`. That is
+what keeps `variations.py`'s replace-**by-name** API (`ReplaceCut("same_sign", "os", ...)`,
+`ReplaceCut(..., "tau_iso", ...)`) working identically on masked and unmasked inputs. The
+`tau_iso`/anti-iso variation cut strings were deliberately not touched: they are
+evaluation-region definitions replaced by name, out of scope here.
+
+### Known, intended behaviour differences (both signed off, neither is a bug)
+
+1. **`had_tau_decay_mode` on raw ntuples.** `presel_mask` is the FULL per-channel `preselection:`
+   block of `cuts.yaml`, which includes `had_tau_decay_mode`. The legacy `channel_selection.py`
+   path never applied that cut when reading raw ntuples — it picks only
+   `had_tau_id_vs_ele`/`vs_mu`/`had_tau_pt`/`lep_pt` out of that same block, plus `jet_veto`. So a
+   masked raw-ntuple run is very slightly TIGHTER than the same run with `--force-legacy-cuts`, by
+   exactly the decay-mode requirement — and now **agrees** with the preselected (`--presel-dir`)
+   path, which always applied it. The masks fix a pre-existing inconsistency rather than
+   introducing one.
+2. **`nbtag`.** The masks encode `nbtag` as written in the TauFakeFactors YAMLs (Wjets
+   `nbtag == 0`; ttbar `nbtag >= 1` mt / `>= 2` et for 2022-23, `>= 0` for 2024+), even though
+   TauFakeFactors' `apply_region_filters` skips every `nbtag`/`bb_selection` cut key today and so
+   currently selects LOOSER regions than its own configs specify. This is user decision #4 of the
+   plan: encode the YAML faithfully, document the difference, and measure it rather than silently
+   reproducing the bug. The validation script reports the per-region event-count delta for exactly
+   this.
+
+### Validation
+
+`validation_database/validate_selection_masks.py` (new, standalone, argparse) asserts per region,
+on a real mask-bearing ntuple:
+
+    rdf.Filter(f"(({mask} > 0.5) != ({cutstring}))").Count() == 0
+
+Region cut strings are reconstructed from READ-ONLY sources: `config/cuts.yaml` for `presel_mask`;
+`fake_factors_{ch}.yaml` for the base regions and `process_fractions[_subleading]`; the in-code SS
+flip for the `_ss` variants; and `corrections_{ch}.yaml`'s `DR_SR` block merged onto the base
+region for the correction regions. `modify_config`'s merge semantics (per-key `SRlike_cuts`/
+`ARlike_cuts` override; `AR_SR_cuts` overriding BOTH, applied last) are **re-implemented locally
+rather than imported**, so a bug in that merge cannot hide itself by being used on both sides of
+the comparison. It also evaluates each region "current-TFF-behavior" (nbtag keys dropped) and
+prints the delta, and cross-checks — with no events at all — that the reconstructed region names
+agree with both `config/variables.yaml`'s declared inventory and the `region_mask:` keys in the
+TauFakeFactors YAMLs.
+
+**Done so far:** all changed Python compiles; the region reconstruction was exercised offline for
+all 4 channels x {2022preEE, 2024} — 23 regions for mt/et, 17 for tt, 1 for em — with **complete
+coverage in both directions** (no mask declared in `variables.yaml` that cannot be rebuilt from
+the YAMLs, and none rebuilt that is not declared) and **zero naming drift** against the TFF
+`region_mask:` keys.
+
+**Not done, and why:** the event-level assertions have NOT been run — no mask-bearing ntuple
+exists yet (CROWN's `feature/selection-masks` production has not been made). The A/B downstream
+comparison (PRESEL+FF+FF-CORR+SHAPES with masks vs `--force-legacy-cuts`, expected bit-identical
+except the known nbtag regions, plus one run on an old maskless ntuple expected bit-identical to
+pre-branch output) is likewise pending that production. Clear `.RDF_CACHE` before any such run —
+TauFakeFactors' `@cache_rdf_snapshot` will otherwise serve stale, pre-mask snapshots.
+
+**Open item:** the validation script's per-region check accepts a match against either the plain
+cut string OR the cut string ANDed with `presel_mask`, and reports which one held. The FF region
+definitions are written to be applied on top of the preselection (that is how TauFakeFactors feeds
+them), so on a raw unskimmed ntuple the mask may legitimately follow either convention depending
+on how CROWN composes it. Once the first real production exists, pin the convention CROWN actually
+uses and tighten the script to that single check.

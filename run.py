@@ -57,7 +57,12 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(REPO_ROOT))
+# TauFakeFactors/ too: config/logging_setup_configs.py imports its CustomLogging
+# package, so this script's own imports below need it -- pythonpath_with_tff()
+# only fixes up the *child* processes' environment.
+sys.path.insert(1, str(REPO_ROOT / "TauFakeFactors"))
 from common.conda_env import run_in_conda  # noqa: E402
+from config.analysis import ff_config_era  # noqa: E402
 
 MODES = [
     "XSEC",
@@ -95,6 +100,18 @@ Optional:
   VS_ELE_WP        (default: per-channel, matching smhtt_ul's Run3 configs --
                     Tight for et, VVLoose otherwise; set this to force the
                     same WP for every channel instead)
+  FORCE_LEGACY_CUTS  Set to 1 to never select on CROWN's precomputed selection
+                    masks (presel_mask/sel_os/sel_ss/ff_*) and always build the
+                    cuts as strings from config/cuts.yaml. Same as
+                    --force-legacy-cuts. Only needed for A/B validation of the
+                    two paths: PRESEL/SHAPES detect the masks per input and fall
+                    back to the cut strings automatically on old ntuples.
+  MASK_FRIENDS_DIR   Base dir of CROWN's selection-mask FRIEND trees, for
+                    productions that wrote the masks next to the ntuples
+                    (CROWN selection_friends.py) rather than into them
+                    (selection_config.py). Same as --mask-friends-dir. Unset
+                    for masks-in-the-ntuple and maskless productions: PRESEL
+                    and SHAPES detect both without any flag.
   FF_FRIENDS_DIR   Path to fake factor friend trees (enables FF mode in SHAPES)
   FF_CONFIG        Override config path for FF mode
   FF_CORR_CONFIG   Override config path for FF-CORR mode
@@ -129,6 +146,7 @@ def make_parser() -> argparse.ArgumentParser:
     parser.add_argument("--vs-jet-wp", dest="vs_jet_wp", default=None)
     parser.add_argument("--vs-ele-wp", dest="vs_ele_wp", default=None)
     parser.add_argument("--nthreads", default=None)
+    parser.add_argument("--nworkers", default=None)
     parser.add_argument("--nprocs", default=None)
     parser.add_argument("--output-dir", dest="output_dir", default=None)
     parser.add_argument("--ff-friends-dir", dest="ff_friends_dir", default=None)
@@ -142,6 +160,27 @@ def make_parser() -> argparse.ArgumentParser:
              "(/ceph/$USER/TauKITFlow_shapes/$NTUPLETAG/preselection), so "
              "SHAPES picks up PRESEL's output automatically. Pass an empty "
              "string to make SHAPES read raw CROWN ntuples instead.",
+    )
+    parser.add_argument(
+        "--force-legacy-cuts", dest="force_legacy_cuts", action="store_true", default=None,
+        help="Never select on CROWN's precomputed selection-mask branches (presel_mask, "
+             "sel_os/sel_ss, ff_*); always build the cuts as strings from config/cuts.yaml. "
+             "Passed through to shapes/preselect.py (PRESEL) and shapes/produce_shapes.py "
+             "(SHAPES/SHAPES-NOSYS/TRAIN-SHAPES/CONFIGS). Without it those tools detect the "
+             "masks per input themselves and fall back automatically on old, maskless "
+             "ntuples -- this flag is the A/B-validation escape hatch, not something a "
+             "normal run needs. Env: FORCE_LEGACY_CUTS=1.",
+    )
+    parser.add_argument(
+        "--mask-friends-dir", dest="mask_friends_dir", default=None,
+        help="Base dir of CROWN's selection-mask FRIEND trees, for productions that wrote the "
+             "masks (presel_mask, sel_os/sel_ss, ff_*) next to the ntuples "
+             "(CROWN selection_friends.py) instead of into them (selection_config.py), e.g. "
+             "/store/user/$USER/CROWN/ntuples/$NTUPLETAG/CROWNFriends/selection/. Passed to "
+             "PRESEL (shapes/preselect.py --mask-friends) and, when SHAPES reads raw CROWN "
+             "ntuples, to shapes/produce_shapes.py as an extra --{channel}-friend-directory. "
+             "Leave unset for masks-in-the-ntuple or maskless productions -- both are detected "
+             "and handled without it. Env: MASK_FRIENDS_DIR.",
     )
     parser.add_argument(
         "--ff-input-dir", dest="ff_input_dir", default=None,
@@ -158,6 +197,18 @@ def parse_args(argv=None):
     parser = make_parser()
     args, extra = parser.parse_known_args(argv)
     return args, extra
+
+
+def _truthy(value) -> bool:
+    """Interpret an env-var-or-flag value as a boolean.
+
+    `--force-legacy-cuts` sets True; the env-var fallback delivers a string,
+    where the usual "0"/"false"/"no"/"" spellings must mean *off* (an
+    inherited `FORCE_LEGACY_CUTS=0` meaning "on" would be a nasty surprise).
+    """
+    if isinstance(value, str):
+        return value.strip().lower() not in ("", "0", "false", "no", "off")
+    return bool(value)
 
 
 def env_or(value, env_name, default):
@@ -184,6 +235,62 @@ def run_conda(cmd_args, env_overrides=None, conda_env=None):
     if conda_env:
         kwargs["conda_env"] = conda_env
     return run_in_conda(["nice", "-n", "19", *cmd_args], **kwargs)
+
+
+def crown_friend_tag(path):
+    """CROWN friend tag of `path`: the segment after CROWNFriends/CROWNMultiFriends.
+
+    Mirrors shapes/utils.py::friend_tag (and ntuple_processor's booking), kept
+    local because shapes.utils imports ntuple_processor/ROOT, which this driver
+    deliberately never loads. Falls back to the last path segment.
+    """
+    segments = [s for s in str(path).split("/") if s]
+    for marker in ("CROWNFriends", "CROWNMultiFriends"):
+        if marker in segments:
+            i = segments.index(marker)
+            if i + 1 < len(segments):
+                return segments[i + 1]
+    return segments[-1] if segments else ""
+
+
+def friend_directory_args(xsec_friends, mask_friends_dir="", ff_friends_dir=""):
+    """Friend-directory arguments for shapes/produce_shapes.py.
+
+    The generic, "inclusive" friends go into one --{channel}-friend-directory
+    occurrence per channel, listing EVERY friend base dir that channel needs:
+    produce_shapes.py declares those options as nargs="+" without
+    action="append", so a second occurrence of the same flag *replaces* the
+    first and listing the dirs together is the only way to attach more than
+    one friend per channel.
+
+    * xsec friends -- every channel, always (MC weight columns).
+    * selection-mask friends -- every channel, when CROWN wrote the masks as a
+      friend tree (selection_friends.py) instead of into the ntuple. They are
+      what makes detect_masks() see the masks and what the booked cut
+      expressions then read (unqualified `presel_mask`/`sel_*`/`ff_*`).
+
+    Fake-factor friends go into the same per-channel lists (et/mt/tt only --
+    em has no fake factors and the FF production writes no files for it), but
+    their ROLE is declared separately with --ff-friends-tag, which carries the
+    CROWN friend tag of the FF directory. filter_friends() uses that to drop
+    them for signal samples instead of guessing from the directory being
+    *named* something like "fake_factors_...".
+    """
+    friend_dirs = {ch: [xsec_friends] for ch in ("et", "mt", "tt", "em")}
+    if mask_friends_dir:
+        for ch in friend_dirs:
+            friend_dirs[ch].append(mask_friends_dir)
+    if ff_friends_dir:
+        for ch in ("et", "mt", "tt"):
+            friend_dirs[ch].append(ff_friends_dir)
+    args = [
+        arg
+        for ch, dirs in friend_dirs.items()
+        for arg in (f"--{ch}-friend-directory", *dirs)
+    ]
+    if ff_friends_dir:
+        args += ["--ff-friends-tag", crown_friend_tag(ff_friends_dir)]
+    return args
 
 
 def mode_xsec(cfg, extra):
@@ -231,14 +338,18 @@ def mode_shapes(cfg, extra, mode):
     outfile = run_dir / "shapes.root"
 
     extra_args = []
-    ff_friends = []
     if cfg["ff_friends_dir"]:
-        ff_friends = [
-            "--et-friend-directory", cfg["ff_friends_dir"],
-            "--mt-friend-directory", cfg["ff_friends_dir"],
-            "--tt-friend-directory", cfg["ff_friends_dir"],
-        ]
         extra_args += ["--ff-type", "fake_factor"]
+
+    # Selection-mask friends only when reading raw CROWN ntuples: the
+    # preselection tree carries the masks as ordinary branches (PRESEL keeps
+    # them in its Snapshot), so a --presel-dir run must not look for a friend
+    # next to it.
+    friend_args = friend_directory_args(
+        paths.xsec_friends,
+        mask_friends_dir="" if cfg["presel_dir"] else cfg["mask_friends_dir"],
+        ff_friends_dir=cfg["ff_friends_dir"],
+    )
 
     directory_args = ["--directory", paths.ntuples]
     if cfg["presel_dir"]:
@@ -258,6 +369,9 @@ def mode_shapes(cfg, extra, mode):
     if cfg["vs_ele_wp"]:
         extra_args += ["--vs-ele-wp", cfg["vs_ele_wp"]]
 
+    if cfg["force_legacy_cuts"]:
+        extra_args.append("--force-legacy-cuts")
+
     def _produce(output_file, ff_only=False):
         cmd = [
             "python",
@@ -274,15 +388,14 @@ def mode_shapes(cfg, extra, mode):
             "--validation-tag", cfg["ntupletag"],
             "--validation-db-root", cfg["validation_dir"],
             *directory_args,
-            "--et-friend-directory", paths.xsec_friends,
-            "--mt-friend-directory", paths.xsec_friends,
-            "--tt-friend-directory", paths.xsec_friends,
-            "--em-friend-directory", paths.xsec_friends,
-            *ff_friends,
+            *friend_args,
             "--output-file", str(output_file),
             "--num-processes", str(cfg["nprocs"]),
             "--num-threads", str(cfg["nthreads"]),
-            "--xrootd",
+            # Only use xrootd for raw CROWN ntuples (served by the CMS xrootd
+            # endpoint). Preselected files live on the user's /ceph space which
+            # that server does not serve, so skip --xrootd there.
+            *(["--xrootd"] if not cfg["presel_dir"] else []),
             *extra_args,
             *(["--ff-only"] if ff_only else []),
             *extra,
@@ -389,6 +502,7 @@ def mode_train_shapes(cfg, extra):
 
     print(f"[TRAIN-SHAPES] Producing training shapes: era={cfg['era']} channels={cfg['channels']}")
     vs_ele_wp_args = ["--vs-ele-wp", cfg["vs_ele_wp"]] if cfg["vs_ele_wp"] else []
+    legacy_cuts_args = ["--force-legacy-cuts"] if cfg["force_legacy_cuts"] else []
     cmd = [
         "python",
         "shapes/produce_shapes.py",
@@ -398,15 +512,13 @@ def mode_train_shapes(cfg, extra):
         "--validation-tag", cfg["ntupletag"],
         *vs_ele_wp_args,
         "--directory", paths.ntuples,
-        "--et-friend-directory", paths.xsec_friends,
-        "--mt-friend-directory", paths.xsec_friends,
-        "--tt-friend-directory", paths.xsec_friends,
-        "--em-friend-directory", paths.xsec_friends,
+        *friend_directory_args(paths.xsec_friends, mask_friends_dir=cfg["mask_friends_dir"]),
         "--output-file", str(outfile),
         "--num-processes", str(cfg["nprocs"]),
         "--num-threads", str(cfg["nthreads"]),
         "--xrootd",
         "--skip-systematic-variations",
+        *legacy_cuts_args,
         *extra,
     ]
     return run_conda(cmd, env_overrides={"PYTHONPATH": pythonpath_with_tff()}).returncode
@@ -422,6 +534,7 @@ def mode_configs(cfg, extra):
 
     print(f"[CONFIGS] Collecting ntuple_processor configs: era={cfg['era']} channels={cfg['channels']}")
     vs_ele_wp_args = ["--vs-ele-wp", cfg["vs_ele_wp"]] if cfg["vs_ele_wp"] else []
+    legacy_cuts_args = ["--force-legacy-cuts"] if cfg["force_legacy_cuts"] else []
     cmd = [
         "python",
         "shapes/produce_shapes.py",
@@ -431,14 +544,12 @@ def mode_configs(cfg, extra):
         "--validation-tag", cfg["ntupletag"],
         *vs_ele_wp_args,
         "--directory", paths.ntuples,
-        "--et-friend-directory", paths.xsec_friends,
-        "--mt-friend-directory", paths.xsec_friends,
-        "--tt-friend-directory", paths.xsec_friends,
-        "--em-friend-directory", paths.xsec_friends,
+        *friend_directory_args(paths.xsec_friends, mask_friends_dir=cfg["mask_friends_dir"]),
         "--output-file", str(outfile.with_suffix(".root")),
         "--collect-config-only",
         "--xrootd",
         "--config-output-file", str(outfile),
+        *legacy_cuts_args,
         *extra,
     ]
     return run_conda(cmd, env_overrides={"PYTHONPATH": pythonpath_with_tff()}).returncode
@@ -483,7 +594,10 @@ def mode_presel(cfg, extra):
             "--output-dir", output_dir,
             "--directory", ul_paths.ntuples,
             "--xsec-friends", ul_paths.xsec_friends,
+            *(["--mask-friends", cfg["mask_friends_dir"]] if cfg["mask_friends_dir"] else []),
             "--nthreads", str(cfg["nthreads"]),
+            "--nworkers", str(cfg["nworkers"]),
+            *(["--force-legacy-cuts"] if cfg["force_legacy_cuts"] else []),
             *extra,
         ]
         # process_background_process() lazily imports TauFakeFactors'
@@ -516,7 +630,9 @@ def _patched_ff_config(era: str, channel: str, config_kind: str, ff_input_dir: s
     import tempfile
     import yaml
 
-    src_dir = REPO_ROOT / "TauFakeFactors" / "configs" / "smhtt_ul" / era
+    # 2022preEE/2022postEE (and the 2023 halves) share one set of FF configs,
+    # kept in the combined `2022` / `2023` directory -- see analysis.ff_config_era.
+    src_dir = REPO_ROOT / "TauFakeFactors" / "configs" / "smhtt_ul" / ff_config_era(era)
     tmp_dir = Path(tempfile.mkdtemp(prefix=f"tff_config_{era}_{channel}_"))
 
     with open(src_dir / "common_settings.yaml") as f:
@@ -547,7 +663,7 @@ def mode_ff(cfg, extra):
         if cfg["ff_input_dir"]:
             config_file = _patched_ff_config(cfg["era"], channel, "fake_factors", cfg["ff_input_dir"])
         else:
-            config_file = f"TauFakeFactors/configs/smhtt_ul/{cfg['era']}/fake_factors_{channel}.yaml"
+            config_file = f"TauFakeFactors/configs/smhtt_ul/{ff_config_era(cfg['era'])}/fake_factors_{channel}.yaml"
         cmd = ["python", "TauFakeFactors/ff_calculation.py", "--config-file", config_file, *extra]
         result = run_plain(cmd, env_overrides=env_overrides)
         if result.returncode != 0:
@@ -570,7 +686,7 @@ def mode_ff_corr(cfg, extra):
         if cfg["ff_input_dir"]:
             config_file = _patched_ff_config(cfg["era"], channel, "corrections", cfg["ff_input_dir"])
         else:
-            config_file = f"TauFakeFactors/configs/smhtt_ul/{cfg['era']}/corrections_{channel}.yaml"
+            config_file = f"TauFakeFactors/configs/smhtt_ul/{ff_config_era(cfg['era'])}/corrections_{channel}.yaml"
         cmd = ["python", "TauFakeFactors/ff_corrections.py", "--config-file", config_file, *extra]
         result = run_plain(cmd, env_overrides=env_overrides)
         if result.returncode != 0:
@@ -718,6 +834,9 @@ def main(argv=None) -> int:
         # "validation_database" defaults).
         "output_dir": env_or(args.output_dir, "OUTPUT_DIR", None),
         "nthreads": env_or(args.nthreads, "NTHREADS", "4"),
+        # PRESEL only: how many sample jobs run concurrently, each with
+        # `nthreads` ROOT threads (shapes/preselect.py --nworkers).
+        "nworkers": env_or(args.nworkers, "NWORKERS", "4"),
         "nprocs": env_or(args.nprocs, "NPROCS", "1"),
         "presel_dir": env_or(args.presel_dir, "PRESEL_DIR", None),
         "validation_dir": None,
@@ -725,6 +844,15 @@ def main(argv=None) -> int:
         "ff_config": env_or(args.ff_config, "FF_CONFIG", ""),
         "ff_corr_config": env_or(args.ff_corr_config, "FF_CORR_CONFIG", ""),
         "ff_input_dir": env_or(args.ff_input_dir, "FF_INPUT_DIR", ""),
+        # Empty unless the production shipped CROWN's selection masks as a
+        # friend tree -- see --mask-friends-dir. Masks-in-the-ntuple and
+        # maskless productions need no value here.
+        "mask_friends_dir": env_or(args.mask_friends_dir, "MASK_FRIENDS_DIR", ""),
+        # store_true with default=None so an unset flag still falls through to
+        # the env var, matching every other option's `${VAR:-default}`
+        # semantics above (a plain store_true would default to False and
+        # shadow FORCE_LEGACY_CUTS).
+        "force_legacy_cuts": _truthy(env_or(args.force_legacy_cuts, "FORCE_LEGACY_CUTS", None)),
     }
 
     needs_ntupletag = mode in (

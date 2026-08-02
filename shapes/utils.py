@@ -93,7 +93,10 @@ def book_histograms(manager, processes, datasets, variations=None, enable_check=
     logger.debug(f"Datasets: {datasets.keys()}")
     if not isinstance(processes, set):
         processes = set(processes)
-    unitlist = [unit for process in processes for unit in datasets[process]]
+    missing = processes - datasets.keys()
+    if missing:
+        logger.warning(f"Skipping processes with no booked units: {missing}")
+    unitlist = [unit for process in processes if process in datasets for unit in datasets[process]]
     if variations is not None:
         variationlist = []
         for variation in variations:
@@ -110,23 +113,154 @@ def book_histograms(manager, processes, datasets, variations=None, enable_check=
     )
 
 
-def filter_friends(dataset, friend):
-    # Add fake factor friends only for backgrounds.
-    if re.match("(gg|qq|susybb|susygg|tt|w|z|v)h", dataset.lower()):
-        if "FakeFactors" in friend or "EMQCDWeights" in friend:
-            return False
-    # Add NLOReweighting friends only for ggh signals.
-    if "NLOReweighting" in friend:
-        if re.match("(susygg)h", dataset.lower()) and not "powheg" in dataset.lower():
-            pass
-        else:
-            return False
-    elif re.match("data", dataset.lower()):
-        if "xsec" in friend:
-            return False
-    elif re.match("emb", dataset.lower()):
-        if "xsec" in friend:
-            return False
+# Markers that delimit the friend tag inside a CROWN friend path. Mirrors
+# ntuple_processor/booking.py::add_tagged_friends -- the tag is the path
+# segment immediately following one of these markers. Keep in sync with
+# booking.py (that file lives in a submodule and must not be edited here).
+_FRIEND_TAG_MARKERS = ("CROWNFriends", "CROWNMultiFriends")
+
+
+def friend_tag(friend):
+    """Return the CROWN friend tag of a friend directory path, or None.
+
+    The tag is the path segment right after ``CROWNFriends`` or
+    ``CROWNMultiFriends``, exactly as
+    ``ntuple_processor/booking.py::add_tagged_friends`` derives it, e.g.::
+
+        /common_path/CROWNFriends/fastmtt/ntuple            -> "fastmtt"
+        root://xrootd.example/.../CROWNMultiFriends/NNclas/ -> "NNclas"
+
+    Copes with xrootd URLs (the marker is matched on whole path segments, so
+    the ``root://host//store/...`` prefix is irrelevant), trailing slashes and
+    paths containing neither marker (returns None).
+    """
+    if not friend:
+        return None
+    segments = [segment for segment in str(friend).split("/") if segment]
+    for marker in _FRIEND_TAG_MARKERS:
+        if marker in segments:
+            idx = segments.index(marker)
+            if idx + 1 < len(segments):
+                return segments[idx + 1]
+            return None
+    return None
+
+
+def _normalize_tag(tag):
+    """Lowercase a friend tag and drop separators/punctuation.
+
+    ``fake_factors_260618_v5`` -> ``fakefactors260618v5``, ``FakeFactors`` ->
+    ``fakefactors``, so both hit the same rule via prefix matching below.
+    """
+    return re.sub(r"[^a-z0-9]", "", str(tag).lower())
+
+
+def _is_signal(dataset):
+    """The historic signal-sample regex (ggH/qqH/susybbH/susyggH/ttH/WH/ZH/VH)."""
+    return bool(re.match(r"(gg|qq|susybb|susygg|tt|w|z|v)h", dataset.lower()))
+
+
+def _keep_for_non_signal(dataset):
+    return not _is_signal(dataset)
+
+
+def _keep_for_nlo_reweighting(dataset):
+    # Only the non-powheg susyggH signals carry NLO reweighting friends.
+    return bool(re.match(r"(susygg)h", dataset.lower())) and "powheg" not in dataset.lower()
+
+
+def _keep_for_xsec(dataset):
+    # Cross-section friends are MC-only: never for data nor for embedding.
+    return not re.match(r"(data|emb)", dataset.lower())
+
+
+# Friend attachment rules, keyed by the *normalized* friend tag (see
+# _normalize_tag) rather than by substring-searching the whole friend path --
+# the real production directories are named e.g. "fake_factors_260618_v5", for
+# which the old `"FakeFactors" in friend` test silently never fired.
+#
+# Each entry is (tuple of normalized tag prefixes, predicate(dataset) -> bool).
+# The first entry whose prefix matches the normalized tag wins, so order the
+# table most-specific-first. A tag matching no entry (fastmtt, selection, NN
+# friends, ...) is attached to every dataset.
+#
+# Prefix matching is deliberate so that versioned/dated directories
+# ("fake_factors_260618_v5", "ff_260618") resolve to the same rule as the bare
+# name. Note "fastmtt" and "fakefactors" only share the two leading letters
+# "fa", so neither the "fakefactor" nor the "ff" prefix can capture fastmtt.
+# Adding a new friend type should be a one-line addition here.
+_FRIEND_RULES = (
+    # Fake-factor friends: backgrounds/data only, never on signal samples.
+    # NOTE this entry is only the FALLBACK for FF friends whose tag the
+    # caller did not declare (see filter_friends' ff_friends_tags) --
+    # run.py/produce_shapes.py declare the role explicitly via
+    # --ff-friends-tag and do not rely on the tag reading like "fake factors".
+    (("fakefactors", "fakefactor", "ff"), _keep_for_non_signal),
+    # Same-sign/EMQCD weights: backgrounds/data only, never on signal samples.
+    (("emqcdweights", "emqcdweight"), _keep_for_non_signal),
+    # NLO reweighting: only non-powheg susyggH signals.
+    (("nloreweighting",), _keep_for_nlo_reweighting),
+    # Cross-section friends: MC only, not for data or embedding.
+    (("xsec",), _keep_for_xsec),
+)
+
+# Friend tags we already reported as having no rule, so the debug message is
+# emitted once per tag instead of once per (dataset, friend) pair.
+_UNKNOWN_FRIEND_TAGS = set()
+
+
+def declared_ff_tags(ff_friends_tags):
+    """Normalized lookup set of the friend TAGS declared as fake-factor friends.
+
+    Accepts None/empty (nothing declared) or any iterable of tag names, so any
+    number of tags can be declared per run (e.g. two FF versions). Tags are
+    normalized the same way as the rule table below, so the declaration is
+    insensitive to case and to `_`/`-` separators.
+    """
+    if not ff_friends_tags:
+        return frozenset()
+    if isinstance(ff_friends_tags, frozenset):
+        return ff_friends_tags
+    return frozenset(_normalize_tag(tag) for tag in ff_friends_tags)
+
+
+def filter_friends(dataset, friend, ff_friends_tags=None):
+    """Decide whether a friend directory should be attached to a dataset.
+
+    Called once per (dataset, friend directory) pair, so any number of friend
+    directories can be passed per run; each is judged independently, including
+    two directories that normalize to the same rule (e.g. fake_factors_v4 and
+    fake_factors_v5). An unknown or underivable tag never raises: the friend is
+    attached.
+
+    ``ff_friends_tags`` are the friend TAGS the *caller* declared to be
+    fake-factor friends (produce_shapes.py's ``--ff-friends-tag``, fed by
+    run.py from ``--ff-friends-dir``). A declared tag takes the fake-factors
+    rule regardless of how it reads, so a production directory tagged
+    ``fake_factors_260618_v5`` today and ``myfriends_v2`` tomorrow keeps
+    behaving identically. Tags that were NOT declared fall back to the
+    tag-name inference in _FRIEND_RULES below, which keeps a direct
+    produce_shapes.py invocation that never passes ``--ff-friends-tag``
+    working unchanged.
+    """
+    tag = friend_tag(friend)
+    if tag is not None and _normalize_tag(tag) in declared_ff_tags(ff_friends_tags):
+        return _keep_for_non_signal(dataset)
+    if tag is None:
+        if friend not in _UNKNOWN_FRIEND_TAGS:
+            _UNKNOWN_FRIEND_TAGS.add(friend)
+            logger.debug(
+                f"No CROWNFriends/CROWNMultiFriends segment in friend directory "
+                f"{friend}; attaching it to all datasets."
+            )
+        return True
+    normalized = _normalize_tag(tag)
+    for prefixes, keep in _FRIEND_RULES:
+        if normalized.startswith(prefixes):
+            return keep(dataset)
+    if tag not in _UNKNOWN_FRIEND_TAGS:
+        _UNKNOWN_FRIEND_TAGS.add(tag)
+        logger.debug(f"No filter rule for friend tag '{tag}'; attaching it to all datasets.")
     return True
 
 
@@ -140,6 +274,7 @@ def get_nominal_datasets(
     validation_db_root="validation_database",
     flat_layout=False,
     xrootd=False,
+    ff_friends_tags=None,
 ):
     from config.analysis import get_mc_ntuple_era
 
@@ -149,11 +284,17 @@ def get_nominal_datasets(
     # read from the real era's own directory.
     mc_era = get_mc_ntuple_era(era)
 
+    declared_ff = declared_ff_tags(ff_friends_tags)
+
     jobs = []
     for key, names in files[era][channel].items():
         dataset_era = era if key in ("data", "EMB") else mc_era
         friends = (
-            [fdir for fdir in friend_directories[channel] if filter_friends(key, fdir)]
+            [
+                fdir
+                for fdir in friend_directories[channel]
+                if filter_friends(key, fdir, declared_ff)
+            ]
             if friend_directories is not None
             else []
         )
@@ -208,7 +349,9 @@ def add_tauES_datasets(
     flat_layout=False,
     xrootd=False,
     shiftstring="EMBtauESshift",
+    ff_friends_tags=None,
 ):
+    declared_ff = declared_ff_tags(ff_friends_tags)
     for variation in tauESvariations:
         name = str(round(variation, 2)).replace("-", "minus").replace(".", "p")
         processname = f"emb{name}"
@@ -223,7 +366,7 @@ def add_tauES_datasets(
             [
                 fdir
                 for fdir in friend_directories[channel]
-                if filter_friends("EMB", fdir)
+                if filter_friends("EMB", fdir, declared_ff)
             ],
             validate_samples=False,
             validation_tag=validation_tag,

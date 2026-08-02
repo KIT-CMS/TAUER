@@ -26,8 +26,14 @@ from config.shapes.taues_measurement_binning import categorization as taues_cate
 import tau_es.energy_scales as tau_es_energy_scales
 from shapes.selection.channel_selection import channel_selection
 from config.shapes.control_binning import control_binning as default_control_binning
-from config.analysis import build_files_dict, build_presel_files_dict, vs_ele_wp_for
+from config.analysis import (
+    build_files_dict,
+    build_presel_files_dict,
+    masks_available,
+    vs_ele_wp_for,
+)
 from ntuple_processor import GraphManager, RunManager, UnitManager
+
 
 
 def parse_arguments():
@@ -84,6 +90,20 @@ def parse_arguments():
     parser.add_argument("--em-friend-directory", type=str, default=[], nargs="+")
     parser.add_argument("--mm-friend-directory", type=str, default=[], nargs="+")
     parser.add_argument("--ee-friend-directory", type=str, default=[], nargs="+")
+    parser.add_argument(
+        "--ff-friends-tag", type=str, default=[], nargs="+",
+        help="CROWN friend TAG(s) that hold the FAKE-FACTOR friend trees, e.g. "
+             "'fake_factors_260618_v5'. The tag is the directory right after "
+             "CROWNFriends/CROWNMultiFriends in the friend path. Declaring it "
+             "marks those friends as fake-factor friends, so they are dropped "
+             "for signal samples no matter what the directory is called -- the "
+             "role no longer has to be guessed from the name. The friend "
+             "directories themselves are still passed through the usual "
+             "--{channel}-friend-directory options. Several tags may be given "
+             "(e.g. two FF versions); each friend is judged independently. "
+             "Without this option the role falls back to inferring it from the "
+             "tag name, so existing invocations keep working.",
+    )
     parser.add_argument(
         "--output-file", required=True, type=str, help="Output ROOT file."
     )
@@ -185,6 +205,16 @@ def parse_arguments():
         help="Produce shapes for variables in config/variables.yaml without DNN categorization (use when DNN friend trees are not available).",
     )
     parser.add_argument(
+        "--force-legacy-cuts", action="store_true",
+        help="Never use CROWN's precomputed selection-mask branches; always build the "
+             "preselection as individual cut strings from config/cuts.yaml, even when "
+             "`presel_mask` is present on the inputs. Escape hatch for A/B validation of "
+             "the two paths (they must produce identical shapes) and for debugging a "
+             "suspect mask. Without it, the mask path is chosen automatically per "
+             "(era, channel) from the first input file -- old, maskless ntuples always "
+             "fall back on their own.",
+    )
+    parser.add_argument(
         "--special-analysis", default=None, choices=[None, "TauES"],
         help="Produce shapes for a special analysis instead of the default categorization. "
              "'TauES' books additional per-shift embedded ('emb<shift>') datasets for the "
@@ -210,6 +240,64 @@ def load_variables_from_config(channel):
     logger.info(f"Loaded {len(_filtered)} variables from config/variables.yaml for channel {channel}")
     return _filtered
 
+def detect_masks(datasets, era, channel, force_legacy_cuts=False):
+    """
+    Decide once per (era, channel) whether to select on CROWN's precomputed
+    selection masks or on the legacy cut strings.
+
+    Probes the FIRST booked input file of the first dataset -- and, if that
+    file has no masks, the FRIEND files booked next to it -- for the
+    `presel_mask` branch (config.analysis.masks_available). CROWN writes the
+    masks either into the ntuple (selection_config.py) or into a friend
+    (selection_friends.py); the friends probed here are the very ones
+    ntuple_processor is going to attach to this dataset (they come from the
+    booked Ntuple objects, i.e. from --{channel}-friend-directory), so what is
+    probed is exactly what the booked cuts will see. One probe per
+    era/channel, not per file: a single CROWN production is homogeneous, and
+    shape production books thousands of files whose paths are mostly remote --
+    opening them all would cost more than the production it is meant to speed
+    up. shapes/preselect.py, which streams file by file anyway, does check per
+    file.
+
+    Fails safe in both directions: `--force-legacy-cuts` short-circuits to
+    False, and masks_available() itself returns False (with a warning) for
+    anything it cannot open or read, so an unexpected input degrades to the
+    historical behaviour instead of crashing on a missing branch. That is also
+    what makes Run2 2018 (whose ntuples predate the masks) and every
+    pre-feature production keep working with no flag at all.
+    """
+    if force_legacy_cuts:
+        logger.info(f"[{era}/{channel}] --force-legacy-cuts: selection via cut strings")
+        return False
+
+    probe = None
+    tree = None
+    friend_probes: list[str] = []
+    for dataset in datasets.values():
+        ntuples = getattr(dataset, "ntuples", None) or []
+        if ntuples:
+            probe = ntuples[0].path
+            tree = ntuples[0].directory
+            # `friends` is only set on Ntuple when friends were booked at all.
+            friend_probes = [f.path for f in getattr(ntuples[0], "friends", None) or []]
+            break
+    if probe is None:
+        logger.warning(
+            f"[{era}/{channel}] no booked input files to probe for selection masks — "
+            f"selection via cut strings"
+        )
+        return False
+
+    use_masks = masks_available(probe, tree=tree or "ntuple", friend_dirs=friend_probes)
+    logger.info(
+        f"[{era}/{channel}] selection via "
+        f"{'CROWN mask branches' if use_masks else 'legacy cut strings'} "
+        f"(probed {probe}"
+        f"{f' + {len(friend_probes)} friend(s)' if friend_probes else ''})"
+    )
+    return use_masks
+
+
 def add_processes(add_fn, datasets, select_fn, channel):
     # Guard on dataset-key presence: eras that don't configure every process
     # group in config/samples.yaml (e.g. 2018, which currently only has
@@ -218,7 +306,7 @@ def add_processes(add_fn, datasets, select_fn, channel):
     # present in their samples.yaml entries.
     def _add(name, key, selections_fn):
         dataset = datasets.get(key)
-        if not dataset:
+        if not dataset or not dataset.ntuples:
             return
         add_fn(name=name, dataset=dataset, selections=selections_fn())
 
@@ -268,12 +356,12 @@ def get_select_function(channel_selection_obj, selection_kwargs, selection_memo)
     return _function
 
 
-def get_analysis_units(channel, era, datasets, categorization, apply_tauid, vs_jet_wp, vs_ele_wp, selection_option="CR", preselected=False, special=None):
+def get_analysis_units(channel, era, datasets, categorization, apply_tauid, vs_jet_wp, vs_ele_wp, selection_option="CR", preselected=False, special=None, use_masks=False):
     _sel_kwargs = dict(
         channel=channel, era=era, special=special,
         vs_jet_wp=vs_jet_wp, vs_ele_wp=vs_ele_wp,
         selection_option=selection_option, apply_wps=apply_tauid,
-        preselected=preselected,
+        preselected=preselected, use_masks=use_masks,
     )
     _memo = {}
     _ch_sel = channel_selection(**_sel_kwargs)
@@ -286,7 +374,7 @@ def get_analysis_units(channel, era, datasets, categorization, apply_tauid, vs_j
     return units
 
 
-def get_control_units(channel, era, datasets, variables, apply_tauid, vs_jet_wp, vs_ele_wp, selection_option="CR", do_gofs=False, do_2dGofs=False, preselected=False):
+def get_control_units(channel, era, datasets, variables, apply_tauid, vs_jet_wp, vs_ele_wp, selection_option="CR", do_gofs=False, do_2dGofs=False, preselected=False, use_masks=False):
     control_units = {}
     control_binning = default_control_binning
     if do_gofs:
@@ -312,7 +400,7 @@ def get_control_units(channel, era, datasets, variables, apply_tauid, vs_jet_wp,
         channel=channel, era=era, special=None,
         vs_jet_wp=vs_jet_wp, vs_ele_wp=vs_ele_wp,
         selection_option=selection_option, apply_wps=apply_tauid,
-        preselected=preselected,
+        preselected=preselected, use_masks=use_masks,
     )
     _memo = {}
     _ch_sel = channel_selection(**_sel_kwargs)
@@ -355,6 +443,14 @@ def main(args):
         "mm": args.mm_friend_directory,
         "ee": args.ee_friend_directory,
     }
+    # Explicitly-declared fake-factor friends. They join the per-channel friend
+    # lists of the FF-capable channels (so booking is byte-for-byte what
+    # passing them via --{channel}-friend-directory did), and are handed to
+    # shape_utils separately so filter_friends() knows their ROLE instead of
+    # having to guess it from the directory name.
+    ff_friends_tags = list(args.ff_friends_tag)
+    if ff_friends_tags:
+        logger.info(f"Fake-factor friend tags (declared): {ff_friends_tags}")
     output_file = args.output_file if ".root" in args.output_file else f"{args.output_file}.root"
 
     if args.directory and args.presel_dir:
@@ -382,6 +478,7 @@ def main(args):
         nominals[args.era]["datasets"][channel] = shape_utils.get_nominal_datasets(
             era=args.era, channel=channel,
             friend_directories=friend_directories,
+            ff_friends_tags=ff_friends_tags,
             files=files,
             directory=ntuple_directory,
             xrootd=args.xrootd,
@@ -397,6 +494,13 @@ def main(args):
             vs_ele_wp=channel_vs_ele_wp,
             selection_option=args.selection_option,
             preselected=preselected,
+            # Detected once per (era, channel) from the first booked input
+            # file; --force-legacy-cuts pins it off. See detect_masks().
+            use_masks=detect_masks(
+                nominals[args.era]["datasets"][channel],
+                era=args.era, channel=channel,
+                force_legacy_cuts=args.force_legacy_cuts,
+            ),
         )
         if args.control_plots:
             nominals[args.era]["units"][channel] = get_control_units(
@@ -453,7 +557,9 @@ def main(args):
             _es_shifts = tau_es_energy_scales.shift_values()
             shape_utils.add_tauES_datasets(
                 era=args.era, channel=channel,
-                friend_directories=friend_directories, files=files,
+                friend_directories=friend_directories,
+                ff_friends_tags=ff_friends_tags,
+                files=files,
                 directory=ntuple_directory, nominals=nominals,
                 tauESvariations=_es_shifts,
                 selections=[
