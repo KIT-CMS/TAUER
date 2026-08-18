@@ -18,17 +18,13 @@ Modes:
     TRAIN-SHAPES  Produce shapes for NN training
     CONFIGS       Collect ntuple_processor configs (YAML) -- no histogram production
     GEN-TFF-CONFIGS  Regenerate TFF per-channel preselection YAMLs from unified config
-    PRESEL        Run the preselection (signals + backgrounds, per channel) into
-                  --presel-dir, defaulting to
-                  build_shape_output_paths(NTUPLETAG).preselection -- TauKITFlow's
-                  own (shapes/preselect.py), read from that same default by both
-                  SHAPES (--presel-dir) and FF/FF-CORR (--ff-input-dir)
     FF            Run TauFakeFactors fake factor calculation (per channel)
     FF-CORR       Run TauFakeFactors fake factor corrections (per channel)
     FF-MEASURE    Standalone TauFakeFactors measurement chain (GEN-TFF-CONFIGS ->
-                  TauFakeFactors' OWN preselection.py -> FF -> FF-CORR). Note its
-                  preselection step is TauFakeFactors', NOT run.py's PRESEL above --
-                  in this pipeline use PRESEL then FF/FF-CORR --ff-input-dir instead.
+                  TauFakeFactors' OWN preselection.py -> FF -> FF-CORR). That
+                  preselection step is entirely TauFakeFactors' own -- this
+                  pipeline has no preselection step of its own; SHAPES always
+                  reads raw CROWN ntuples directly (see --selection-friend).
     TRAIN         Run NN training via law (uncertainty-aware-training)
     TRAIN-DATASET Build training feather folds from ROOT shapes (plain Python, no law/condor)
 
@@ -36,9 +32,7 @@ Note on conda activation (see common/conda_env.py's module docstring for the
 reasoning): the modes that used `check_env()` in the bash version --
 XSEC, SHAPES/SHAPES-NOSYS, TRAIN-SHAPES, CONFIGS -- activate the
 `taukitflow` conda env before running their python command, exactly as
-before. PRESEL activates `fake_factors` instead (it reuses TauFakeFactors'
-helper modules, whose deps -- ruamel.yaml, XRootD-client -- `taukitflow`
-does not declare). GEN-TFF-CONFIGS/FF/FF-CORR/TRAIN do not (same as the bash version --
+before. GEN-TFF-CONFIGS/FF/FF-CORR/TRAIN do not (same as the bash version --
 they run in whatever environment this script itself is invoked under). PLOT
 used to require a separate `environment-plotting.yml` (`taukitflow-plotting`)
 env just to get ROOT -- `environment.yml` now declares `root` directly
@@ -72,7 +66,6 @@ MODES = [
     "TRAIN-SHAPES",
     "CONFIGS",
     "GEN-TFF-CONFIGS",
-    "PRESEL",
     "FF",
     "FF-CORR",
     "FF-MEASURE",
@@ -83,10 +76,11 @@ MODES = [
 HELP_EPILOG = """
 Required environment variables (for shape production):
   NTUPLETAG          CROWN ntuple tag (e.g. htt_260417_2022-23)
-  TAG                Run-tag, distinct from NTUPLETAG; defaults to NTUPLETAG.
-                      Used by SHAPES/SHAPES-NOSYS/PLOT to nest output under
-                      output/{TAG}/{ss-os,ff}/{era}/{channel}/shapes.root.
-                      The default already makes an ss-os run and a later
+  TAG                Run-tag, distinct from NTUPLETAG; defaults to NTUPLETAG,
+                      in which case it is omitted from the output path (output
+                      is already scoped to NTUPLETAG). Set it explicitly to
+                      nest output under output/{TAG}/{ss-os,ff}/{era}/{channel}/shapes.root
+                      instead. The default already makes an ss-os run and a later
                       --ff-friends-dir run for the same NTUPLETAG share a
                       tree (so the ff run finds and hadd's onto the ss-os
                       run's output instead of redoing it) -- only set this
@@ -104,14 +98,19 @@ Optional:
                     masks (presel_mask/sel_os/sel_ss/ff_*) and always build the
                     cuts as strings from config/cuts.yaml. Same as
                     --force-legacy-cuts. Only needed for A/B validation of the
-                    two paths: PRESEL/SHAPES detect the masks per input and fall
-                    back to the cut strings automatically on old ntuples.
-  MASK_FRIENDS_DIR   Base dir of CROWN's selection-mask FRIEND trees, for
-                    productions that wrote the masks next to the ntuples
-                    (CROWN selection_friends.py) rather than into them
-                    (selection_config.py). Same as --mask-friends-dir. Unset
-                    for masks-in-the-ntuple and maskless productions: PRESEL
-                    and SHAPES detect both without any flag.
+                    two paths, or on old ntuples that never carried masks --
+                    SHAPES detects mask availability automatically otherwise
+                    (always on when SELECTION_FRIEND_DIR is set).
+  SELECTION_FRIEND_DIR   Base dir of CROWN's selection-mask FRIEND trees
+                    (CROWN selection_friends.py output, e.g.
+                    /store/user/$USER/CROWN/ntuples/$NTUPLETAG/CROWNFriend/selection_<tag>/).
+                    Same as --selection-friend. Attaches the friend to every
+                    channel and forces the mask-based, shift-aware preselection
+                    (presel_mask + presel_mask__<shift>) on -- this is what
+                    replaces per-cut-string preselection with CROWN's
+                    precomputed, systematically-varied masks. Unset for
+                    masks-in-the-ntuple or maskless productions: SHAPES still
+                    detects masks-in-the-ntuple automatically without it.
   FF_FRIENDS_DIR   Path to fake factor friend trees (enables FF mode in SHAPES)
   FF_CONFIG        Override config path for FF mode
   FF_CORR_CONFIG   Override config path for FF-CORR mode
@@ -146,49 +145,38 @@ def make_parser() -> argparse.ArgumentParser:
     parser.add_argument("--vs-jet-wp", dest="vs_jet_wp", default=None)
     parser.add_argument("--vs-ele-wp", dest="vs_ele_wp", default=None)
     parser.add_argument("--nthreads", default=None)
-    parser.add_argument("--nworkers", default=None)
     parser.add_argument("--nprocs", default=None)
     parser.add_argument("--output-dir", dest="output_dir", default=None)
     parser.add_argument("--ff-friends-dir", dest="ff_friends_dir", default=None)
     parser.add_argument("--ff-config", dest="ff_config", default=None)
     parser.add_argument("--ff-corr-config", dest="ff_corr_config", default=None)
     parser.add_argument(
-        "--presel-dir", dest="presel_dir", default=None,
-        help="The central preselection tree: PRESEL writes it, SHAPES/"
-             "SHAPES-NOSYS/TRAIN-SHAPES read it. Defaults on both sides to "
-             "build_shape_output_paths(ntupletag).preselection "
-             "(/ceph/$USER/TauKITFlow_shapes/$NTUPLETAG/preselection), so "
-             "SHAPES picks up PRESEL's output automatically. Pass an empty "
-             "string to make SHAPES read raw CROWN ntuples instead.",
-    )
-    parser.add_argument(
         "--force-legacy-cuts", dest="force_legacy_cuts", action="store_true", default=None,
         help="Never select on CROWN's precomputed selection-mask branches (presel_mask, "
              "sel_os/sel_ss, ff_*); always build the cuts as strings from config/cuts.yaml. "
-             "Passed through to shapes/preselect.py (PRESEL) and shapes/produce_shapes.py "
+             "Passed through to shapes/produce_shapes.py "
              "(SHAPES/SHAPES-NOSYS/TRAIN-SHAPES/CONFIGS). Without it those tools detect the "
              "masks per input themselves and fall back automatically on old, maskless "
              "ntuples -- this flag is the A/B-validation escape hatch, not something a "
              "normal run needs. Env: FORCE_LEGACY_CUTS=1.",
     )
     parser.add_argument(
-        "--mask-friends-dir", dest="mask_friends_dir", default=None,
-        help="Base dir of CROWN's selection-mask FRIEND trees, for productions that wrote the "
-             "masks (presel_mask, sel_os/sel_ss, ff_*) next to the ntuples "
-             "(CROWN selection_friends.py) instead of into them (selection_config.py), e.g. "
-             "/store/user/$USER/CROWN/ntuples/$NTUPLETAG/CROWNFriends/selection/. Passed to "
-             "PRESEL (shapes/preselect.py --mask-friends) and, when SHAPES reads raw CROWN "
-             "ntuples, to shapes/produce_shapes.py as an extra --{channel}-friend-directory. "
-             "Leave unset for masks-in-the-ntuple or maskless productions -- both are detected "
-             "and handled without it. Env: MASK_FRIENDS_DIR.",
+        "--selection-friend", dest="selection_friend", default=None,
+        help="Base dir of CROWN's selection-mask FRIEND trees (CROWN selection_friends.py "
+             "output), e.g. /store/user/$USER/CROWN/ntuples/$NTUPLETAG/CROWNFriend/selection_<tag>/. "
+             "Passed straight through to shapes/produce_shapes.py's own --selection-friend: "
+             "attached as an extra friend for every channel and forces the mask-based, "
+             "shift-aware preselection (presel_mask + presel_mask__<shift>) on -- see that "
+             "script's --selection-friend help for the full mechanism. Leave unset for "
+             "masks-in-the-ntuple or maskless productions -- masks-in-the-ntuple are still "
+             "detected and handled without it. Env: SELECTION_FRIEND_DIR.",
     )
     parser.add_argument(
         "--ff-input-dir", dest="ff_input_dir", default=None,
         help="For FF/FF-CORR: override common_settings.yaml's file_path/output_path "
              "(via a generated tmp config, TFF's real YAML on disk is never touched) "
-             "to point at a central-preselection dir (e.g. "
-             "build_shape_output_paths(ntupletag).preselection) instead of TFF's own "
-             "preselection.py output.",
+             "to point FF calculation/correction at any preselection-shaped directory "
+             "instead of TauFakeFactors' own preselection.py output.",
     )
     return parser
 
@@ -253,7 +241,7 @@ def crown_friend_tag(path):
     return segments[-1] if segments else ""
 
 
-def friend_directory_args(xsec_friends, mask_friends_dir="", ff_friends_dir=""):
+def friend_directory_args(xsec_friends, ff_friends_dir=""):
     """Friend-directory arguments for shapes/produce_shapes.py.
 
     The generic, "inclusive" friends go into one --{channel}-friend-directory
@@ -264,10 +252,14 @@ def friend_directory_args(xsec_friends, mask_friends_dir="", ff_friends_dir=""):
     one friend per channel.
 
     * xsec friends -- every channel, always (MC weight columns).
-    * selection-mask friends -- every channel, when CROWN wrote the masks as a
-      friend tree (selection_friends.py) instead of into the ntuple. They are
-      what makes detect_masks() see the masks and what the booked cut
-      expressions then read (unqualified `presel_mask`/`sel_*`/`ff_*`).
+
+    Selection-mask friends are NOT handled here: they go through
+    produce_shapes.py's own --selection-friend (see mode_shapes), a dedicated
+    option rather than another entry in this list, because attaching the
+    friend is only half of what it does -- it also switches the mask-based
+    preselection on and needs its own code path in booking (see
+    ntuple_processor/booking.py's get_quantities_per_variation) to pick up
+    friend-only shifted quantities.
 
     Fake-factor friends go into the same per-channel lists (et/mt/tt only --
     em has no fake factors and the FF production writes no files for it), but
@@ -277,9 +269,6 @@ def friend_directory_args(xsec_friends, mask_friends_dir="", ff_friends_dir=""):
     *named* something like "fake_factors_...".
     """
     friend_dirs = {ch: [xsec_friends] for ch in ("et", "mt", "tt", "em")}
-    if mask_friends_dir:
-        for ch in friend_dirs:
-            friend_dirs[ch].append(mask_friends_dir)
     if ff_friends_dir:
         for ch in ("et", "mt", "tt"):
             friend_dirs[ch].append(ff_friends_dir)
@@ -319,21 +308,35 @@ def mode_xsec(cfg, extra):
     return run_conda(cmd, env_overrides={"PYTHONPATH": pythonpath_with_tff()}).returncode
 
 
+def _output_run_dir(cfg, qcd_label):
+    # output_dir already ends in .../TauKITFlow_shapes/{ntupletag}/output, so
+    # only nest an extra {tag} component when it's an explicit override
+    # (distinct from ntupletag) -- otherwise the default tag=ntupletag would
+    # duplicate the ntupletag path segment (output/{ntupletag}/{ntupletag}/...).
+    channels_label = cfg["channels"].replace(",", "-", 1)
+    parts = [cfg["output_dir"]]
+    if cfg["tag"] != cfg["ntupletag"]:
+        parts.append(cfg["tag"])
+    parts += [qcd_label, cfg["era"], channels_label]
+    return Path(*parts)
+
+
 def mode_shapes(cfg, extra, mode):
     from common.sample_paths import build_ul_sample_paths
 
     paths = build_ul_sample_paths(cfg["ntupletag"], cfg["era"])
 
-    # Nested output/{tag}/{qcd-label}/{era}/{channels}/shapes.root -- tag
-    # defaults to ntupletag (see cfg["tag"] construction above), so an ss-os
-    # run and a later --ff-friends-dir run land in the same tree by default
-    # and the ff run can find the ss-os run's output below without any extra
-    # config. qcd-label mirrors which estimation --ff-friends-dir selects
-    # (same "ff" if ff_friends_dir else "ss-os" logic as estimation_args
-    # below).
+    # Nested output/[{tag}/]{qcd-label}/{era}/{channels}/shapes.root -- tag
+    # defaults to ntupletag (see cfg["tag"] construction above) and is then
+    # omitted from the path (see _output_run_dir) since output_dir is already
+    # scoped to ntupletag, so an ss-os run and a later --ff-friends-dir run
+    # land in the same tree by default and the ff run can find the ss-os
+    # run's output below without any extra config. qcd-label mirrors which
+    # estimation --ff-friends-dir selects (same "ff" if ff_friends_dir else
+    # "ss-os" logic as estimation_args below).
     channels_label = cfg["channels"].replace(",", "-", 1)
     qcd_label = "ff" if cfg["ff_friends_dir"] else "ss-os"
-    run_dir = Path(cfg["output_dir"]) / cfg["tag"] / qcd_label / cfg["era"] / channels_label
+    run_dir = _output_run_dir(cfg, qcd_label)
     run_dir.mkdir(parents=True, exist_ok=True)
     outfile = run_dir / "shapes.root"
 
@@ -341,24 +344,16 @@ def mode_shapes(cfg, extra, mode):
     if cfg["ff_friends_dir"]:
         extra_args += ["--ff-type", "fake_factor"]
 
-    # Selection-mask friends only when reading raw CROWN ntuples: the
-    # preselection tree carries the masks as ordinary branches (PRESEL keeps
-    # them in its Snapshot), so a --presel-dir run must not look for a friend
-    # next to it.
     friend_args = friend_directory_args(
         paths.xsec_friends,
-        mask_friends_dir="" if cfg["presel_dir"] else cfg["mask_friends_dir"],
         ff_friends_dir=cfg["ff_friends_dir"],
     )
+    if cfg["selection_friend"]:
+        extra_args_selection_friend = ["--selection-friend", cfg["selection_friend"]]
+    else:
+        extra_args_selection_friend = []
 
     directory_args = ["--directory", paths.ntuples]
-    if cfg["presel_dir"]:
-        # --directory and --presel-dir are mutually exclusive in
-        # shapes/produce_shapes.py -- now that --presel-dir actually exists
-        # there (it didn't before; this passthrough was dead/would have
-        # crashed with "unrecognized arguments" the moment PRESEL_DIR was
-        # ever set), drop --directory instead of passing both.
-        directory_args = ["--presel-dir", cfg["presel_dir"]]
 
     if mode == "SHAPES-NOSYS":
         extra_args.append("--skip-systematic-variations")
@@ -389,13 +384,12 @@ def mode_shapes(cfg, extra, mode):
             "--validation-db-root", cfg["validation_dir"],
             *directory_args,
             *friend_args,
+            *extra_args_selection_friend,
             "--output-file", str(output_file),
             "--num-processes", str(cfg["nprocs"]),
             "--num-threads", str(cfg["nthreads"]),
-            # Only use xrootd for raw CROWN ntuples (served by the CMS xrootd
-            # endpoint). Preselected files live on the user's /ceph space which
-            # that server does not serve, so skip --xrootd there.
-            *(["--xrootd"] if not cfg["presel_dir"] else []),
+            # Raw CROWN ntuples are served over the CMS xrootd endpoint.
+            "--xrootd",
             *extra_args,
             *(["--ff-only"] if ff_only else []),
             *extra,
@@ -406,7 +400,7 @@ def mode_shapes(cfg, extra, mode):
         # Same tag/era/channels, ss-os label -- the sibling non-FF run this
         # ff run builds on instead of redoing, IF it already exists (same
         # ntupletag/tag by default -- see cfg["tag"]).
-        ss_os_file = Path(cfg["output_dir"]) / cfg["tag"] / "ss-os" / cfg["era"] / channels_label / "shapes.root"
+        ss_os_file = _output_run_dir(cfg, "ss-os") / "shapes.root"
         if ss_os_file.exists():
             print(f"[{mode}] Reusing existing ss-os shapes at {ss_os_file} -- booking only the "
                   f"FF-weighted variations (--ff-only) and merging onto a copy of it, instead of "
@@ -451,8 +445,9 @@ def mode_shapes(cfg, extra, mode):
     # needed -- only which estimation to run on top of them.
     estimation_args = ["--do-ff"] if cfg["ff_friends_dir"] else ["--do-qcd"]
     # Merges the "qqh" (pure VBF) and "vh_as_qqh" (hadronic-decay WminusH/WplusH/ZH
-    # events reclassified as qqH via HTXS_stage_0, see shapes/produce_shapes.py)
-    # histograms produced above back into one physical qqH125 shape.
+    # events, which the "EW qqH (VBF and qq -> V(->qq)H)" STXS definition
+    # counts as qqH not VH -- see shapes/produce_shapes.py) histograms
+    # produced above back into one physical qqH125 shape.
     estimation_args.append("--do-qqh-procs")
     cmd = [
         "python",
@@ -466,10 +461,10 @@ def mode_shapes(cfg, extra, mode):
 
 
 def mode_plot(cfg, extra):
-    # Same nested layout mode_shapes writes to (output/{tag}/{qcd-label}/{era}/{channels}/shapes.root).
+    # Same nested layout mode_shapes writes to (output/[{tag}/]{qcd-label}/{era}/{channels}/shapes.root).
     channels_label = cfg["channels"].replace(",", "-", 1)
     qcd_label = "ff" if cfg["ff_friends_dir"] else "ss-os"
-    outfile = Path(cfg["output_dir"]) / cfg["tag"] / qcd_label / cfg["era"] / channels_label / "shapes.root"
+    outfile = _output_run_dir(cfg, qcd_label) / "shapes.root"
     # plot_shapes_control.py itself builds <plot_dir>/<era>/<channel>/<ext>/...
     # -- do not bake era into plot_dir here, or it gets nested twice. tag/
     # qcd-label are nested here (mirroring output/'s layout) so ss-os and ff
@@ -512,7 +507,8 @@ def mode_train_shapes(cfg, extra):
         "--validation-tag", cfg["ntupletag"],
         *vs_ele_wp_args,
         "--directory", paths.ntuples,
-        *friend_directory_args(paths.xsec_friends, mask_friends_dir=cfg["mask_friends_dir"]),
+        *friend_directory_args(paths.xsec_friends),
+        *(["--selection-friend", cfg["selection_friend"]] if cfg["selection_friend"] else []),
         "--output-file", str(outfile),
         "--num-processes", str(cfg["nprocs"]),
         "--num-threads", str(cfg["nthreads"]),
@@ -544,7 +540,8 @@ def mode_configs(cfg, extra):
         "--validation-tag", cfg["ntupletag"],
         *vs_ele_wp_args,
         "--directory", paths.ntuples,
-        *friend_directory_args(paths.xsec_friends, mask_friends_dir=cfg["mask_friends_dir"]),
+        *friend_directory_args(paths.xsec_friends),
+        *(["--selection-friend", cfg["selection_friend"]] if cfg["selection_friend"] else []),
         "--output-file", str(outfile.with_suffix(".root")),
         "--collect-config-only",
         "--xrootd",
@@ -560,59 +557,6 @@ def mode_gen_tff_configs(cfg, extra):
     print(f"[GEN-TFF-CONFIGS] era={cfg['era']} channels={cfg['channels']}")
     cmd = ["python", "config/generate_tff_configs.py", "--era", cfg["era"], "--channels", cfg["channels"]]
     return run_plain(cmd, env_overrides={"PYTHONPATH": pythonpath_with_tff()}).returncode
-
-
-def mode_presel(cfg, extra):
-    """
-    The analysis' preselection step: TauKITFlow's own, via
-    shapes/preselect.py -- a full replacement for TauFakeFactors'
-    preselection.py, which this pipeline does not use at all (that file is
-    untouched on disk and still works for running TauFakeFactors standalone;
-    see run_fake_factor_measurement.py's "presel" step, which is that
-    separate standalone path).
-
-    Writes ONE flat preselection tree to cfg["presel_dir"], which defaults to
-    build_shape_output_paths(NTUPLETAG).preselection -- the same default
-    SHAPES reads from, so the two line up without either being told where it
-    is (--presel-dir/PRESEL_DIR overrides it on both sides). Consumed
-    directly by BOTH shapes/produce_shapes.py (--presel-dir) and
-    TauFakeFactors' ff_calculation.py/ff_corrections.py (--ff-input-dir, see
-    mode_ff/mode_ff_corr) -- no second CROWN-shaped mirror of it is needed.
-    """
-    from common.sample_paths import build_shape_output_paths, build_ul_sample_paths
-
-    ul_paths = build_ul_sample_paths(cfg["ntupletag"], cfg["era"])
-    output_dir = cfg["presel_dir"] or build_shape_output_paths(cfg["ntupletag"]).preselection
-
-    print(f"[PRESEL] Preselection: era={cfg['era']} channels={cfg['channels']} -> {output_dir}")
-    for channel in cfg["channels"].split(","):
-        print(f"[PRESEL] Processing channel {channel}")
-        cmd = [
-            "python", "shapes/preselect.py",
-            "--era", cfg["era"],
-            "--channel", channel,
-            "--output-dir", output_dir,
-            "--directory", ul_paths.ntuples,
-            "--xsec-friends", ul_paths.xsec_friends,
-            *(["--mask-friends", cfg["mask_friends_dir"]] if cfg["mask_friends_dir"] else []),
-            "--nthreads", str(cfg["nthreads"]),
-            "--nworkers", str(cfg["nworkers"]),
-            *(["--force-legacy-cuts"] if cfg["force_legacy_cuts"] else []),
-            *extra,
-        ]
-        # process_background_process() lazily imports TauFakeFactors'
-        # helper.filters/helper.functions (gen-mode split + output naming,
-        # reused so the output layout matches byte-for-byte), which need the
-        # `fake_factors` env's deps (ruamel.yaml, XRootD-client) -- the
-        # `taukitflow` env does not declare those in environment.yml.
-        result = run_conda(
-            cmd,
-            env_overrides={"PYTHONPATH": f"{os.environ.get('PYTHONPATH', '')}:{REPO_ROOT / 'TauFakeFactors'}"},
-            conda_env="fake_factors",
-        )
-        if result.returncode != 0:
-            return result.returncode
-    return 0
 
 
 def _patched_ff_config(era: str, channel: str, config_kind: str, ff_input_dir: str) -> str:
@@ -697,7 +641,7 @@ def mode_ff_corr(cfg, extra):
 def mode_ff_measure(cfg, extra):
     print(f"[FF-MEASURE] Running the full TauFakeFactors FF measurement chain: era={cfg['era']} channels={cfg['channels']}")
     print("[FF-MEASURE] (GEN-TFF-CONFIGS -> TauFakeFactors' own preselection.py -> FF -> FF-CORR,")
-    print("[FF-MEASURE]  see run_fake_factor_measurement.py -- NOT run.py's PRESEL mode)")
+    print("[FF-MEASURE]  see run_fake_factor_measurement.py -- this pipeline has no preselection step of its own)")
     cmd = [
         "python", "run_fake_factor_measurement.py",
         "--era", cfg["era"],
@@ -825,29 +769,25 @@ def main(argv=None) -> int:
         # should NOT reuse/build on an earlier run's output.
         "tag": env_or(args.tag, "TAG", None),
         # None (not a hardcoded "output"/CWD-relative "validation_database")
-        # unless the user overrides via --output-dir/OUTPUT_DIR or
-        # --presel-dir/PRESEL_DIR -- filled in below, once ntupletag is known,
-        # from common.sample_paths.build_shape_output_paths(ntupletag), the
-        # single source of truth for the unified
-        # /ceph/$USER/TauKITFlow_shapes/$ntupletag/{preselection,crown,output,validation}
+        # unless the user overrides via --output-dir/OUTPUT_DIR -- filled in
+        # below, once ntupletag is known, from
+        # common.sample_paths.build_shape_output_paths(ntupletag), the single
+        # source of truth for the unified
+        # /ceph/$USER/TauKITFlow_shapes/$ntupletag/{crown,output,validation}
         # tree (replacing the previously scattered bare "output"/CWD-relative
         # "validation_database" defaults).
         "output_dir": env_or(args.output_dir, "OUTPUT_DIR", None),
         "nthreads": env_or(args.nthreads, "NTHREADS", "4"),
-        # PRESEL only: how many sample jobs run concurrently, each with
-        # `nthreads` ROOT threads (shapes/preselect.py --nworkers).
-        "nworkers": env_or(args.nworkers, "NWORKERS", "4"),
         "nprocs": env_or(args.nprocs, "NPROCS", "1"),
-        "presel_dir": env_or(args.presel_dir, "PRESEL_DIR", None),
         "validation_dir": None,
         "ff_friends_dir": env_or(args.ff_friends_dir, "FF_FRIENDS_DIR", ""),
         "ff_config": env_or(args.ff_config, "FF_CONFIG", ""),
         "ff_corr_config": env_or(args.ff_corr_config, "FF_CORR_CONFIG", ""),
         "ff_input_dir": env_or(args.ff_input_dir, "FF_INPUT_DIR", ""),
         # Empty unless the production shipped CROWN's selection masks as a
-        # friend tree -- see --mask-friends-dir. Masks-in-the-ntuple and
+        # friend tree -- see --selection-friend. Masks-in-the-ntuple and
         # maskless productions need no value here.
-        "mask_friends_dir": env_or(args.mask_friends_dir, "MASK_FRIENDS_DIR", ""),
+        "selection_friend": env_or(args.selection_friend, "SELECTION_FRIEND_DIR", ""),
         # store_true with default=None so an unset flag still falls through to
         # the env var, matching every other option's `${VAR:-default}`
         # semantics above (a plain store_true would default to False and
@@ -856,7 +796,7 @@ def main(argv=None) -> int:
     }
 
     needs_ntupletag = mode in (
-        "XSEC", "SHAPES", "SHAPES-NOSYS", "TRAIN-SHAPES", "CONFIGS", "PRESEL",
+        "XSEC", "SHAPES", "SHAPES-NOSYS", "TRAIN-SHAPES", "CONFIGS",
     )
     if needs_ntupletag and not cfg["ntupletag"]:
         print("ERROR: NTUPLETAG must be set (CROWN ntuple tag, e.g. htt_260417_2022-23).", file=sys.stderr)
@@ -870,21 +810,10 @@ def main(argv=None) -> int:
             cfg["tag"] = cfg["ntupletag"]
         if cfg["output_dir"] is None:
             cfg["output_dir"] = shape_paths.output
-        if cfg["presel_dir"] is None:
-            # Default to the ONE central preselection tree,
-            # /ceph/$USER/TauKITFlow_shapes/$ntupletag/preselection -- the same
-            # path PRESEL writes to (mode_presel below) -- so SHAPES reads
-            # PRESEL's output with no --presel-dir needed. Override with
-            # --presel-dir/PRESEL_DIR (on PRESEL it moves the output, on
-            # SHAPES the input); pass an empty string to opt out entirely and
-            # go back to reading raw CROWN ntuples (mode_shapes's
-            # `if cfg["presel_dir"]:` branch).
-            cfg["presel_dir"] = shape_paths.preselection
         cfg["validation_dir"] = shape_paths.validation
     else:
         cfg["tag"] = cfg["tag"] or "default"
         cfg["output_dir"] = cfg["output_dir"] or "output"
-        cfg["presel_dir"] = cfg["presel_dir"] or ""
         cfg["validation_dir"] = "validation_database"
 
     if mode == "XSEC":
@@ -899,8 +828,6 @@ def main(argv=None) -> int:
         return mode_configs(cfg, extra)
     if mode == "GEN-TFF-CONFIGS":
         return mode_gen_tff_configs(cfg, extra)
-    if mode == "PRESEL":
-        return mode_presel(cfg, extra)
     if mode == "FF":
         return mode_ff(cfg, extra)
     if mode == "FF-CORR":

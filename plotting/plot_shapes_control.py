@@ -318,10 +318,10 @@ def plot_control(
         if h:
             bkg_hists[proc] = h
 
-    # Stage-0 (per-production-mode, not split into STXS stage-1 bins) signal
-    # shapes. _process_map only carries "qqH125" (and the VH_as_qqH125 merge
-    # used for datacards); the other three are simply plain datasets in the
-    # shapes file under their own name (see e.g. "ggH#mt-ggH125#Nominal#...",
+    # Per-production-mode (not split into STXS stage-1.2 bins) signal shapes.
+    # _process_map only carries "qqH125" (and the VH_as_qqH125 merge used for
+    # datacards); the other three are simply plain datasets in the shapes
+    # file under their own name (see e.g. "ggH#mt-ggH125#Nominal#...",
     # confirmed present in output/*-shapes.root), so look those up directly
     # rather than only checking _process_map.
     for sig_proc, dataset in _SIGNAL_DATASETS.items():

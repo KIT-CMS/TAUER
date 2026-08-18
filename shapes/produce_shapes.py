@@ -28,7 +28,6 @@ from shapes.selection.channel_selection import channel_selection
 from config.shapes.control_binning import control_binning as default_control_binning
 from config.analysis import (
     build_files_dict,
-    build_presel_files_dict,
     masks_available,
     vs_ele_wp_for,
 )
@@ -62,9 +61,8 @@ def parse_arguments():
         help="Apply tau ID scale factors."
     )
     parser.add_argument(
-        "--directory", default=None, type=str,
-        help="Directory with CROWN ntuple outputs. Required unless --presel-dir is given. "
-             "With --xrootd, this must be the "
+        "--directory", required=True, type=str,
+        help="Directory with CROWN ntuple outputs. With --xrootd, this must be the "
              "bare xrootd store path (e.g. /store/user/<user>/CROWN/ntuples/<tag>/CROWNRun/), "
              "NOT a full root://host/... URL -- ntuple_processor/booking.py's xrootd branch "
              "prepends the xrootd host itself, so a full URL here double-prefixes it and "
@@ -74,15 +72,22 @@ def parse_arguments():
              "in Phase 6d).",
     )
     parser.add_argument(
-        "--presel-dir", default=None, type=str,
-        help="Preselection output tree (shapes/preselect.py's --output-dir / "
-             "build_shape_output_paths().preselection), read instead of raw CROWN "
-             "--directory. Mutually exclusive with --directory. Sets preselected=True "
-             "(tau-ID/trigger cuts and per-sample MC weights are skipped -- already "
-             "applied/baked into the preselection's `weight` column upstream), uses build_presel_files_dict() "
-             "instead of build_files_dict() to locate samples, and reads the flat "
-             "{dir}/{era}/{channel}/{key}.root preselection layout instead of CROWN's "
-             "directory-per-sample one.",
+        "--selection-friend", default=None, type=str,
+        help="Base directory of CROWN's selection-mask FRIEND trees for this ntuple tag "
+             "(CROWN selection_friends.py output, e.g. "
+             ".../CROWN/ntuples/<tag>/CROWNFriend/selection_<version>/). When given: (1) it "
+             "is attached as an extra friend for every channel, alongside the xsec/FF "
+             "friends; (2) the mask-based preselection (single `presel_mask > 0.5` cut, "
+             "replacing the tau-ID/trigger/tau-pt/decay-mode/jet-veto cut strings) is used "
+             "unconditionally instead of being merely probed for (see detect_masks()); (3) "
+             "the shifted `presel_mask__<shift>` branches -- which live ONLY in this friend, "
+             "not in the main ntuple -- are correctly picked up by the same per-shift "
+             "quantity substitution (ReplaceVariable) used for every other CROWN quantity, "
+             "matching smhtt_ul's per-shift cut substitution (see "
+             "ntuple_processor/booking.py's get_quantities_per_variation, which scans "
+             "attached friends for this). Leave unset for masks-in-the-ntuple or maskless "
+             "productions -- masks-in-the-ntuple are still auto-detected without it "
+             "(--force-legacy-cuts turns that off too, for both).",
     )
     parser.add_argument("--et-friend-directory", type=str, default=[], nargs="+")
     parser.add_argument("--mt-friend-directory", type=str, default=[], nargs="+")
@@ -245,6 +250,10 @@ def detect_masks(datasets, era, channel, force_legacy_cuts=False):
     Decide once per (era, channel) whether to select on CROWN's precomputed
     selection masks or on the legacy cut strings.
 
+    Only relevant for masks-in-the-ntuple productions: when --selection-friend
+    is given, main() forces use_masks=True directly and this probe never runs
+    (the friend is explicitly declared, there is nothing to detect).
+
     Probes the FIRST booked input file of the first dataset -- and, if that
     file has no masks, the FRIEND files booked next to it -- for the
     `presel_mask` branch (config.analysis.masks_available). CROWN writes the
@@ -256,8 +265,7 @@ def detect_masks(datasets, era, channel, force_legacy_cuts=False):
     era/channel, not per file: a single CROWN production is homogeneous, and
     shape production books thousands of files whose paths are mostly remote --
     opening them all would cost more than the production it is meant to speed
-    up. shapes/preselect.py, which streams file by file anyway, does check per
-    file.
+    up.
 
     Fails safe in both directions: `--force-legacy-cuts` short-circuits to
     False, and masks_available() itself returns False (with a warning) for
@@ -326,12 +334,17 @@ def add_processes(add_fn, datasets, select_fn, channel):
     _add("ggh",  "ggH",  lambda: select_fn(selection.ggH125))
     _add("tth",  "ttH",  lambda: select_fn(selection.ttH))
     _add("vh",   "VH",   lambda: select_fn(selection.VH))
-    # STXS stage 0 (HTXS_stage_0) merges genuine VBF with hadronically-decaying
-    # -V associated production (WH/ZH with W/Z -> qq) under the same "VBF" code
-    # -- only leptonically-decaying WH/ZH get their own stage-0 codes. So the
-    # WminusH/WplusH/ZH files (dataset key "VH") also contain events that
-    # belong in the qqH shape (selection.qqH125 cuts on HTXS_stage_0==VBF);
-    # they're booked here as a *separate* process ("vh_as_qqh") rather than
+    # EW qqH is officially defined as VBF + hadronically-decaying-V associated
+    # production merged together -- "EW qqH (VBF and qq -> V(->qq)H)" per the
+    # LHCHWGFiducialAndSTXS twiki, true at every STXS stage (0, 1, 1.1, 1.2,
+    # 1.3) -- while VH is leptonic-decay-only: "VH (qq+gg -> V(->leptons)H)".
+    # So the WminusH/WplusH/ZH files (dataset key "VH") also contain events
+    # that belong in the qqH shape (selection.qqH125's
+    # HTXS_stage1_2_cat_pTjet30GeV 200-210 range cut picks these up, since
+    # hadronic V(->qq)H falls in the same stage-1.2 "EW qqH" bins as genuine
+    # VBF -- confirmed directly against htt_260813_22-23's WminusH ntuples:
+    # 14850/22365 events land in 200-210, only 7515/22365 in VH's 300-505).
+    # They're booked here as a *separate* process ("vh_as_qqh") rather than
     # merged into the "qqH" dataset itself, because CROWN only ever writes
     # "_qqH"-postfixed LHE scale/PDF/alphaS/PS branches into the actual VBF
     # ntuples -- the WminusH/WplusH/ZH ntuples carry "_VH"/"_ttH"-postfixed
@@ -341,7 +354,9 @@ def add_processes(add_fn, datasets, select_fn, channel):
     # to crash with "undeclared identifier" whenever the loop reached a
     # WminusH/WplusH/ZH file. do_estimations.py's qqH_merge_estimation sums
     # "qqh" + "vh_as_qqh" back into one physical qqH125 shape for the
-    # datacard, same as smhtt_ul's qqH125/WH125/ZH125 merge.
+    # datacard -- smhtt_ul skips this merge (it only ever books the plain
+    # "qqh"/"vh" processes), which undercounts EW qqH relative to the
+    # official STXS definition; TauKITFlow does the merge to match it.
     _add("vh_as_qqh", "VH", lambda: select_fn(selection.qqH125))
 
 
@@ -451,22 +466,21 @@ def main(args):
     ff_friends_tags = list(args.ff_friends_tag)
     if ff_friends_tags:
         logger.info(f"Fake-factor friend tags (declared): {ff_friends_tags}")
+    # The selection-mask friend joins every channel's friend list exactly like
+    # xsec/FF friends do (see friend_directories above) -- CROWN's
+    # selection_friends.py production scopes to et/mt/tt/em (mm/ee never had a
+    # preselection mask group to begin with), so nothing is appended for those.
+    if args.selection_friend:
+        for channel in ("et", "mt", "tt", "em"):
+            friend_directories[channel] = [*friend_directories[channel], args.selection_friend]
+        logger.info(f"Selection-mask friend (declared): {args.selection_friend}")
     output_file = args.output_file if ".root" in args.output_file else f"{args.output_file}.root"
 
-    if args.directory and args.presel_dir:
-        raise SystemExit("--directory and --presel-dir are mutually exclusive.")
-    if not args.directory and not args.presel_dir:
-        raise SystemExit("One of --directory or --presel-dir is required.")
     if args.ff_only and args.ff_type == "none":
         raise SystemExit("--ff-only requires --ff-type to be set (nothing to book otherwise).")
 
-    preselected = args.presel_dir is not None
-    if preselected:
-        files = build_presel_files_dict(channels=args.channels, era=args.era)
-        ntuple_directory = args.presel_dir
-    else:
-        files = build_files_dict(channels=args.channels, era=args.era)
-        ntuple_directory = args.directory
+    files = build_files_dict(channels=args.channels, era=args.era)
+    ntuple_directory = args.directory
 
     unit_manager = UnitManager()
     logger.info(f"Apply tau ID: {args.apply_tauid}")
@@ -484,7 +498,6 @@ def main(args):
             xrootd=args.xrootd,
             validation_tag=args.validation_tag,
             validation_db_root=args.validation_db_root,
-            flat_layout=preselected,
         )
         common_kwargs = dict(
             era=args.era, channel=channel,
@@ -493,13 +506,20 @@ def main(args):
             vs_jet_wp=args.vs_jet_wp,
             vs_ele_wp=channel_vs_ele_wp,
             selection_option=args.selection_option,
-            preselected=preselected,
-            # Detected once per (era, channel) from the first booked input
-            # file; --force-legacy-cuts pins it off. See detect_masks().
-            use_masks=detect_masks(
-                nominals[args.era]["datasets"][channel],
-                era=args.era, channel=channel,
-                force_legacy_cuts=args.force_legacy_cuts,
+            # --selection-friend declares the mask friend explicitly -- force
+            # the mask path on rather than merely probing for it (still the
+            # right call even if --force-legacy-cuts is also passed for A/B
+            # validation, hence the explicit override there too). Otherwise
+            # fall back to auto-detection, for masks-in-the-ntuple productions
+            # that never carry a separate selection friend. See detect_masks().
+            use_masks=(
+                False if args.force_legacy_cuts else
+                True if args.selection_friend else
+                detect_masks(
+                    nominals[args.era]["datasets"][channel],
+                    era=args.era, channel=channel,
+                    force_legacy_cuts=args.force_legacy_cuts,
+                )
             ),
         )
         if args.control_plots:
@@ -578,7 +598,6 @@ def main(args):
                 additional_emb_procS=additional_emb_procS,
                 validation_tag=args.validation_tag,
                 validation_db_root=args.validation_db_root,
-                flat_layout=preselected,
                 xrootd=args.xrootd,
             )
             nominals[args.era].setdefault("tauES_procS", {})[channel] = additional_emb_procS
@@ -685,7 +704,7 @@ def main(args):
                 _book_nonff(jetFakesDS[channel], [variations.jet_to_tau_fake])
                 _book_nonff((trueTauBkgS | leptonFakesS | signalsS) - {"zl"}, variations.tau_energy_scale(args.era))
                 if channel == "mt":
-                    _book_nonff(simulatedProcsDS[channel], variations.trigger_eff_mt)
+                    _book_nonff(simulatedProcsDS[channel], variations.trigger_eff_mt(args.era))
                 elif channel == "et":
                     _book_nonff(simulatedProcsDS[channel], variations.trigger_eff_et)
                 elif channel == "tt":

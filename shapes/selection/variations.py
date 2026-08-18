@@ -707,10 +707,18 @@ def mu_fake_es_inc(era):
 # Efficiency corrections.
 # Tau ID efficiency (MC vsJet SF, et/mt scope).
 #
-# CROWN ("TauID scale factor shifts" block, et/mt path):
+# CROWN ("TauID scale factor shifts" block, et/mt path,
+# analysis_configurations/tau/variations.py):
 #   era < 2022:        CMS_eff_t_DeepTau2017v2p1_VSjet_DM{dm}_pT{pt}{Up,Down}, dm in [0,1,10,11], pt in [20to40, 40toInf]
-#   2022 <= era < 2024: CMS_eff_t_DeepTau2018v2p5_VSjet_DM{dm}_{era_tag}{Up,Down}, dm in [0,1,10,11]  (no pt split)
+#   2022 <= era < 2024: per DM (dm in [0,1,10,11]): _stat1_DM{dm}, _stat2_DM{dm}, _syst_TES_DM{dm},
+#                        all _{era_tag}{Up,Down} -- PLUS two DM-correlated shifts applied to all four
+#                        DMs simultaneously, _syst_alleras{Up,Down} (era-independent name) and
+#                        _syst_{era_tag}{Up,Down}. No pT split for this era range (confirmed against a
+#                        real 2022postEE ntuple: the DM{dm}_{era_tag} form this used to request doesn't
+#                        exist there at all -- these five DM{0,1,10,11}-times-three plus two
+#                        DM-correlated names are what actually does).
 #   era >= 2024:        CMS_eff_t_DeepTau2018v2p5_VSjet_DM{dm}_pT{pt}_{era_tag}{Up,Down}, dm in [0,1,10,11], pt in [20to40, 40to60, 60toInf]
+#                        (confirmed against a real 2024 ntuple, matches exactly)
 def tau_id_eff_lt(era):
     era_num = int(era[:4])
     dms = ["0", "1", "10", "11"]
@@ -723,11 +731,23 @@ def tau_id_eff_lt(era):
         ]
     era_tag = JES_ERA_MAP[era]
     if era_num < 2024:
-        return [
-            ReplaceVariable(f"CMS_eff_t_DeepTau2018v2p5_VSjet_DM{dm}_{era_tag}{shift}", f"CMS_eff_t_DeepTau2018v2p5_VSjet_DM{dm}_{era_tag}{shift}")
+        per_dm = [
+            ReplaceVariable(
+                f"CMS_eff_t_DeepTau2018v2p5_VSjet_{component}_DM{dm}_{era_tag}{shift}",
+                f"CMS_eff_t_DeepTau2018v2p5_VSjet_{component}_DM{dm}_{era_tag}{shift}",
+            )
             for dm in dms
+            for component in ["stat1", "stat2", "syst_TES"]
             for shift in SHIFT_DIRECTIONS
         ]
+        dm_correlated = [
+            ReplaceVariable(f"CMS_eff_t_DeepTau2018v2p5_VSjet_syst_alleras{shift}", f"CMS_eff_t_DeepTau2018v2p5_VSjet_syst_alleras{shift}")
+            for shift in SHIFT_DIRECTIONS
+        ] + [
+            ReplaceVariable(f"CMS_eff_t_DeepTau2018v2p5_VSjet_syst_{era_tag}{shift}", f"CMS_eff_t_DeepTau2018v2p5_VSjet_syst_{era_tag}{shift}")
+            for shift in SHIFT_DIRECTIONS
+        ]
+        return per_dm + dm_correlated
     return [
         ReplaceVariable(f"CMS_eff_t_DeepTau2018v2p5_VSjet_DM{dm}_pT{pt}_{era_tag}{shift}", f"CMS_eff_t_DeepTau2018v2p5_VSjet_DM{dm}_pT{pt}_{era_tag}{shift}")
         for dm in dms
@@ -821,10 +841,33 @@ zll_mt_fake_rate = [
 # weight, so CMS_trig_mutau_cross/CMS_trig_etau_cross would have no effect
 # and are intentionally not booked here); tt varies the combined ditau
 # cross-trigger SF (both legs in one shift, matching double_trigger).
-trigger_eff_mt = [
-    ReplaceVariable("CMS_eff_m_triggerUP", "CMS_eff_m_triggerUP"),
-    ReplaceVariable("CMS_eff_m_triggerDOWN", "CMS_eff_m_triggerDOWN"),
-]
+def trigger_eff_mt(era):
+    """Muon single-trigger SF shifts, split stat/syst -- matches CROWN's
+    `analysis_configurations/tau/variations.py` "Trigger scale factor shifts
+    (Run 3)" block exactly: `CMS_eff_m_trigger_syst{Up,Down}` (era-independent)
+    and `CMS_eff_m_trigger_stat_{era_tag}{Up,Down}` (era-tagged, same
+    JES_ERA_MAP convention as the jet-energy shifts). The single unsplit
+    `CMS_eff_m_triggerUP`/`DOWN` this used to hardcode does not exist on real
+    CROWN ntuples -- confirmed against a real 2022postEE mt production, whose
+    branches are exactly `CMS_eff_m_trigger_syst{UP,DOWN}` and
+    `CMS_eff_m_trigger_stat_2022EE{UP,DOWN}` -- so booking it always raised
+    "Variation ... not found in ntuple" the first time a full (non
+    --skip-systematic-variations) mt run actually reached it.
+
+    Run3-only, matching CROWN: that block is gated to Run3 there (era >= 2022);
+    CROWN defines no non-embedding muon-trigger-SF shift for Run2 (2018) at
+    all, so this returns an empty list for era < 2022 rather than booking a
+    shift that would raise the same NameError.
+    """
+    if int(era[:4]) < 2022:
+        return []
+    era_tag = JES_ERA_MAP[era]
+    return [
+        ReplaceVariable("CMS_eff_m_trigger_systUP", "CMS_eff_m_trigger_systUP"),
+        ReplaceVariable("CMS_eff_m_trigger_systDOWN", "CMS_eff_m_trigger_systDOWN"),
+        ReplaceVariable(f"CMS_eff_m_trigger_stat_{era_tag}UP", f"CMS_eff_m_trigger_stat_{era_tag}UP"),
+        ReplaceVariable(f"CMS_eff_m_trigger_stat_{era_tag}DOWN", f"CMS_eff_m_trigger_stat_{era_tag}DOWN"),
+    ]
 
 # et
 trigger_eff_et = [

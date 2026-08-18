@@ -66,7 +66,12 @@ def parse_args():
                          "See shapes/produce_shapes.py --validation-db-root.")
     p.add_argument("--ff-friends-dir", default=None)
     p.add_argument("--ff-type", default="none")
-    p.add_argument("--presel-dir", default=None)
+    p.add_argument("--selection-friend", default=None,
+                    help="Base dir of CROWN's selection-mask FRIEND trees (see "
+                         "shapes/produce_shapes.py --selection-friend). Default: "
+                         "{base_store}/CROWNFriend/selection_<ntupletag's own tag>/ is NOT "
+                         "guessed here (the friend's own version tag is independent of "
+                         "--ntupletag) -- pass the full path explicitly.")
     p.add_argument("--process-selection", type=csv, default=None, help="Restrict to this comma-separated process list (default: all).")
     p.add_argument("--split-by-process", action="store_true", help="One job per process (within --process-selection or the default set) instead of one job per (era, channel).")
     p.add_argument("--skip-systematic-variations", action="store_true")
@@ -117,14 +122,11 @@ def build_jobs(args) -> list[JobSpec]:
                 f"--num-processes {args.num_processes}",
                 f"--num-threads {args.num_threads}",
             ]
-            # --directory and --presel-dir are mutually exclusive in
-            # shapes/produce_shapes.py.
-            if args.presel_dir:
-                common.append(f"--presel-dir {args.presel_dir}")
-            else:
-                common.append(f"--directory {ntuples_dir}")
-            if not args.no_xrootd and not args.presel_dir:
+            common.append(f"--directory {ntuples_dir}")
+            if not args.no_xrootd:
                 common.append("--xrootd")
+            if args.selection_friend:
+                common.append(f"--selection-friend {args.selection_friend}")
             if args.skip_systematic_variations:
                 common.append("--skip-systematic-variations")
             if args.control_plots:

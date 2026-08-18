@@ -93,24 +93,27 @@ def channel_selection(
     Parameters
     ----------
     preselected:
-        When *True* the input ntuples have already been processed by
-        ``shapes/preselect.py``, which applied the TFF event-selection cuts
-        (tau ID vs-ele/vs-mu, trigger, tau-pt, lepton-pt, decay-mode).
-        In that case those cuts are skipped here to avoid redundancy.
-        All cuts that are *not* part of the TFF preselection — opposite-sign,
-        extra-lepton vetoes, jet-veto-map, tau-vs-jet WP, lepton isolation, and
-        mt cut — are always applied.
+        Vestigial: this pipeline has no preselection step of its own anymore
+        (SHAPES always reads raw CROWN ntuples directly, see
+        shapes/produce_shapes.py's --selection-friend), so callers never pass
+        True. Kept as a parameter -- rather than deleted -- only because
+        dropping it would also mean tearing out the `_use_presel_mask = ...
+        and not preselected` branch below it turns off; left in place in case
+        a future flat-input path needs the same skip-redundant-cuts logic
+        again.
     use_masks:
-        When *True* (and ``preselected`` is False) the input ntuples carry
-        CROWN's precomputed ``presel_mask`` branch, so every preselection-derived
-        cut — the tau decay mode, the vsEle/vsMu discriminators, the tau-pt +
-        trigger cut, the jet veto map, and em's electron_eta — collapses into
-        the single named cut ``Cut("presel_mask > 0.5", "presel_mask")``.
-        Detected once per (era, channel) by ``shapes/produce_shapes.py`` from
-        the first input file via ``config.analysis.masks_available()``;
-        ``--force-legacy-cuts`` pins it to False. Old (maskless) ntuples and
-        Run2 2018 (whose CROWN production predates the masks entirely) simply
-        never see it set, so the tff_adapter path below is untouched.
+        When *True* the input ntuples carry CROWN's precomputed
+        ``presel_mask`` branch (either in the main ntuple or via
+        --selection-friend), so every preselection-derived cut — the tau
+        decay mode, the vsEle/vsMu discriminators, the tau-pt + trigger cut,
+        the jet veto map, and em's electron_eta — collapses into the single
+        named cut ``Cut("presel_mask > 0.5", "presel_mask")``. Forced True by
+        shapes/produce_shapes.py whenever --selection-friend is given;
+        otherwise detected once per (era, channel) from the first input file
+        via ``config.analysis.masks_available()``. ``--force-legacy-cuts``
+        pins it to False either way. Old (maskless) ntuples and Run2 2018
+        (whose CROWN production predates the masks entirely) simply never see
+        it set, so the tff_adapter path below is untouched.
 
         Deliberately scoped to the *preselection*-derived cuts only. Every
         ``channel_selection:`` cut (os, tau_iso, the three vetoes, the lepton
@@ -151,20 +154,14 @@ def channel_selection(
     cuts["os"] = _cs_cuts["os"]
 
     # Mask path: one named cut stands in for every preselection-derived cut.
-    # Only when the input has NOT already been preselected -- a preselected
-    # input had those cuts applied by shapes/preselect.py (whichever path it
-    # took there), so re-applying anything here would be redundant.
     #
     # Behaviour note, deliberate and worth knowing: presel_mask is the FULL
     # per-channel `preselection:` block of config/cuts.yaml, which includes
     # `had_tau_decay_mode` — a cut the legacy branch below never applied when
     # reading raw ntuples (it only picks had_tau_id_vs_ele/vs_mu/had_tau_pt/
-    # lep_pt out of that same block, plus jet_veto above). So a raw-ntuple
-    # run with masks is very slightly TIGHTER than the same run with
-    # --force-legacy-cuts, by exactly the decay-mode requirement. That matches
-    # what the preselected (--presel-dir) path has always done, i.e. the mask
-    # path makes raw-ntuple and preselected runs agree where they previously
-    # did not.
+    # lep_pt out of that same block, plus jet_veto above). So a raw-ntuple run
+    # with masks is very slightly TIGHTER than the same run with
+    # --force-legacy-cuts, by exactly the decay-mode requirement.
     _use_presel_mask = use_masks and not preselected
     if _use_presel_mask:
         logger.info(

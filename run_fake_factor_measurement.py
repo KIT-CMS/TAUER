@@ -49,6 +49,9 @@ from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(_REPO_ROOT))
+# TauFakeFactors/ too -- config/logging_setup_configs.py imports its
+# CustomLogging package (same reason as run.py).
+sys.path.insert(1, str(_REPO_ROOT / "TauFakeFactors"))
 
 from config.analysis import RUN3_ERAS, get_channels
 

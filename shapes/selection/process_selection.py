@@ -765,27 +765,23 @@ def VVL_process_selection(channel, **kwargs):
     )
 
 
-# STXS stage-0 Higgs production-mode codes (HTXS_stage_0). Stage 0 already
-# merges genuine VBF with hadronically-decaying-V associated production
-# (indistinguishable qqH final state) under the "VBF" code -- only
-# leptonically-decaying WH/ZH get their own codes. This is why qqH and VH
-# are split by *this* cut, not by dataset: the WminusH/WplusH/ZH samples in
-# samples.yaml:signals feed both qqH (hadronic V decay) and VH (leptonic V
-# decay), same as smhtt_ul's process_selection.py (rem_htautau feeding both
-# qqH125 and WH125/ZH125 via HTXS cuts).
-_HTXS_STAGE0_GGH = 10
-_HTXS_STAGE0_VBF = 20  # VBF + hadronic-decay WH/ZH
-_HTXS_STAGE0_WH_LEP = 30
-_HTXS_STAGE0_ZH_LEP = 40
-
-
+# No HTXS_stage_0 cut here -- matching smhtt_ul (config/shapes/process_selection.py),
+# which never reads HTXS_stage_0 either. ggH125/qqH125/VH125/WH125/ZH125 are
+# each fed by their own exclusive dataset (samples.yaml:signals), so files
+# are already selected by final state; the HTXS_stage1_2_cat_pTjet30GeV
+# range cut below is only a safety net covering every stage-1.2 sub-bin of
+# the production mode (confirmed against htt_260813_22-23's ggH ntuples:
+# 23056/23056 events fall in range 100-116), not an actual event split.
+# Differential STXS categories are instead built on top of these via the
+# per-bin qqH125.bin<200..210>/ggH125.bin<100..116> chain below (also taken
+# from smhtt_ul), which additively cuts on individual stage-1.2 bins.
 def VH_process_selection(channel, era, vs_jet_wp, vs_ele_wp, **kwargs):
     return Selection(
         name="VH125",
         weights=HTT_process_selection(channel, era, vs_jet_wp, vs_ele_wp).weights,
         cuts=[
             (
-                f"(HTXS_stage_0=={_HTXS_STAGE0_WH_LEP})||(HTXS_stage_0=={_HTXS_STAGE0_ZH_LEP})",
+                "(HTXS_stage1_2_cat_pTjet30GeV>=300)&&(HTXS_stage1_2_cat_pTjet30GeV<=505)",
                 "htxs_match",
             )
         ],
@@ -805,7 +801,7 @@ def WH_process_selection(channel, era, vs_jet_wp, vs_ele_wp, **kwargs):
         ],
         cuts=[
             (
-                f"HTXS_stage_0=={_HTXS_STAGE0_WH_LEP}",
+                "(HTXS_stage1_2_cat_pTjet30GeV>=300)&&(HTXS_stage1_2_cat_pTjet30GeV<=305)",
                 "htxs_match",
             )
         ],
@@ -826,7 +822,7 @@ def ZH_process_selection(channel, era, vs_jet_wp, vs_ele_wp, **kwargs):
         ],
         cuts=[
             (
-                f"HTXS_stage_0=={_HTXS_STAGE0_ZH_LEP}",
+                "(HTXS_stage1_2_cat_pTjet30GeV>=400)&&(HTXS_stage1_2_cat_pTjet30GeV<=405)",
                 "htxs_match",
             )
         ],
@@ -967,7 +963,7 @@ def ggH125_process_selection(channel, era, vs_jet_wp, vs_ele_wp, weight_stitchin
 
     ggH125_cuts = [
         (
-            f"HTXS_stage_0=={_HTXS_STAGE0_GGH}",
+            "(HTXS_stage1_2_cat_pTjet30GeV>=100)&&(HTXS_stage1_2_cat_pTjet30GeV<=116)",
             "htxs",
         )
     ]
@@ -990,7 +986,7 @@ def qqH125_process_selection(channel, era, vs_jet_wp, vs_ele_wp, weight_stitchin
         )
     qqH125_cuts = [
         (
-            f"HTXS_stage_0=={_HTXS_STAGE0_VBF}",
+            "(HTXS_stage1_2_cat_pTjet30GeV>=200)&&(HTXS_stage1_2_cat_pTjet30GeV<=210)",
             "qqH125",
         )
     ]

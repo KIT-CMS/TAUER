@@ -4,6 +4,10 @@ output_features:
   # not used in training, needed for FF
   - weight 
   - btag_weight
+  # xsec friend columns needed by MC weight expressions in produce_shapes.py
+  - crossSectionPerEventWeight
+  - negative_events_fraction
+  - numberGeneratedEventsWeight
   - dimuon_veto 
   - extramuon_veto
   - extraelec_veto

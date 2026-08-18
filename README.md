@@ -49,7 +49,7 @@ supported).
 ```
 TauKITFlow/
 ├── run.py                        # Main pipeline entry point (all MODEs, see below)
-├── run_fake_factor_measurement.py # Standalone TFF chain (its own preselection.py, not run.py PRESEL)
+├── run_fake_factor_measurement.py # Standalone TFF chain (TauFakeFactors' own preselection.py)
 ├── environment.yml                # `taukitflow` conda env (shape production/training/plotting)
 │
 ├── config/                        # Central, single-sourced analysis config
@@ -69,9 +69,9 @@ TauKITFlow/
 │       └── tff_adapter.py          #   reads TauFakeFactors' generated preselection YAML
 │
 ├── shapes/                         # Shape production
-│   ├── produce_shapes.py           #   main entry point: ntuple_processor booking/execution
-│   ├── preselect.py                #   downstream preselection skim (CROWN-directory-compatible
-│   │                               #   output; reused by both signal and, via TFF, background)
+│   ├── produce_shapes.py           #   main entry point: ntuple_processor booking/execution,
+│   │                               #   reads raw CROWN ntuples directly (--selection-friend
+│   │                               #   attaches CROWN's selection-mask friend, see below)
 │   ├── do_estimations.py           #   post-processing: fake-factor/QCD/embedding estimations
 │   ├── convert_to_synced_shapes.py #   bridges produce_shapes.py output -> Combine-ready synced
 │   │                               #   shape file (consumed by combine_datacards/, tau_es/)
@@ -279,40 +279,12 @@ production, writing `crossSectionPerEventWeight`/`negative_events_fraction`/
 `numberGeneratedEventsWeight` friend trees under `.../CROWNFriends/xsec/`. Required before any
 real MC shape production — these branches are not present on the bare CROWN ntuple.
 
-### 2. PRESEL — preselection (the basis for shapes and fake factors)
+This pipeline has no preselection step of its own: `SHAPES`/`SHAPES-NOSYS`/`TRAIN-SHAPES`/
+`CONFIGS` always read raw CROWN ntuples directly (see step 2 below). TauFakeFactors keeps its
+own, separate `preselection.py`, used only by the standalone `FF-MEASURE` chain (step 6) —
+that file is untouched and unaffected by anything here.
 
-```bash
-NTUPLETAG=htt_260602_2024-25_v5 ERA=2024 CHANNELS=et,mt,tt python3 run.py PRESEL
-```
-
-Runs `shapes/preselect.py` (auto-activates `fake_factors`), applying the central
-`config/cuts.yaml` event selection and `config/weights.yaml` weights to the CROWN ntuples and
-writing ONE flat tree:
-
-```
-/ceph/$USER/TauKITFlow_shapes/<ntupletag>/preselection/<era>/<channel>/<key>.root
-```
-
-one file per dataset key (`DYjets_T`, `Wjets`, `data`, … for backgrounds — concatenated over
-samples and split by tau gen. mode; one per physical sample name for signals), with the event
-weight baked into a `weight` column (the same branch name TauFakeFactors uses).
-
-That single tree is read as-is by **both** downstream consumers — no second copy or mirror of
-it exists:
-
-* shape production — `run.py SHAPES --presel-dir <that dir>` (step 3);
-* the fake-factor measurement — `run.py FF/FF-CORR --ff-input-dir <that dir>` (step 7).
-
-This fully replaces TauFakeFactors' own `preselection.py` for this pipeline. That file is
-untouched on disk and still works for running TauFakeFactors standalone (see step 7), but
-nothing here uses it, and neither its generated `configs/smhtt_ul/<era>/preselection_<ch>.yaml`
-nor `GEN-TFF-CONFIGS` is involved. Output *naming* is deliberately identical to it, which is
-what lets TauFakeFactors read this tree unchanged.
-
-All four Run3 channels are covered, `em` included — it plays no part in the fake-factor steps
-but is preselected like the rest so shape production reads one consistent input everywhere.
-
-### 3. SHAPES / SHAPES-NOSYS — shape production
+### 2. SHAPES / SHAPES-NOSYS — shape production
 
 ```bash
 NTUPLETAG=htt_260602_2024-25_v5 ERA=2024 CHANNELS=mt VS_JET_WP=Medium \
@@ -328,8 +300,14 @@ then `shapes/do_estimations.py` for fake-factor/QCD/embedding post-processing, w
 /ceph/$USER/TauKITFlow_shapes/<ntupletag>/output/<tag>/<ss-os|ff>/<era>/<channels>/shapes.root
 ```
 
-Pass `--presel-dir` (step 2's output) to build on the preselection instead of reading raw CROWN.
-
+Pass `--selection-friend <dir>` (`SELECTION_FRIEND_DIR` env var) to attach CROWN's
+selection-mask friend trees (`selection_friends.py` output, e.g.
+`.../CROWN/ntuples/<tag>/CROWNFriend/selection_<version>/`) and switch preselection over to
+CROWN's precomputed, per-shift `presel_mask` branches instead of the individual
+`config/cuts.yaml` cut strings — see `shapes/produce_shapes.py --selection-friend` for the full
+mechanism (it also makes the shift-varied `presel_mask__<shift>` branches, which live only in
+this friend, visible to the same per-shift substitution every other CROWN quantity already
+gets). Leave unset for masks-in-the-ntuple productions, which are still auto-detected.
 
 `<tag>` defaults to `<ntupletag>`; `<ss-os|ff>` follows whether `FF_FRIENDS_DIR`/
 `--ff-friends-dir` is set, which also selects `do_estimations.py`'s `--do-qcd` vs `--do-ff`.
@@ -362,7 +340,7 @@ processes for 2018 — `numberGeneratedEventsWeight`/`crossSectionPerEventWeight
 `negative_events_fraction` live in a friend tree there, not as bare branches, same convention
 as Run3.)
 
-### 4. PLOT — control plots
+### 3. PLOT — control plots
 
 ```bash
 conda activate taukitflow
@@ -372,7 +350,7 @@ ERA=2024 CHANNELS=mt VARIABLES=m_vis,pt_1,pt_2 python3 run.py PLOT
 Runs `plotting/plot_shapes_control.py` (mplhep/CMS-style) against the shapes ROOT file
 `SHAPES`/`SHAPES-NOSYS` produced, writing PNG/PDF control plots.
 
-### 5. TRAIN-SHAPES — shapes for DNN training input
+### 4. TRAIN-SHAPES — shapes for DNN training input
 
 ```bash
 NTUPLETAG=htt_260602_2024-25_v5 ERA=2024 CHANNELS=mt python3 run.py TRAIN-SHAPES
@@ -381,7 +359,7 @@ NTUPLETAG=htt_260602_2024-25_v5 ERA=2024 CHANNELS=mt python3 run.py TRAIN-SHAPES
 Same production step as SHAPES but nominal-only with training-specific binning; feeds
 `TRAIN-DATASET` below.
 
-### 6. CONFIGS — collect ntuple_processor configs without producing histograms
+### 5. CONFIGS — collect ntuple_processor configs without producing histograms
 
 ```bash
 NTUPLETAG=htt_260602_2024-25_v5 ERA=2024 CHANNELS=mt python3 run.py CONFIGS
@@ -389,7 +367,7 @@ NTUPLETAG=htt_260602_2024-25_v5 ERA=2024 CHANNELS=mt python3 run.py CONFIGS
 
 Useful for debugging the sample/selection/cut wiring without a real RDataFrame run.
 
-### 7. Fake-factor measurement: FF → FF-CORR
+### 6. Fake-factor measurement: FF → FF-CORR
 
 The fake factors are measured **from the preselection produced in step 2** (`run.py PRESEL`) — `--ff-input-dir` points TauFakeFactors' `file_path`/`output_path` at it, via a
 generated tmp config, so its real YAMLs on disk are never touched:
@@ -410,7 +388,7 @@ FF-CORR`. Note its preselection step is TauFakeFactors' own, *not* `run.py PRESE
 build step that regenerates TauFakeFactors' own `preselection_{ch}.yaml` from central
 config, and it is only relevant for this standalone path.
 
-### 8. Datacards / Combine (needs `cmsenv`, see Environment setup above)
+### 7. Datacards / Combine (needs `cmsenv`, see Environment setup above)
 
 ```bash
 source utils/setup_cmssw.sh
@@ -433,7 +411,7 @@ category/process/systematics/CardWriter logic) plus real external
 per script — some take `ntuple_tag` last, `produce_gof_datacard.py` also takes
 `--use-asimov`/`--embedding`/`--jetfakes` flags).
 
-### 9. TauES measurement (needs `cmsenv`; validated mechanism, see gap note below)
+### 8. TauES measurement (needs `cmsenv`; validated mechanism, see gap note below)
 
 ```bash
 source utils/setup_cmssw.sh
