@@ -22,13 +22,14 @@ luminosity:
   # the CMS plot label) already read this single surviving value -- removed
   # the dead duplicate rather than leaving two numbers for the same key.
   '2018': 59.83
-  2022preEE: 8.086
-  2022postEE: 26.679
-  2023preBPix: 17.964
-  2023postBPix: 9.677
-  '2024': 109.816
-  '2025': 109.898
-  '2026': 27.42
+  2022preEE: 8.086069205
+  2022postEE: 26.674924045
+  2023preBPix: 17.964217998
+  2023postBPix: 9.676737966
+  '2024': 109.816515335
+  '2025': 109.898115287
+  # merged into the '2025' analysis era (config/analysis.py DATA_ERA_MERGE): 2025+2026 = 135.047093128
+  '2026': 25.148977841
 
 backgrounds:
   '2018':
