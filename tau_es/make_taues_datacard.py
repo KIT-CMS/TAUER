@@ -1,65 +1,21 @@
 #!/usr/bin/env python3
 """
-Build a Combine datacard for the tauES measurement (continuous ``taues``
-RooMorphing fit), from a synced tauES shape file
-(shapes/convert_to_synced_shapes.py --special TauES output).
+Build a Combine datacard for the tauES measurement (continuous ``taues`` RooMorphing fit),
+from a synced tauES shape file (shapes/convert_to_synced_shapes.py --special-analysis TauES output),
+via CombineHarvester's Python bindings.
 
-This is a Python port -- via CombineHarvester's Python bindings, the same
-approach Phase 2d used for combine_datacards/make_datacards.py -- of
-smhtt_ul's tauES measurement datacard-construction step. The original is a
-compiled CMSSW binary, ``MorphingSMRun2Legacy_tauES.cpp``. It is NOT on
-smhtt_ul's ``tauID_SFs_dev`` branch (the branch this task named) -- that
-branch's ``embeddded_tauES_ul2018.sh`` (MODE=DATACARD) calls
-``$CMSSW_BASE/bin/slc7_amd64_gcc700/MorphingTauES_UL``, a binary whose source
-was not found on any branch actually checked out locally, nor on
-``tauID_SFs_dev``. The equivalent, buildable source -- structurally almost
-identical (same taues RooRealVar range, same categories, same systematics
-list) -- was found on CombineHarvester/SMRun2Legacy's remote branch
-``origin/tauES`` (``bin/MorphingSMRun2Legacy_tauES.cpp``, a sibling of the
-``bin/MorphingSMRun2Legacy.cpp`` that Phase 2d already found deleted/replaced
-by ``run3_htt``'s pure-Python ``make_datacards.py``). This module is the same
-kind of replacement, applied to the tauES-specific binary instead. See
-STATUS.md ("## Phase 6b") for the discovery record.
-
-What's ported faithfully (same physics, same naming):
-- The ``taues`` RooRealVar range (default -2.5 to 1.6, matching the C++
-  default -- overridable via --taues-range).
-- The per-shift-point EMB signal-process list (``energy_scales`` in the
-  C++), now generated from tau_es/energy_scales.py's canonical 100-point
-  list instead of a hand-copied ~44-point subset -- see the module docstring
-  there. A subset can still be requested via --shift-min/--shift-max/--shift-step
-  for compatibility with the C++'s coarser default grid (recommended for a
-  first fit -- 100 morphing templates is more than the coarse original used
-  and will cost more RooFit build time for likely no measurement-precision
-  benefit; --shift-min -2.4 --shift-max 1.6 reproduces the original's range).
-- The background process list (``ZL``, ``TTL``, ``VVL``, ``jetFakes``) and
-  the lnN/shape systematics block (lumi, embnorm, vvlXsec, zlXsec, ttlXsec,
-  CMS_mFakeTau, per-pT-bin CMS_eff_emb_t, emb_t, CMS_eff_m, CMS_3ProngEff,
-  CMS_1ProngPi0Eff, jetFakes shape stats/syst) -- all copied over 1:1 from
-  the C++, with $CHANNEL/$ERA left as CombineHarvester wildcards (this
-  measurement uses CombineHarvester's own AddSyst infra directly, unlike
-  combine_datacards/systematics.py which had to hand-resolve those wildcards
-  -- see that module's docstring for why. There's no such conflict here
-  because these systematic names were never duplicated in
-  shapes/selection/variations.py in the first place: they're specific to
-  this measurement, not the main SM H->tautau analysis).
-
-What's deliberately NOT ported / left as a follow-up:
-- The C++'s hardcoded single-bin category ``{chn}_m_vis`` (i.e. the DM0/DM1/
-  DM10_11/Inclusive split defined in taues_measurement_binning.py / used by
-  shape production is collapsed to one bin in the reference C++ too -- its
-  own FIT-mode shell code only ever fits "Inclusive"). This port keeps that
-  as the default (--categories Inclusive) but, unlike the C++, also supports
-  building one bin per DM category (--categories DM0,DM1,DM10_11,Inclusive)
-  since taues_measurement_binning.py already defines all four and the synced
-  shape file has all four available -- an extension, not a behavior change
-  to the default.
-- BuildRooMorphing is not exposed on the ``CombineHarvester.CombineTools.ch``
-  Python module the rest of this repo uses (confirmed: `hasattr(ch,
-  "BuildRooMorphing")` is False) -- it lives in the separate CombinePdfs
-  library. Reached here via `ROOT.gSystem.Load("libCombineHarvesterCombinePdfs")`
-  + `ROOT.ch.BuildRooMorphing(...)`, confirmed callable this way (see
-  STATUS.md Phase 6b validation).
+- ``taues`` RooRealVar range defaults to -2.5..1.6 (overridable via --taues-range).
+- Per-shift-point EMB signal processes come from tau_es/energy_scales.py's 100-point list;
+  a subset can be requested via --shift-min/--shift-max/--shift-step.
+- Background processes: ``ZL``, ``TTL``, ``VVL``, ``jetFakes``, with the matching lnN/shape
+  systematics block (lumi, embnorm, vvlXsec, zlXsec, ttlXsec, CMS_mFakeTau, per-pT-bin
+  CMS_eff_emb_t, emb_t, CMS_eff_m, CMS_3ProngEff, CMS_1ProngPi0Eff, jetFakes shape
+  stats/syst), with $CHANNEL/$ERA as CombineHarvester wildcards.
+- ``--categories`` defaults to Inclusive but also supports one bin per DM category
+  (DM0,DM1,DM10_11,Inclusive), since taues_measurement_binning.py defines all four.
+- ``BuildRooMorphing`` isn't on the ``CombineHarvester.CombineTools.ch`` Python module --
+  it's in the separate CombinePdfs library, reached via
+  ``ROOT.gSystem.Load("libCombineHarvesterCombinePdfs")`` + ``ROOT.ch.BuildRooMorphing(...)``.
 """
 import argparse
 import glob
@@ -67,14 +23,14 @@ import logging
 import os
 
 from config.logging_setup_configs import setup_logging
-from combine_datacards.tools import (
+from datacards.tools import (
     fix_negative_bins,
     filter_zero_yield_processes,
     filter_zero_yield_systs,
     replace_with_asimov,
 )
 from tau_es.energy_scales import shift_values, procname_to_shift_string, shift_to_procname
-from config.shapes.taues_measurement_binning import categories as taues_categories
+from tau_es.taues_measurement_binning import categories as taues_categories
 
 BACKGROUND_PROCESSES = ["ZL", "TTL", "VVL", "jetFakes"]
 SIGNAL_PROCESSES = ["EMB"]
@@ -91,7 +47,7 @@ def csv(value):
 
 
 def _load_taues_systematic_shapes(cb, ch, ROOT, root_file, channel, logger):
-    """Local counterpart of combine_datacards.tools.load_systematic_shapes,
+    """Local counterpart of datacards.tools.load_systematic_shapes,
     needed because that function hardcodes the main analysis's no-underscore
     Higgs mass-token convention ("$PROCESS$MASS", e.g. "ggH_htt125"), while
     the tauES measurement's synced shape file names signal templates
@@ -126,17 +82,17 @@ def _load_taues_systematic_shapes(cb, ch, ROOT, root_file, channel, logger):
 
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--era", default="2018", help="Run2 era with tauES/embedding support (2018 today, see STATUS.md Phase 2a).")
-    p.add_argument("--channel", default="mt", help="Only mt is supported today (Phase 2a scope).")
+    p.add_argument("--era", default="2018", help="Run2 era with tauES/embedding support (2018 today).")
+    p.add_argument("--channels", dest="channel", default="mt", help="Only mt is supported today (Phase 2a scope).")
     p.add_argument("--categories", type=csv, default=["Inclusive"],
                     help="Comma-separated subset of taues_measurement_binning.py's categories "
                          "(DM0, DM1, DM10_11, Inclusive). Default matches the reference C++'s "
                          "FIT-mode default (Inclusive only).")
     p.add_argument("--input-file", required=True,
                     help="Synced tauES shape ROOT file, e.g. "
-                         "shapes/convert_to_synced_shapes.py --special TauES output "
+                         "shapes/convert_to_synced_shapes.py --special-analysis TauES output "
                          "(htt_mt.inputs-sm-Run<era>-ML.root or equivalent).")
-    p.add_argument("--output-folder", default="output_taues_cards")
+    p.add_argument("--output-dir", default="output_taues_cards")
     p.add_argument("--real-data", action="store_true", help="Use data_obs instead of an Asimov dataset.")
     p.add_argument("--shift-min", type=float, default=None, help="Override tau_es.energy_scales.SHIFT_MIN for the morphing template grid.")
     p.add_argument("--shift-max", type=float, default=None, help="Override tau_es.energy_scales.SHIFT_MAX for the morphing template grid.")
@@ -189,16 +145,10 @@ def build_datacard(args, logger):
     cb.AddProcesses(["*"], ["htt"], [era_tag], [args.channel], BACKGROUND_PROCESSES, bins, False)
     cb.AddProcesses(shift_strings, ["htt"], [era_tag], [args.channel], SIGNAL_PROCESSES, bins, True)
 
-    # --- Nominal extraction FIRST, systematics registered/loaded after. ---
-    # ExtractShapes(..., syst_rule) immediately tries to resolve every shape
-    # systematic already registered on `cb` at call time -- so the AddSyst()
-    # calls below must come after this nominal pass, and shape systematics
-    # must be (re-)loaded via combine_datacards.tools.load_systematic_shapes
-    # (which filters out any that have no matching histogram in the file
-    # before extracting, exactly like combine_datacards/make_datacards.py's
-    # own two-pass ExtractShapes/AddSystematics/load_systematic_shapes
-    # ordering -- see that module for the identical pattern applied to the
-    # main analysis).
+    # Nominal extraction FIRST, systematics registered/loaded after: ExtractShapes(...,
+    # syst_rule) immediately tries to resolve every shape systematic already registered on
+    # `cb`, so AddSyst() below must come after this pass -- same two-pass ordering as
+    # datacards/make_datacards.py's ExtractShapes/AddSystematics/load_systematic_shapes.
     logger.info(f"Extracting nominal shapes from {args.input_file}")
     cb.cp().channel([args.channel]).backgrounds().ExtractShapes(
         args.input_file, "$BIN/$PROCESS", "$BIN/$PROCESS_$SYSTEMATIC")
@@ -260,31 +210,26 @@ def build_datacard(args, logger):
         logger.info("Adding AutoMCStats...")
         cb.SetAutoMCStats(cb, 0.0)
 
-    os.makedirs(args.output_folder, exist_ok=True)
+    os.makedirs(args.output_dir, exist_ok=True)
     writer = ch.CardWriter(
-        os.path.join(args.output_folder, "$BIN.txt"),
-        os.path.join(args.output_folder, f"common/htt_input_{args.era}.root"),
+        os.path.join(args.output_dir, "$BIN.txt"),
+        os.path.join(args.output_dir, f"common/htt_input_{args.era}.root"),
     )
-    # Real bug found + fixed during Phase 6b validation: backgrounds here are
-    # added with a wildcard mass ("*", via AddProcesses(["*"], ...)), same as
-    # the reference C++. Without telling CardWriter to NOT treat "*" as a
-    # real mass identifier, it silently writes zero cards (every object
-    # appears to have mass "*", which CardWriter's default wildcard handling
-    # skips) -- reproduced: the exact same code minus this line wrote an
-    # empty output folder with no error. The reference C++ already calls
-    # this (`writer.SetWildcardMasses({})`); missing here was the actual bug.
+    # Backgrounds are added with a wildcard mass ("*") -- without telling CardWriter not to
+    # treat "*" as a real mass identifier, it silently writes zero cards (confirmed: the
+    # same code minus this line wrote an empty output folder with no error).
     writer.SetWildcardMasses([])
     writer.WriteCards("", cb)
 
     if args.bbb:
-        for card in glob.glob(os.path.join(args.output_folder, "*.txt")):
+        for card in glob.glob(os.path.join(args.output_dir, "*.txt")):
             with open(card, "r", encoding="utf-8") as handle:
                 lines = [line for line in handle if "autoMCStats" not in line]
             lines.append(" * autoMCStats 0.0\n")
             with open(card, "w", encoding="utf-8") as handle:
                 handle.writelines(lines)
 
-    logger.info(f"Done: era={args.era} channel={args.channel} categories={args.categories} -> {args.output_folder}")
+    logger.info(f"Done: era={args.era} channel={args.channel} categories={args.categories} -> {args.output_dir}")
     return cb
 
 

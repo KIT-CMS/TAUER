@@ -1,23 +1,4 @@
 #!/usr/bin/env python3
-"""
-HTCondor submission for the tauES measurement (tau_es/run_taues_category.py):
-one job per (era, category) -- DM0/DM1/DM10_11/Inclusive are independent
-datacard-build + T2W + MultiDimFit-scan jobs, the same "one job per
-independent unit of work" granularity condor/submit_shapes.py already uses
-for (era, channel).
-
-Unlike condor/submit_{shapes,plotting,training}.py, this stage runs inside
-the CMSSW/Combine environment, not the taukitflow conda env -- see
-condor/common.py's SubmissionPlan.env_mode ("cmssw") hook, added in Phase 6b
-specifically for this.
-
-Example:
-
-    python3 condor/submit_taues_fit.py \\
-        --era 2018 --input-file output/2018-mt-taues-synced.root \\
-        --output-dir output/taues_fits --categories DM0,DM1,DM10_11,Inclusive \\
-        --dry-run
-"""
 from __future__ import annotations
 
 import argparse
@@ -26,21 +7,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from condor.common import JobSpec, SubmissionPlan, make_tag, submit
+from condor.common import JobSpec, SubmissionPlan, csv, submit
 
 DEFAULT_CATEGORIES = ["DM0", "DM1", "DM10_11", "Inclusive"]
 
 
-def csv(value: str) -> list[str]:
-    return [v.strip() for v in value.split(",") if v.strip()]
-
-
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--era", default="2018", help="Run2 era with tauES/embedding support (2018 today, see STATUS.md Phase 2a).")
-    p.add_argument("--channel", default="mt")
+    p.add_argument("--era", default="2018", help="Run2 era with tauES/embedding support (2018 today).")
+    p.add_argument("--channels", dest="channel", default="mt")
     p.add_argument("--categories", type=csv, default=DEFAULT_CATEGORIES)
-    p.add_argument("--input-file", required=True, help="Synced tauES shape ROOT file (see shapes/convert_to_synced_shapes.py --special TauES).")
+    p.add_argument("--input-file", required=True, help="Synced tauES shape ROOT file (see shapes/convert_to_synced_shapes.py --special-analysis TauES).")
     p.add_argument("--output-dir", required=True, help="Base output directory; a per-category subdirectory is appended.")
     p.add_argument("--real-data", action="store_true")
     p.add_argument("--bbb", action="store_true")
@@ -59,10 +36,10 @@ def build_jobs(args) -> list:
     for category in args.categories:
         job_args = [
             f"--era {args.era}",
-            f"--channel {args.channel}",
+            f"--channels {args.channel}",
             f"--category {category}",
             f"--input-file {args.input_file}",
-            f"--output-folder {args.output_dir}",
+            f"--output-dir {args.output_dir}",
             f"--points {args.points}",
         ]
         if args.real_data:
@@ -80,7 +57,7 @@ def main():
     jobs = build_jobs(args)
     plan = SubmissionPlan(
         stage="taues_fit",
-        tag=args.tag or make_tag("taues_fit"),
+        tag=args.tag,
         entry_point="tau_es/run_taues_category.py",
         jobs=jobs,
         env_mode="cmssw",

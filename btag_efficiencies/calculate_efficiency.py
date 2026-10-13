@@ -7,36 +7,6 @@ For each sample type (process) the efficiency is computed as
 
 binned in jet pT and jet |eta|, for each b-tagging working point and jet
 flavour category.
-
-The result is written as a correctionlib JSON (+ gzipped version) with the
-following nested lookup structure:
-
-    Category(sample_type)
-      -> Category(working_point)
-           -> Category(jet_flavor)
-                -> Binning(jet_eta)
-                     -> Binning(jet_pt)
-                          -> float  (efficiency)
-
-Usage
------
-    python btag_efficiencies/calculate_efficiency.py \
-        --config-file btag_efficiencies/configs/2024/btag_efficiency.yaml
-
-The config may define either a single ``channel`` or a shared ``channels`` list.
-
-Phase 6e note: this script (and its ``configs/`` directory) used to live
-inside the ``TauFakeFactors`` submodule (``TauFakeFactors/btag_efficiency.py``
-+ ``TauFakeFactors/configs/btag_efficiency/``) even though it measures a
-detector/production-level quantity (jet b-tag efficiency maps) that has
-nothing to do with fake-factor measurement, TauFakeFactors' actual job. It's
-relocated here, into its own clearly-named space, so it's not mistaken for
-part of the FF measurement. It still reuses TauFakeFactors' generic
-``CustomLogging``/``helper`` packages as an external library dependency (the
-same "reach a sibling package, don't fork it" pattern
-``combine_datacards/`` uses for ``CombineHarvester.CombineTools``) — see the
-``sys.path`` bootstrap below. See STATUS.md's Phase 6e section for the full
-rationale and the config-generation half (``generate_configs.py``).
 """
 
 import argparse
@@ -57,17 +27,17 @@ import mplhep as hep
 import numpy as np
 import correctionlib.schemav2 as cs
 
-# TauFakeFactors' generic (non-FF-specific) helper/CustomLogging packages are
-# reused here as an external dependency rather than duplicated -- see the
-# module docstring above.
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-_TFF_ROOT = _REPO_ROOT / "TauFakeFactors"
+_TFF_ROOT = _REPO_ROOT / "fake_factors"
 if str(_TFF_ROOT) not in sys.path:
     sys.path.insert(0, str(_TFF_ROOT))
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 import CustomLogging as logging_helper
 import helper.functions as func
 from helper.correctionlib_json import write_json
+from config.analysis import get_data_eras, get_luminosity, get_center_of_mass
 
 hep.style.use(hep.style.CMS)
 plt.rcParams["axes.linewidth"] = 1.0 # set non bold axes lines
@@ -90,13 +60,15 @@ parser.add_argument(
     help="Logging level (default: INFO).",
 )
 parser.add_argument(
-    "--workers",
+    "--nprocs",
+    dest="workers",
     type=int,
     default=4,
     help="Number of parallel worker processes for inter-sample parallelization (default: 1).",
 )
 parser.add_argument(
-    "--threads",
+    "--nthreads",
+    dest="threads",
     type=int,
     default=4,
     help="ROOT threads per worker for RDataFrame implicit MT (0 = all cores, default: 0).",
@@ -110,19 +82,6 @@ def get_process_files(
     config: Dict,
     process: str,
 ) -> List[str]:
-    """Return all ROOT files that belong to *process*.
-
-    The function searches for files matching
-        {file_path}/preselection/{era}/{channel}/{process}*.root
-    for every configured channel.
-
-    Args:
-        config: Loaded configuration dictionary.
-        process: Process / sample-type name (e.g. ``"ttbar"``).
-
-    Returns:
-        List of matching file paths (may be empty).
-    """
     file_path = config["file_path"]
     channels = get_config_channels(config)
     era = config.get("era", None)
@@ -133,22 +92,21 @@ def get_process_files(
             "Config must specify an 'era' for file discovery."
         )
     for channel in channels:
-        pattern = os.path.join(
-            file_path,
-            "preselection",
-            era,
-            channel,
-            f"{process}*.root",
-        )
-        found.extend(glob.glob(pattern))
+        for data_era in get_data_eras(era):
+            pattern = os.path.join(
+                file_path,
+                "preselection",
+                data_era,
+                channel,
+                f"{process}*.root",
+            )
+            found.extend(glob.glob(pattern))
 
     return sorted(set(found))
 
 
 def get_config_channels(config: Dict) -> List[str]:
-    """Return the list of channels configured for this run.
-
-    Supports both the legacy single-channel key ``channel`` and the new
+    """Supports both the single-channel key ``channel`` and the
     multi-channel key ``channels`` for a shared config file.
     """
     channels = config.get("channels")
@@ -164,22 +122,15 @@ def get_config_channels(config: Dict) -> List[str]:
 
 
 def get_channel_label(config: Dict) -> str:
-    """Return a compact channel label for logging, plots, and output paths."""
     channels = get_config_channels(config)
     return channels[0] if len(channels) == 1 else "all_channels"
 
 
 def get_channel_display(config: Dict) -> str:
-    """Return a human-readable channel label."""
     return ", ".join(get_config_channels(config))
 
 
 def get_channel_configs(config: Dict) -> List[Dict]:
-    """Return single-channel config views for the configured channels.
-
-    A shared config containing ``channels`` is expanded into one config per
-    channel so that each run writes to its own output directory.
-    """
     channel_configs: List[Dict] = []
     for channel in get_config_channels(config):
         channel_config = copy.deepcopy(config)
@@ -196,11 +147,6 @@ def get_process_bins(
     config: Dict,
     process: str,
 ) -> Tuple[List[float], List[float]]:
-    """Return (pt_bins, eta_bins) for *process*.
-
-    Per-process overrides in ``processes[process]`` take
-    precedence; otherwise the global ``jet_pt_bins`` / ``jet_eta_bins`` are used.
-    """
     proc_conf = config["processes"].get(process, {})
     pt_bins = proc_conf.get("jet_pt_bins", config["jet_pt_bins"])
     eta_bins = proc_conf.get("jet_eta_bins", config["jet_eta_bins"])
@@ -217,21 +163,6 @@ def calculate_efficiency_histograms(
     pt_bins: List[float],
     eta_bins: List[float],
 ) -> Dict[str, Dict[str, Tuple[ROOT.TH2D, ROOT.TH2D]]]:
-    """Fill 2-D (pT, |eta|) histograms for every (WP, flavour) combination.
-
-    For each combination the function returns a pair of histograms:
-    ``(h_pass, h_total)`` where *h_pass* counts jets that pass the btag
-    discriminator threshold and *h_total* counts all jets of the given
-    flavour.
-
-    Args:
-        chain:   ROOT TChain with all files for this process already attached.
-        config:  Loaded configuration dictionary.
-        process: Process name (used only for histogram titles / logging).
-
-    Returns:
-        ``results[wp_name][flavor_name] = (h_pass, h_total)``
-    """
     log = logging.getLogger("btag_efficiency")
 
     jet_pt_col = config["jet_pt_column"]
@@ -339,19 +270,6 @@ def histograms_to_efficiencies(
     pt_bins: List[float],
     eta_bins: List[float],
 ) -> Tuple[Dict[str, Dict[str, List[List[float]]]], Dict[str, Dict[str, List[List[float]]]]]:
-    """Convert (h_pass, h_total) histogram pairs to efficiency grids.
-
-    Args:
-        histograms: ``histograms[wp][flavor] = (h_pass, h_total)``
-        pt_bins:    pT bin edges.
-        eta_bins:   |eta| bin edges.
-
-    Returns:
-        Tuple of two dicts with identical structure ``[wp][flavor]``:
-        - efficiencies: efficiency value per (pT, |eta|) bin.
-        - stat_uncertainties: binomial statistical uncertainty per bin
-          (sigma = sqrt(eff * (1 - eff) / total)); zero when total == 0.
-    """
     log = logging.getLogger("btag_efficiency")
 
     n_pt = len(pt_bins) - 1
@@ -398,7 +316,6 @@ def _build_pt_binning(
     pt_bins: List[float],
     pt_efficiencies: List[float],
 ) -> cs.Binning:
-    """Leaf Binning node over jet pT."""
     return cs.Binning(
         nodetype="binning",
         input="jet_pt",
@@ -413,7 +330,6 @@ def _build_eta_binning(
     pt_bins: List[float],
     eff_grid: List[List[float]],
 ) -> cs.Binning:
-    """Outer Binning node over jet |eta|; one pt-Binning per eta bin."""
     n_eta = len(eta_bins) - 1
     n_pt = len(pt_bins) - 1
     return cs.Binning(
@@ -434,7 +350,6 @@ def _build_flavor_category(
     eta_bins: List[float],
     wp_efficiencies: Dict[str, List[List[float]]],
 ) -> cs.Category:
-    """Category node over jet flavour labels."""
     return cs.Category(
         nodetype="category",
         input="jet_flavor",
@@ -455,7 +370,6 @@ def _build_wp_category(
     eta_bins: List[float],
     sample_efficiencies: Dict[str, Dict[str, List[List[float]]]],
 ) -> cs.Category:
-    """Category node over b-tag working points."""
     return cs.Category(
         nodetype="category",
         input="working_point",
@@ -471,7 +385,6 @@ def _build_wp_category(
     )
 
 
-# Modern, professional color palette for eta bins (works well for 4+ bins)
 _ETA_COLORS = [
     "#2ca02c",  # forest green
     "#9467bd",  # purple
@@ -497,12 +410,6 @@ _CHANNEL_LABELS = {
 } 
 
 def _fold_offset_into_ylabel(ax: plt.Axes, base_label: str, fontsize: float = 10) -> None:
-    """If matplotlib puts the y-axis in scientific notation, it normally shows
-    a floating '1eN' label in the top-left corner of the axes — which collides
-    with the CMS/process annotations placed there. This folds that multiplier
-    into the ylabel itself instead (e.g. 'Jet count [x10^6]'), at the same
-    fontsize as the rest of the axis labels, and hides the floating one.
-    """
     ax.figure.canvas.draw()  # force matplotlib to compute the offset text
     offset_text = ax.yaxis.get_offset_text()
     raw = offset_text.get_text()
@@ -525,20 +432,6 @@ def plot_histograms_and_efficiencies(
     config: Dict,
     output_path: str,
 ) -> None:
-    """Produce one figure per working point for *process*.
- 
-    Each figure has one column per jet flavour. Within each column there are
-    two stacked panels:
- 
-    - **Upper (70%)**: raw jet counts (h_total solid, h_pass dashed) vs jet pT,
-      one colour per |η| bin.
-    - **Lower (30%)**: b-tag efficiency ± stat. uncertainty vs jet pT,
-      one colour per |η| bin.
- 
-    The CMS label is placed at the top of each upper panel. The process/era/channel
-    annotation is placed inside the upper panel as a text box in the top-left corner.
-    Flavour labels are placed in the top-left of each subplot.
-    """
     log = logging.getLogger("btag_efficiency")
  
     wps:     Dict[str, float] = config["btag_working_points"]
@@ -559,8 +452,19 @@ def plot_histograms_and_efficiencies(
  
     era     = config.get("era", "")
     channel = get_channel_display(config)
- 
-    plot_dir = os.path.join(output_path, "plots")
+
+    # Merged eras show lumi + era list (matches plot_shapes_control.py's lumi_label());
+    # plain eras skip lumi since btag efficiency is an unweighted jet-count ratio.
+    _com = get_center_of_mass(era)
+    _com_str = str(int(_com)) if _com == int(_com) else str(_com)
+    _merged_eras = get_data_eras(era)
+    if len(_merged_eras) > 1:
+        era_label = f"{get_luminosity(era):.2f} fb$^{{-1}}$ ({'+'.join(_merged_eras)}, {_com_str} TeV)"
+    else:
+        era_label = f"({era}, {_com_str} TeV)"
+
+    # png/pdf go to output_path/plots; btag_efficiency.json/log stay under output_path.
+    plot_dir = func.get_plot_path(output_path)
     os.makedirs(plot_dir, exist_ok=True)
  
     # ================================================================== #
@@ -689,12 +593,13 @@ def plot_histograms_and_efficiencies(
                 fontsize=9,
                 va="bottom", ha="left",
             )
-            # Right side: channel and era (on all panels)
+            # Right side: lumi + era + CoM energy; smaller font so the longer merged-era
+            # form still clears the narrow (5in) subplot columns.
             ax_top.text(
                 1.00, 1.01,
-                f"({era}, 13.6 TeV)",
+                era_label,
                 transform=ax_top.transAxes,
-                fontsize=9,
+                fontsize=7,
                 va="bottom", ha="right",
             )
  
@@ -765,22 +670,6 @@ def plot_histograms_and_efficiencies(
 def _process_one(
     task: Tuple,
 ) -> Tuple[str, List[float], List[float], Dict, Dict]:
-    """Process one MC sample; designed to run in a subprocess.
-
-    Handles file discovery, RDataFrame histogram filling, efficiency
-    conversion, and plotting, then returns plain-Python results that can
-    be pickled back to the parent process.
-
-    Args:
-        task: ``(process, proc_conf, config, output_path, n_threads, log_level)``
-
-    Returns:
-        ``(sample_type, pt_bins, eta_bins, efficiencies, stat_uncertainties)``
-
-    Raises:
-        FileNotFoundError: No ROOT files found for the process.
-        RuntimeError:      The RDataFrame for the process is empty.
-    """
     process, proc_conf, config, output_path, n_threads, log_level = task
 
     # Configure ROOT implicit MT for this subprocess.
@@ -790,10 +679,6 @@ def _process_one(
         ROOT.EnableImplicitMT(n_threads)
     ROOT.gROOT.SetBatch(True)
 
-    # Set up a stderr logger for this worker (the main-process file handler is
-    # not inherited by spawned subprocesses).  Always update the formatter so
-    # that reused worker processes (ProcessPoolExecutor recycles OS processes)
-    # show the correct process name rather than the one from the first task.
     log = logging.getLogger("btag_efficiency")
     if not log.handlers:
         log.addHandler(logging.StreamHandler())
@@ -840,7 +725,6 @@ def build_correctionlib_json(
     config: Dict,
     output_path: str,
 ) -> cs.CorrectionSet:
-    """Assemble the correctionlib CorrectionSet and write it to disk."""
     wps: Dict[str, float] = config["btag_working_points"]
     flavors: Dict[str, int] = config["jet_flavor_categories"]
 
@@ -898,12 +782,13 @@ def build_correctionlib_json(
 
 
 def run_for_channel(config: Dict, args: argparse.Namespace) -> None:
-    """Execute the full efficiency workflow for one channel-specific config."""
     channel = get_channel_label(config)
 
-    output_path = os.path.join(
-        "workdir", config["workdir_name"], config["era"], f"{channel}",
-    )
+    # workdir/<ntupletag>/<era>/[<tag>/]<channel>
+    parts = [config.get("ntupletag") or "notag", config["era"]]
+    if config.get("tag"):
+        parts.append(config["tag"])
+    output_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "workdir", *parts, channel)
     func.check_path(output_path)
 
     log = logging_helper.setup_logging(
@@ -1017,11 +902,6 @@ def run_for_channel(config: Dict, args: argparse.Namespace) -> None:
 # Entry point
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    # Self-nice regardless of invocation method -- covers direct invocation in
-    # addition to run_btag_efficiency.py's own niced subprocess call. Spawned
-    # worker processes below still inherit this niceness (nice is a process
-    # scheduling attribute preserved across both fork and spawn/exec). Safe to
-    # call even when already niced (os.nice() clamps at the max of 19).
     os.nice(19)
     args = parser.parse_args()
 

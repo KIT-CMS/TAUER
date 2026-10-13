@@ -1,5 +1,5 @@
 
-# --- Process ordering and mapping from smhtt_ul ---
+# --- Process ordering and mapping ---
 from copy import deepcopy
 from typing import List, Union, Literal
 
@@ -70,18 +70,15 @@ class ControlShapeBkgProcesses:
         fake_factor: bool,
         nlo: bool = False,
         channel: Literal["em", "mm", "ee", "mt", "et", "tt", None] = None,
-        selection_option: Literal["CR", "DR;ff;wjet", "DR;ff;qcd", "DR;ff;ttbar"] = "SR",
         draw_jet_fake_variation: Union[str, None] = None,
     ) -> None:
         self._embedding = embedding
         self._fake_factor = fake_factor
         self._nlo = nlo
         self._channel = channel
-        self._selection_option = selection_option
         self._draw_jet_fake_variation = draw_jet_fake_variation
 
         self._pipe = [
-            self.selection_option_modification,
             self.channel_modification,
             self.lo_to_nlo_replacement,
         ]
@@ -130,45 +127,6 @@ class ControlShapeBkgProcesses:
                 bkg_processes = ["QCDEMB", "W", "EMB"]
             return bkg_processes
 
-    def selection_option_modification(self, bkg_processes: List[str], /) -> List[str]:
-        if self._selection_option == "CR":
-            return bkg_processes
-
-        if not self._fake_factor:
-            return bkg_processes
-
-        _QCD = "QCDEMB" if self._embedding else "QCD"
-        ff_processes_covered_by_mc = ['ZJ', 'VVJ', 'TTJ', _QCD, 'W']
-        _jetFakes = self.ordering.pop(1.00 if self._embedding else 1.10)
-        if self._channel in {"mt", "et"} and "DR;ff" in self._selection_option:
-            if "qcd" in self._selection_option:
-                ff_processes_covered_by_mc.remove(_QCD)
-                self.ordering[1.30] = _jetFakes
-            elif "wjet" in self._selection_option:
-                ff_processes_covered_by_mc.remove("W")
-                self.ordering[1.20] = _jetFakes
-            elif "ttbar" in self._selection_option:
-                ff_processes_covered_by_mc.remove("TTJ")
-                self.ordering[1.40] = _jetFakes
-            else:
-                raise NotImplementedError(f"DR for {self._selection_option} not implemented")
-        else:
-            raise NotImplementedError(f"Channel {self._channel} not implemented")
-
-        return list(set(bkg_processes + ff_processes_covered_by_mc))
-
-    def get_classic_ff(self) -> List[str]:
-        """
-        Return the CLASSIC_FF list based on the channel.
-        """
-        if self._channel == "tt":
-            return ['jetFakes', 'ZL', 'ZTT', 'VVL', 'VVT', 'VVJ', 'W', 'TTL', 'TTT', 'TTJ']
-        elif self._channel in {"mt", "et"}:
-            return ['VVL', 'TTL', 'ZL', 'jetFakes', 'VVT', 'TTT', 'ZTT']
-        else:
-            raise ValueError(f"Unsupported channel: {self._channel}")
-
-
     def __call__(self) -> List[str]:
         if self._is_fully_classic:
             bkg_processes = self.FULLY_CLASSIC
@@ -178,7 +136,6 @@ class ControlShapeBkgProcesses:
             bkg_processes = self.EMB_FF
         elif self._is_classic_ff:
             bkg_processes = self.CLASSIC_FF
-            #bkg_processes = self.get_classic_ff() 
 
         for modify in self._pipe:
             bkg_processes = modify(bkg_processes)

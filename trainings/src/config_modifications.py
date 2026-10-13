@@ -63,42 +63,6 @@ class _GeneralConfigManipulation(object):
         return config
 
     @staticmethod
-    def remove_variation_pattern(
-        config: dict,
-        ff_pattern: str = "anti_iso_CMS_",
-        ignore_process: str = "data",
-    ) -> dict:
-        """
-        Removes variations matching a specific pattern from the configuration in all subprocesses,
-        except for a specified process.
-
-        Args:
-            config (dict): The configuration dictionary to modify.
-            ff_pattern (str): The pattern to match for removal.
-            ignore_process (str): The process to ignore during removal.
-
-        Returns:
-            dict: The modified configuration dictionary with specified variations removed.
-        """
-        config = deepcopy(config)
-        for channel, channel_dict in config.items():
-            if channel not in Keys.CHANNELS or not isinstance(channel_dict, dict):
-                continue
-            for era_dict in channel_dict.values():
-                if not isinstance(era_dict, dict):
-                    continue
-                for process, process_dict in era_dict.items():
-                    if process == ignore_process or not isinstance(process_dict, dict):
-                        continue
-                    for subprocess, subprocess_dict in process_dict.items():
-                        if not isinstance(subprocess_dict, dict):
-                            continue
-                        for key in [key for key in subprocess_dict if ff_pattern in key]:
-                            logger.info(f"Removing {key} from {subprocess}")
-                            del subprocess_dict[key]
-        return config
-
-    @staticmethod
     def _should_remove(key: str, collection: list) -> bool:
         """
         Helper function to determine if a key should be removed based on a collection of keys.
@@ -478,8 +442,8 @@ class _SpecificConfigManipulation(object):
         config: dict,
         cut_tight_wp: str = "Medium",
         cut_loose_wp: str = "VVVLoose",
-        fake_factor_string: str = "fake_factor_2",
-        ignore_fake_factor_string_for_processes: Tuple[str, ...] = ("ggH", "qqH"),
+        fake_factor_string: str = "ff_weight",
+        ignore_fake_factor_string_for_processes: Tuple[str, ...] = (),
         ignore_anti_iso_string_for_processes: Tuple[str, ...] = tuple(),
     ) -> dict:
         """

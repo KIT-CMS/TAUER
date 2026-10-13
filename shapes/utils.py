@@ -11,23 +11,12 @@ from copy import deepcopy
 from concurrent.futures import ProcessPoolExecutor
 import logging
 
+from config.analysis import get_signal_process_keys
 from config.logging_setup_configs import setup_logging
 
 logger = setup_logging(logger=logging.getLogger(__name__))
 
-# Cap on how many dataset keys (DY/TT/VV/W/data/signals/...) get validated
-# concurrently in get_nominal_datasets(). dataset_from_crownoutput()'s own
-# per-file validation (see ntuple_processor/booking.py) is a plain sequential
-# Python loop doing one remote xrootd TFile.Open per file, with no
-# parallelism of its own -- this is what makes a cold validation_database
-# cache (a brand new NTUPLETAG/--validation-tag) painfully slow, since it's
-# entirely network-latency-bound (near-zero CPU while it waits on each
-# remote open). Running one dataset key's validation per worker process
-# (same fork-based multiprocessing pattern already used safely in
-# xsec/build_friend_tree.py) turns that into up to _VALIDATION_WORKERS
-# concurrent remote opens instead of one at a time -- a real, direct speedup
-# for the first run against any given tag. Once validation_database/<tag>/
-# is populated, subsequent runs hit the cache and this doesn't matter.
+# Cap on how many dataset keys get validated concurrently in get_nominal_datasets()
 _VALIDATION_WORKERS = 8
 
 
@@ -88,7 +77,7 @@ def add_control_process(
     analysis_unit[name] = [(Unit(dataset, selections, control_binning))]
 
 
-def book_histograms(manager, processes, datasets, variations=None, enable_check=False):
+def book_histograms(manager, processes, datasets, variations=None, enable_check=False, register_raw=True):
     logger.debug(f"Booking {processes}")
     logger.debug(f"Datasets: {datasets.keys()}")
     if not isinstance(processes, set):
@@ -110,24 +99,22 @@ def book_histograms(manager, processes, datasets, variations=None, enable_check=
         unitlist,
         variationlist,
         enable_check=enable_check,
+        register_raw=register_raw,
     )
 
 
-# Markers that delimit the friend tag inside a CROWN friend path. Mirrors
-# ntuple_processor/booking.py::add_tagged_friends -- the tag is the path
-# segment immediately following one of these markers. Keep in sync with
-# booking.py (that file lives in a submodule and must not be edited here).
-_FRIEND_TAG_MARKERS = ("CROWNFriends", "CROWNMultiFriends")
+# Markers that delimit the friend tag inside a CROWN friend path
+_FRIEND_TAG_MARKERS = ("CROWNFriend", "CROWNFriends", "CROWNMultiFriends")
 
 
 def friend_tag(friend):
     """Return the CROWN friend tag of a friend directory path, or None.
 
-    The tag is the path segment right after ``CROWNFriends`` or
-    ``CROWNMultiFriends``, exactly as
+    The tag is the path segment right after ``CROWNFriend``, ``CROWNFriends``
+    or ``CROWNMultiFriends``, exactly as
     ``ntuple_processor/booking.py::add_tagged_friends`` derives it, e.g.::
 
-        /common_path/CROWNFriends/fastmtt/ntuple            -> "fastmtt"
+        /common_path/CROWNFriend/selection/ntuple           -> "selection"
         root://xrootd.example/.../CROWNMultiFriends/NNclas/ -> "NNclas"
 
     Copes with xrootd URLs (the marker is matched on whole path segments, so
@@ -149,15 +136,13 @@ def friend_tag(friend):
 def _normalize_tag(tag):
     """Lowercase a friend tag and drop separators/punctuation.
 
-    ``fake_factors_260618_v5`` -> ``fakefactors260618v5``, ``FakeFactors`` ->
-    ``fakefactors``, so both hit the same rule via prefix matching below.
+    ``EMQCD_weights`` -> ``emqcdweights``, so the tag hits its rule via prefix matching below.
     """
     return re.sub(r"[^a-z0-9]", "", str(tag).lower())
 
 
 def _is_signal(dataset):
-    """The historic signal-sample regex (ggH/qqH/susybbH/susyggH/ttH/WH/ZH/VH)."""
-    return bool(re.match(r"(gg|qq|susybb|susygg|tt|w|z|v)h", dataset.lower()))
+    return dataset.lower() in {key.lower() for key in get_signal_process_keys()}
 
 
 def _keep_for_non_signal(dataset):
@@ -169,39 +154,12 @@ def _keep_for_nlo_reweighting(dataset):
     return bool(re.match(r"(susygg)h", dataset.lower())) and "powheg" not in dataset.lower()
 
 
-def _keep_for_xsec(dataset):
-    # Cross-section friends are MC-only: never for data nor for embedding.
-    return not re.match(r"(data|emb)", dataset.lower())
-
-
-# Friend attachment rules, keyed by the *normalized* friend tag (see
-# _normalize_tag) rather than by substring-searching the whole friend path --
-# the real production directories are named e.g. "fake_factors_260618_v5", for
-# which the old `"FakeFactors" in friend` test silently never fired.
-#
-# Each entry is (tuple of normalized tag prefixes, predicate(dataset) -> bool).
-# The first entry whose prefix matches the normalized tag wins, so order the
-# table most-specific-first. A tag matching no entry (fastmtt, selection, NN
-# friends, ...) is attached to every dataset.
-#
-# Prefix matching is deliberate so that versioned/dated directories
-# ("fake_factors_260618_v5", "ff_260618") resolve to the same rule as the bare
-# name. Note "fastmtt" and "fakefactors" only share the two leading letters
-# "fa", so neither the "fakefactor" nor the "ff" prefix can capture fastmtt.
-# Adding a new friend type should be a one-line addition here.
+# Friend attachment rules, keyed by the *normalized* friend tag (see _normalize_tag)
 _FRIEND_RULES = (
-    # Fake-factor friends: backgrounds/data only, never on signal samples.
-    # NOTE this entry is only the FALLBACK for FF friends whose tag the
-    # caller did not declare (see filter_friends' ff_friends_tags) --
-    # run.py/produce_shapes.py declare the role explicitly via
-    # --ff-friends-tag and do not rely on the tag reading like "fake factors".
-    (("fakefactors", "fakefactor", "ff"), _keep_for_non_signal),
     # Same-sign/EMQCD weights: backgrounds/data only, never on signal samples.
     (("emqcdweights", "emqcdweight"), _keep_for_non_signal),
     # NLO reweighting: only non-powheg susyggH signals.
     (("nloreweighting",), _keep_for_nlo_reweighting),
-    # Cross-section friends: MC only, not for data or embedding.
-    (("xsec",), _keep_for_xsec),
 )
 
 # Friend tags we already reported as having no rule, so the debug message is
@@ -209,43 +167,15 @@ _FRIEND_RULES = (
 _UNKNOWN_FRIEND_TAGS = set()
 
 
-def declared_ff_tags(ff_friends_tags):
-    """Normalized lookup set of the friend TAGS declared as fake-factor friends.
-
-    Accepts None/empty (nothing declared) or any iterable of tag names, so any
-    number of tags can be declared per run (e.g. two FF versions). Tags are
-    normalized the same way as the rule table below, so the declaration is
-    insensitive to case and to `_`/`-` separators.
-    """
-    if not ff_friends_tags:
-        return frozenset()
-    if isinstance(ff_friends_tags, frozenset):
-        return ff_friends_tags
-    return frozenset(_normalize_tag(tag) for tag in ff_friends_tags)
-
-
-def filter_friends(dataset, friend, ff_friends_tags=None):
+def filter_friends(dataset, friend):
     """Decide whether a friend directory should be attached to a dataset.
 
     Called once per (dataset, friend directory) pair, so any number of friend
     directories can be passed per run; each is judged independently, including
-    two directories that normalize to the same rule (e.g. fake_factors_v4 and
-    fake_factors_v5). An unknown or underivable tag never raises: the friend is
+    two directories that normalize to the same rule. An unknown or underivable tag never raises: the friend is
     attached.
-
-    ``ff_friends_tags`` are the friend TAGS the *caller* declared to be
-    fake-factor friends (produce_shapes.py's ``--ff-friends-tag``, fed by
-    run.py from ``--ff-friends-dir``). A declared tag takes the fake-factors
-    rule regardless of how it reads, so a production directory tagged
-    ``fake_factors_260618_v5`` today and ``myfriends_v2`` tomorrow keeps
-    behaving identically. Tags that were NOT declared fall back to the
-    tag-name inference in _FRIEND_RULES below, which keeps a direct
-    produce_shapes.py invocation that never passes ``--ff-friends-tag``
-    working unchanged.
     """
     tag = friend_tag(friend)
-    if tag is not None and _normalize_tag(tag) in declared_ff_tags(ff_friends_tags):
-        return _keep_for_non_signal(dataset)
     if tag is None:
         if friend not in _UNKNOWN_FRIEND_TAGS:
             _UNKNOWN_FRIEND_TAGS.add(friend)
@@ -274,26 +204,35 @@ def get_nominal_datasets(
     validation_db_root="validation_database",
     flat_layout=False,
     xrootd=False,
-    ff_friends_tags=None,
 ):
-    from config.analysis import get_mc_ntuple_era
+    from config.analysis import get_data_eras, get_mc_ntuple_era, get_samples
 
     # MC may need to be read from a different physical CROWN-production era
-    # directory than the analysis era (see MC_NTUPLE_ERA_OVERRIDE, e.g. 2026
-    # borrowing 2025's un-copied MC ntuples/friends) -- data/embedding always
-    # read from the real era's own directory.
+    # directory than the analysis era 
     mc_era = get_mc_ntuple_era(era)
 
-    declared_ff = declared_ff_tags(ff_friends_tags)
+    # (job key, dataset era, sample names): data of merged eras (DATA_ERA_MERGE,
+    # e.g. 2026 into 2025) is booked as its own job from its own era directory
+    # -- flat_layout inputs are already merged by the preselection -- and
+    # appended to the analysis era's "data" dataset below.
+    entries = [(key, era if key in ("data", "EMB") else mc_era, names)
+               for key, names in files[era][channel].items()]
+    if "data" in files[era][channel] and not flat_layout:
+        for extra_era in get_data_eras(era)[1:]:
+            extra_names = get_samples(extra_era, channel, include_signals=False).get("data", [])
+            if not extra_names:
+                logger.warning(f"[{era}/{channel}] no data samples configured for merged era {extra_era}")
+                continue
+            logger.info(f"[{era}/{channel}] merging {len(extra_names)} data samples from era {extra_era}")
+            entries.append(("data", extra_era, extra_names))
 
     jobs = []
-    for key, names in files[era][channel].items():
-        dataset_era = era if key in ("data", "EMB") else mc_era
+    for key, dataset_era, names in entries:
         friends = (
             [
                 fdir
                 for fdir in friend_directories[channel]
-                if filter_friends(key, fdir, declared_ff)
+                if filter_friends(key, fdir)
             ]
             if friend_directories is not None
             else []
@@ -316,20 +255,19 @@ def get_nominal_datasets(
             ),
         ))
 
-    # See _VALIDATION_WORKERS docstring above: this is what actually parallelizes
-    # the slow, network-bound per-file xrootd validation that dataset_from_crownoutput
-    # does internally and sequentially -- one dataset key (DY/TT/VV/W/data/...) per
-    # worker process instead of one at a time. Falls back to a single worker
-    # (no process pool overhead) when there's nothing to gain from it.
     datasets = dict()
     n_workers = min(_VALIDATION_WORKERS, len(jobs), os.cpu_count() or _VALIDATION_WORKERS) or 1
     if n_workers <= 1:
-        for key, kwargs in jobs:
-            datasets[key] = dataset_from_crownoutput(**kwargs)
+        booked = [(key, dataset_from_crownoutput(**kwargs)) for key, kwargs in jobs]
     else:
         with ProcessPoolExecutor(max_workers=n_workers) as pool:
-            for key, dataset in pool.map(_book_one_dataset, jobs):
-                datasets[key] = dataset
+            booked = list(pool.map(_book_one_dataset, jobs))
+    # a key booked more than once (merged-era data) is concatenated in order
+    for key, dataset in booked:
+        if key in datasets:
+            datasets[key].add_to_ntuples(*dataset.ntuples)
+        else:
+            datasets[key] = dataset
     return datasets
 
 
@@ -349,9 +287,7 @@ def add_tauES_datasets(
     flat_layout=False,
     xrootd=False,
     shiftstring="EMBtauESshift",
-    ff_friends_tags=None,
 ):
-    declared_ff = declared_ff_tags(ff_friends_tags)
     for variation in tauESvariations:
         name = str(round(variation, 2)).replace("-", "minus").replace(".", "p")
         processname = f"emb{name}"
@@ -366,7 +302,7 @@ def add_tauES_datasets(
             [
                 fdir
                 for fdir in friend_directories[channel]
-                if filter_friends("EMB", fdir, declared_ff)
+                if filter_friends("EMB", fdir)
             ],
             validate_samples=False,
             validation_tag=validation_tag,
@@ -387,17 +323,11 @@ def add_tauES_datasets(
             if shiftname not in list_of_quants.keys():
                 logger.critical(f"{shiftname} not in list_of_quants.keys()")
             else:
-                # for quant in :
                 for sel_obj in new_selections:
                     for cut in sel_obj.cuts:
-                        # now find the intersection between quants and the expression set
                         for quant in quants & get_quantities_from_expression(
                             cut.expression
                         ):
-                            # cut.expression = cut.expression.replace(
-                            #     quant,
-                            #     "{quant}__{var}".format(quant=quant, var=shiftname),
-                            # )
                             cut.expression = re.sub(
                                 rf"\b({quant})\b",
                                 f"{quant}__{shiftname}",
@@ -438,18 +368,6 @@ def book_tauES_histograms(
     enable_check=False,
     shiftstring="EMBtauESshift",
 ):
-    # def replace_expression(exp, quants):
-    #     for quant in quants[shiftname]:
-    #         if quant in exp:
-    #             exp = exp.replace(
-    #                 quant,
-    #                 "{quant}__{var}".format(quant=quant, var=shiftname),
-    #             )
-    #             logger.debug(
-    #                 f"Replaced {quant} in {exp} ( quant: {quant}, var: {shiftname}"
-    #             )
-    #     return exp
-    
     def replace_expression(exp, quants):
         quant_string = set(quants[shiftname])
         for quant in quant_string & get_quantities_from_expression(exp):
@@ -493,8 +411,6 @@ def book_tauES_histograms(
                         subvariation.add_weight.weight.expression, quants
                     )
                 else:
-                    # logger.critical(f"Unknown variation {subvariation}")
-                    # raise ValueError(f"Unknown variation {subvariation}")
                     pass
                 final_variations.append(subvariation)
         logger.warning(f"final_variations: {final_variations}")

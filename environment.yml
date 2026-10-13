@@ -1,10 +1,12 @@
-name: taukitflow
+name: tauer
 channels:
+  - pytorch
   - conda-forge
   - defaults
 dependencies:
   - python=3.11
   - pip
+  # core (shape production / plotting / condor submission)
   - numpy
   - scipy
   - pandas
@@ -12,15 +14,34 @@ dependencies:
   - pyyaml
   - tqdm
   - uproot
-  - awkward
-  - coffea
-  - hist
-  - boost_histogram
   - mplhep
-  - scikit-learn
-  - xgboost
-  - tensorflow
-  - keras
   - root
+  - xrootd
+  # from fake_factors (KIT-CMS/TauFakeFactors) -- merged in so a separate
+  # `fake_factors` conda env is no longer needed
+  - correctionlib
+  - ruamel.yaml
+  - rich
+  - wurlitzer
+  # from trainings/uncertainty-aware-training -- merged in so the separate
+  # `uncertainty-training` conda env is no longer needed
+  - scikit-learn
+  - pytorch
+  - torchvision
+  - torchaudio
+  - pyarrow
+  - dill
+  - seaborn
+  - onnx
+  - opt_einsum
+  - law
+  - luigi
+  - jupyter
+  - ipython
+  - ipywidgets
+  - papermill
+  - typed-argument-parser
+  - fsspec
+  - gputil
   - pip:
-      - mplhep
+      - tayloranalysis

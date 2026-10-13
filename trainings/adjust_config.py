@@ -83,7 +83,10 @@ if __name__ == "__main__":
             shifts=rename.get("shifts", {}),
         )
         .pipe(ConfigModification.general.add_era_and_process_name_flags)
-        .pipe(ConfigModification.specific.add_anti_iso_cut_and_weight_version)
+        .pipe(
+            ConfigModification.specific.add_anti_iso_cut_and_weight_version,
+            ignore_fake_factor_string_for_processes=("ggH", "qqH"),
+        )
         .pipe(ConfigModification.specific.convert_weights_and_cuts_to_common)
         .pipe(ConfigModification.specific.add_set_of_training_variables, training_variables=training_variables)
         .pipe(ConfigModification.specific.nest_and_categorize_uncertainties)

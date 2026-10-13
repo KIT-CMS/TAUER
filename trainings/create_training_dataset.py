@@ -24,11 +24,20 @@ except ModuleNotFoundError:
     sys.path.extend([".", ".."])
     from config.logging_setup_configs import setup_logging
 
+logger = setup_logging(logger=logging.getLogger(__name__))
+
 try:
     from config.analysis import get_training_variables as _get_training_vars
     _ANALYSIS_TRAINING_VARS: list[str] | None = _get_training_vars()
 except (ImportError, ModuleNotFoundError):
     _ANALYSIS_TRAINING_VARS = None
+
+try:
+    import importlib
+    from config.analysis import ACTIVE_ANALYSIS
+    _analysis_training_labels = importlib.import_module(f"analyses.{ACTIVE_ANALYSIS}.trainings.training_labels")
+except (ImportError, ModuleNotFoundError):
+    _analysis_training_labels = None
 
 
 def parse_args():
@@ -39,9 +48,9 @@ def parse_args():
         help="Path to the config file",
     )
     parser.add_argument(
-        "--base-dataset-directory",
+        "--base-dataset-dir",
         type=str,
-        default=f"/ceph/{os.environ['USER']}/smhtt_ul_new/training_datasets",
+        default=f"/ceph/{os.environ['USER']}/tauer_training/training_datasets",
         help="Base directory for the output files",
     )
     parser.add_argument(
@@ -60,7 +69,7 @@ def parse_args():
 
 
 def filepath(directory: str, basename: str = "", extension: str = "feather"):
-    path = (Path(args.base_dataset_directory) / Path(directory))
+    path = (Path(args.base_dataset_dir) / Path(directory))
     path.mkdir(parents=True, exist_ok=True)
     return path.joinpath(f"{basename}.{extension}") if basename else path
 
@@ -80,36 +89,10 @@ def is_nonempty_root_file(filepath, tree_name="ntuple"):
         return False
 
 
-import re
-
-# Regex to extract STXS bin numbers from flag names like
-# is_ggH__ggH125_ggh_htautau_bin105_selection or
-# is_qqH__qqH125_vbf_htautau_bin203_selection
-_STXS_BIN_RE = re.compile(r"_bin(\d+)_selection$")
-
-
 def _stxs_bin_flag_value(flag_name, current_flag):
-    """Determine the RDF expression for an auto-generated label flag.
-
-    For plain process flags (is_X__Y), returns (int)1 if it matches the
-    current process/subprocess, else (int)0.
-
-    For STXS bin selection flags (is_X__Y_..._binN_selection), returns an
-    HTXS_stage1_2_cat_pTjet30GeV cut when the flag belongs to the current
-    process/subprocess, else (int)0.
-    """
-    m = _STXS_BIN_RE.search(flag_name)
-    if m is None:
-        # Not a bin selection flag — simple process flag
-        return "(int)1" if flag_name == current_flag else "(int)0"
-
-    # It's a bin selection flag.  Check if it belongs to this process/subprocess
-    # by verifying the flag name starts with the current_flag prefix.
-    if not flag_name.startswith(current_flag + "_"):
-        return "(int)0"
-
-    bin_number = int(m.group(1))
-    return f"(int)(HTXS_stage1_2_cat_pTjet30GeV == {bin_number})"
+    if _analysis_training_labels is not None and hasattr(_analysis_training_labels, "flag_value"):
+        return _analysis_training_labels.flag_value(flag_name, current_flag)
+    return "(int)1" if flag_name == current_flag else "(int)0"
 
 
 def collect_filtered_plain_dataframes(
@@ -144,10 +127,10 @@ def collect_filtered_plain_dataframes(
 
     all_filepaths = list(Iterate.rdf_files(config[channel][era][process][Keys.PATHS]))
     nonempty_filepaths = [tpl for tpl in all_filepaths if is_nonempty_root_file(tpl[1], tpl[0])]
-    print(f"[DEBUG] {channel}/{era}/{process}/{subprocess}: {len(all_filepaths)} total files, {len(nonempty_filepaths)} non-empty")
+    logger.debug(f"{channel}/{era}/{process}/{subprocess}: {len(all_filepaths)} total files, {len(nonempty_filepaths)} non-empty")
     common_dict = config[channel][era][process].get(Keys.COMMON, {})
     if not common_dict:
-        print(f"[DEBUG] No '{Keys.COMMON}' key found for {channel}/{era}/{process}, using empty definitions")
+        logger.debug(f"No '{Keys.COMMON}' key found for {channel}/{era}/{process}, using empty definitions")
     definitions_tuples = list(Iterate.common_dict(common_dict))
     subprocess_flag_tuples = [it for it in subprocess_dict.items() if it[0].startswith("is_")]
 
@@ -169,7 +152,7 @@ def collect_filtered_plain_dataframes(
                         value = _stxs_bin_flag_value(flag_name, current_flag)
                         subprocess_flag_tuples.append((flag_name, value))
                         existing_flags.add(flag_name)
-            print(f"[DEBUG] Auto-generated {len(subprocess_flag_tuples)} flag definitions for {process}/{subprocess} (current_flag={current_flag})")
+            logger.debug(f"Auto-generated {len(subprocess_flag_tuples)} flag definitions for {process}/{subprocess} (current_flag={current_flag})")
 
     # Get variables: prefer process config, then config.analysis, then setup.yaml
     variables_dict = config[channel][era][process].get(Keys.VARIABLES, {})
@@ -177,13 +160,13 @@ def collect_filtered_plain_dataframes(
         additional_columns = list(variables_dict.keys())
     elif _ANALYSIS_TRAINING_VARS:
         additional_columns = list(_ANALYSIS_TRAINING_VARS)
-        print(f"[DEBUG] Using training_variables from config.analysis: {len(additional_columns)} variables")
+        logger.debug(f"Using training_variables from config.analysis: {len(additional_columns)} variables")
     elif common_setup_config and common_setup_config.recursive_get(["training_variables"]):
         additional_columns = common_setup_config.recursive_get(["training_variables"])
-        print(f"[DEBUG] Using training_variables from common_setup_config: {len(additional_columns)} variables")
+        logger.debug(f"Using training_variables from common_setup_config: {len(additional_columns)} variables")
     else:
         additional_columns = []
-        print(f"[DEBUG] No variables found in config or common_setup_config")
+        logger.warning("No training variables found in config or common_setup_config")
 
     root_plain = ROOTToPlain(
         raw_path=filepath("raw", f"{channel}_{era}_{process}_{subprocess}"),
@@ -193,7 +176,7 @@ def collect_filtered_plain_dataframes(
     if args.recreate:
         for p in [root_plain.raw_path, root_plain.filtered_path]:
             if p is not None and p.exists():
-                print(f"[DEBUG] Removing existing {p} to force recreation")
+                logger.debug(f"Removing existing {p} to force recreation")
                 p.unlink()
     filtered_df = root_plain.setup_raw_dataframe(
         tree_and_filepaths=nonempty_filepaths,
@@ -205,7 +188,7 @@ def collect_filtered_plain_dataframes(
     ).filter_dataframe(
         filter_function=any_cut,
     )
-    print(f"[DEBUG] Filtered dataframe shape: {filtered_df._dataframe.shape if filtered_df._dataframe is not None else 'N/A'}")
+    logger.debug(f"Filtered dataframe shape: {filtered_df._dataframe.shape if filtered_df._dataframe is not None else 'N/A'}")
     return (
         channel,
         era,
@@ -253,7 +236,7 @@ def create_process_folds(
     }
 
     if not args.recreate and all(filename.exists() for filename in filenames.values()):
-        print(f"Folds for {channel} {era} {process} - {subprocess} already exist, skipping (use --recreate to overwrite).")
+        logger.info(f"Folds for {channel} {era} {process} - {subprocess} already exist, skipping (use --recreate to overwrite).")
     else:
         add = ProcessDataFrameManipulation(
             config=config,
@@ -262,7 +245,7 @@ def create_process_folds(
             process_name=process,
             subprocess_name=subprocess,
         )
-        print(f"Processing {process} - {subprocess}")
+        logger.info(f"Processing {process} - {subprocess}")
         process_df = (
             pd.DataFrame()
             .pipe(
@@ -299,8 +282,7 @@ def create_process_folds(
             )
         )
 
-        # Debug: Print shape of process_df
-        print(f"[DEBUG] Shape of process_df for {channel}-{era}-{process}-{subprocess}: {process_df.shape}")
+        logger.debug(f"Shape of process_df for {channel}-{era}-{process}-{subprocess}: {process_df.shape}")
 
         msg = f"Creating folds for {channel} {era} {process} - {subprocess}"
         for fold_name, fold_condition in fold_conditions.items():
@@ -308,11 +290,9 @@ def create_process_folds(
                 df=process_df,
                 condition=fold_condition,
             )
-            # Debug: Print shape of each fold
-            print(f"[DEBUG] Shape of fold '{fold_name}' for {channel}-{era}-{process}-{subprocess}: {df.shape}")
             msg += f"\n\t{fold_name}: {df.shape}"
             df.to_feather(filenames[fold_name])
-        print(msg)
+        logger.info(msg)
 
     try:
         del add
@@ -368,7 +348,6 @@ if __name__ == "__main__":
     # when already niced (os.nice() clamps at the max of 19).
     os.nice(19)
 
-    logger = setup_logging(logger=logging.getLogger(__name__))
     args = parse_args()
 
     with open(args.config, "r") as f:
@@ -387,40 +366,28 @@ if __name__ == "__main__":
 
     WEIGHT_AND_CUT_CONTAINING = {"ps_weight__FsrWeight", "ps_weight__IsrWeight"}
     Iterate.common_dict = partial(Iterate.common_dict, ignore_weight_and_cuts=WEIGHT_AND_CUT_CONTAINING)
-    print(f"Ignoring cuts and weights of {WEIGHT_AND_CUT_CONTAINING}, until fixed!")
+    logger.warning(f"Ignoring cuts and weights of {WEIGHT_AND_CUT_CONTAINING}, until fixed!")
 
-    # ─── DEBUG: Show config structure vs Keys expectations ───
-    print(f"[DEBUG] Config top-level keys (channels): {list(config.keys())}")
-    print(f"[DEBUG] Keys.CHANNELS = {Keys.CHANNELS}")
-    print(f"[DEBUG] Keys.ERAS = {Keys.ERAS}")
     for ch_key, ch_val in config.items():
-        if isinstance(ch_val, dict):
-            era_keys = list(ch_val.keys())
-            print(f"[DEBUG] Channel '{ch_key}' -> era keys: {era_keys}")
-            if ch_key not in Keys.CHANNELS:
-                print(f"[DEBUG]   WARNING: channel '{ch_key}' NOT in Keys.CHANNELS, will be skipped!")
-            for era_key in era_keys:
-                if era_key not in Keys.ERAS:
-                    print(f"[DEBUG]   WARNING: era '{era_key}' NOT in Keys.ERAS, will be skipped!")
-                else:
-                    print(f"[DEBUG]   era '{era_key}' OK")
+        if not isinstance(ch_val, dict):
+            continue
+        if ch_key not in Keys.CHANNELS:
+            logger.warning(f"Channel '{ch_key}' not in Keys.CHANNELS, will be skipped.")
+        for era_key in ch_val.keys():
+            if era_key not in Keys.ERAS:
+                logger.warning(f"Era '{era_key}' (channel '{ch_key}') not in Keys.ERAS, will be skipped.")
 
-    # ─── DEBUG: Count subprocesses from Iterate ───
     subprocess_list = list(Iterate.subprocesses(config))
-    print(f"[DEBUG] Iterate.subprocesses yielded {len(subprocess_list)} subprocess(es)")
-    if subprocess_list:
-        for ch, er, pr, sp, _ in subprocess_list[:10]:
-            print(f"[DEBUG]   subprocess: {ch}/{er}/{pr}/{sp}")
-        if len(subprocess_list) > 10:
-            print(f"[DEBUG]   ... and {len(subprocess_list) - 10} more")
-    else:
-        print(f"[DEBUG]   --> No subprocesses found! This means no folds will be created.")
-        print(f"[DEBUG]   --> Most likely cause: era names in config don't match Keys.ERAS.")
-        print(f"[DEBUG]   --> Fix: add your era(s) to Keys.ERAS in src/helper.py")
-    # ─── END DEBUG ───
+    logger.debug(f"Iterate.subprocesses yielded {len(subprocess_list)} subprocess(es)")
+    if not subprocess_list:
+        logger.warning(
+            "No subprocesses found -- no folds will be created. Most likely cause: era "
+            "names in config don't match Keys.ERAS (add your era(s) to Keys.ERAS in "
+            "src/helper.py)."
+        )
 
     SUBPROCESSES_TO_SKIP = args.common_setup_config.recursive_get(["dataset_modifications", "subprocesses_to_skip"], set())
-    print(f"[DEBUG] SUBPROCESSES_TO_SKIP = {SUBPROCESSES_TO_SKIP}")
+    logger.debug(f"SUBPROCESSES_TO_SKIP = {SUBPROCESSES_TO_SKIP}")
 
     subprocess_count = 0
     processing_pipeline = (
@@ -431,16 +398,15 @@ if __name__ == "__main__":
 
     for items in processing_pipeline:
         subprocess_count += 1
-        # Debug: Print tuple info for each subprocess
-        print(f"[DEBUG] Processing tuple #{subprocess_count}: {[str(x) for x in items[:5]]}")
+        logger.debug(f"Processing tuple #{subprocess_count}: {[str(x) for x in items[:5]]}")
         create_process_folds(config, *items, args.common_setup_config)
 
         items[-1]._dataframe = None
         del items
         gc.collect()
 
-    print(f"[DEBUG] Total subprocesses processed: {subprocess_count}")
+    logger.info(f"Total subprocesses processed: {subprocess_count}")
     if subprocess_count == 0:
-        print(f"[DEBUG] No subprocesses were processed — combine_folds will find nothing.")
+        logger.warning("No subprocesses were processed -- combine_folds will find nothing.")
 
     combine_folds()

@@ -1,17 +1,12 @@
 output_features:
   # Controls which branches TFF saves in its preselected background ntuples.
   # Also defines the kinematic input features for training (combined with flags below).
-  # not used in training, needed for FF
   - weight 
   - btag_weight
-  # xsec friend columns needed by MC weight expressions in produce_shapes.py
-  - crossSectionPerEventWeight
-  - negative_events_fraction
-  - numberGeneratedEventsWeight
-  - dimuon_veto 
   - extramuon_veto
   - extraelec_veto
   - dilepton_veto
+  - gen_match_1
   - gen_match_2
   - q_1 
   - q_2 
@@ -58,40 +53,17 @@ output_features:
   - pt_tt
   - pt_ttjj
   - puppimet
+  - puppimet_norec
+  - puppimetphi
   # - m_fastmtt
   # - pt_fastmtt
   - nbtag
   - njets
 
 selection_masks:
-  # CROWN-precomputed boolean selection masks (feature/selection-masks).
-  #
-  # These are branch names, NOT training/plotting variables -- that is exactly
-  # why they live in their own top-level key instead of being appended to
-  # `output_features` above. `output_features` is consumed by
-  # config.analysis.get_output_features(), which also feeds
-  # get_training_variables() (trainings/src/helper.py, trainings/
-  # create_training_dataset.py) and plotting/plot_shapes_control.py's variable
-  # set -- putting mask branches there would silently turn every mask into a
-  # DNN input feature and a control-plot variable. Instead, the two consumers
-  # that genuinely need the branches *kept on disk* -- shapes/preselect.py's
-  # Snapshot column list and config/generate_tff_configs.py's generated
-  # `output_features:` block in TauFakeFactors' preselection_{ch}.yaml -- ask
-  # for them explicitly via config.analysis.get_region_mask_names(era, channel)
-  # and concatenate. Masks MUST survive the skim: the downstream fake-factor
-  # calculation (TauFakeFactors) filters its regions on them.
-  #
-  # Availability is per scope, matching what CROWN's selection.py books:
-  # every channel gets the `common` three; et/mt/tt additionally get their
-  # channel's FF-region masks; em gets only the common three (no hadronic tau,
-  # so no FF regions are defined for it).
-  #
-  # Missing branches are never fatal: shapes/preselect.py filters the list
-  # through _existing_columns(), so old (maskless) ntuples just log a warning.
+  # CROWN friend masks kept in the preselection output
   common:
     - presel_mask
-    - sel_os
-    - sel_ss
   et: &lt_masks
     # target_processes.QCD  (SRlike/ARlike) of fake_factors_{ch}.yaml
     - ff_qcd_SRlike
@@ -156,8 +128,6 @@ selection_masks:
 
 flags:
   # Combined with output_features to form the full training variable list.
-  # process flags not needed here since they will be made in the config setup of trianing from shapes
-  # era flags 
   - is_2022preEE
   - is_2022postEE
   - is_2023preBPix

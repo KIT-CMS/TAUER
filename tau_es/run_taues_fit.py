@@ -3,15 +3,9 @@
 Run the tauES measurement fit against a datacard built by
 tau_es/make_taues_datacard.py.
 
-Python replacement for smhtt_ul's ``embeddded_tauES_ul2018.sh`` DATACARD/FIT/
-POSTFIT bash modes (per the framework-wide "prefer Python control scripts"
-decision already applied elsewhere in this rework -- see STATUS.md's law/
-condor decisions). Combine/CombineHarvester/CMSSW themselves stay external
-dependencies, reached via ``utils/setup_cmssw.sh`` -- this script only
-``subprocess.run()``s the same real external binaries
-(``text2workspace.py``/``combineTool.py -M T2W``, ``combine -M MultiDimFit``)
-the bash version did; no C++/bash orchestration logic is reimplemented here
-beyond translating the fixed argument lists into Python.
+Combine/CombineHarvester/CMSSW stay external dependencies, reached via
+``utils/setup_cmssw.sh`` -- this script only ``subprocess.run()``s the real external
+binaries (``text2workspace.py``/``combineTool.py -M T2W``, ``combine -M MultiDimFit``).
 
 Two subcommands:
   workspace  -- text2workspace.py (via combineTool.py -M T2W) on a datacard
@@ -33,7 +27,7 @@ Two subcommands:
 Both subcommands wrap real external binaries via subprocess -- there is no
 "pure Python fit" to have here; the calculation is the Combine minimization
 itself, run via the genuine external binary, exactly like
-combine_datacards/make_datacards.py's ``run_combine_cards`` already does for
+datacards/make_datacards.py's ``run_combine_cards`` already does for
 combineCards.py.
 """
 import argparse
@@ -123,7 +117,7 @@ def parse_args():
     sub = p.add_subparsers(dest="command", required=True)
 
     ws = sub.add_parser("workspace", help="Build a RooWorkspace from a tauES datacard (T2W).")
-    ws.add_argument("--datacard", required=True, help="Datacard folder (as written by make_taues_datacard.py's --output-folder).")
+    ws.add_argument("--datacard", required=True, help="Datacard folder (as written by make_taues_datacard.py's --output-dir).")
     ws.add_argument("--workspace", required=True, help="Output workspace.root path.")
     ws.add_argument("--parallel", type=int, default=4)
 
@@ -135,9 +129,8 @@ def parse_args():
     fit.add_argument("--taues-init", type=float, default=-1.0)
     fit.add_argument("--points", type=int, default=30)
     fit.add_argument("--with-r", action="store_true",
-                      help="Also float a signal-strength POI 'r' alongside taues, matching the "
-                           "reference smhtt_ul script's default (--redefineSignalPOIs taues,r). "
-                           "Off by default here -- see module docstring.")
+                      help="Also float a signal-strength POI 'r' alongside taues "
+                           "(--redefineSignalPOIs taues,r). Off by default.")
 
     return p.parse_args()
 

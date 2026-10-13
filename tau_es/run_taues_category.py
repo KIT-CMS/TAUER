@@ -10,7 +10,7 @@ reasoning condor/submit_shapes.py already applies per (era, channel).
 
 Must be run inside the CMSSW/Combine environment (`source
 utils/setup_cmssw.sh`) -- same requirement as tau_es/make_taues_datacard.py
-and combine_datacards/make_datacards.py.
+and datacards/make_datacards.py.
 """
 import argparse
 import logging
@@ -24,10 +24,10 @@ import tau_es.run_taues_fit as run_taues_fit
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--era", default="2018")
-    p.add_argument("--channel", default="mt")
+    p.add_argument("--channels", dest="channel", default="mt")
     p.add_argument("--category", required=True, help="One of DM0, DM1, DM10_11, Inclusive.")
     p.add_argument("--input-file", required=True)
-    p.add_argument("--output-folder", required=True)
+    p.add_argument("--output-dir", required=True)
     p.add_argument("--real-data", action="store_true")
     p.add_argument("--bbb", action="store_true")
     p.add_argument("--shift-min", type=float, default=None)
@@ -47,7 +47,7 @@ def main():
     args = parse_args()
     logger = setup_logging(logger=logging.getLogger(__name__), level=getattr(logging, args.log_level.upper()))
 
-    category_folder = os.path.join(args.output_folder, args.category)
+    category_folder = os.path.join(args.output_dir, args.category)
 
     datacard_args = argparse.Namespace(
         era=args.era, channel=args.channel, categories=[args.category],

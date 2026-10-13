@@ -1,25 +1,4 @@
 #!/usr/bin/env python3
-"""Run a real Combine Impacts (nuisance-ranking) workflow end-to-end.
-
-Python control-script replacement for the former datacards/run_impacts.sh
-(Phase 6d; that script itself dates to Phase 4, see STATUS.md "## Phase 4").
-Same positional/optional arguments as the bash version.
-
-Expects the datacard/workspace to already exist at
-    ${FITDIR}/output/datacards/${ERA}-${CHANNEL}-${VARIABLE}-gof/${CHANNEL}/${ERA}/ws.root
-(i.e. run datacards/run_gof.py -- or at minimum produce_gof_datacard.py +
-produce_gof_workspace.py -- first; this script does not rebuild the
-workspace, only reuses it, since Impacts and GoF are almost always run
-back-to-back against the same card).
-
-Standard combineTool.py -M Impacts pipeline (adapted from
-smhtt_ul/fitting/impacts.sh, house-ruled to TauKITFlow's default single-r
-workspace -- no --redefineSignalPOIs needed since there's exactly one POI):
-  1. --doInitialFit   (best-fit r + its uncertainty)
-  2. --doFits         (one fit per nuisance parameter, --parallel-wide)
-  3. -o impacts.json  (collect)
-  4. plotImpacts.py   (ranked tornado plot)
-"""
 from __future__ import annotations
 
 import argparse
@@ -30,8 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.cmsenv import get_fitdir, run_in_cmsenv
-
-MASS = "125"
+from datacards import MASS, gof_card_dir
 
 
 def parse_args(argv=None):
@@ -52,11 +30,11 @@ def main(argv=None) -> int:
     job_id = f"{era}_{channel}_{variable}"
 
     fitdir = Path(get_fitdir())
-    workspace = fitdir / "output" / "datacards" / f"{era}-{channel}-{variable}-gof" / channel / era / "ws.root"
+    workspace = gof_card_dir(fitdir, era, channel, variable) / "ws.root"
     if not workspace.is_file():
         print(
-            f"ERROR: workspace not found: {workspace}. Run produce_gof_datacard.py + "
-            "produce_gof_workspace.py (or run_gof.py) first.",
+            f"ERROR: workspace not found: {workspace}. Run produce_datacard.py + "
+            "produce_workspace.py with ANALYSIS=gof (or run_gof.py) first.",
             file=sys.stderr,
         )
         return 1

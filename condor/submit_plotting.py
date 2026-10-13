@@ -1,43 +1,17 @@
 #!/usr/bin/env python3
-"""
-HTCondor submission for plotting/plot_shapes_control.py.
-
-Fans out ONE htcondor job per (era, channel) from a single CLI invocation
-(sensible granularity: plot_shapes_control.py already loops internally over
-all variables/categories for a given input shapes file + channel, and reads
-one input ROOT file per era; splitting further, per-variable, would mean
-re-opening/re-reading that ROOT file once per variable per job for no real
-parallelism benefit). Pass --split-variables to instead fan out per
-(era, channel, variable-chunk) if input-file I/O is not the bottleneck for
-your case.
-
-Example:
-
-    python3 condor/submit_plotting.py \\
-        --input-dir output --eras 2024,2025 --channels et,mt,tt \\
-        --output-dir /web/sgiappic/public_html/CMS_HTT --dry-run
-
-expects one input file per (era, channel) at
-<input-dir>/<era>-<channel>-shapes.root, matching submit_shapes.py's default
---output-file naming (shapes/produce_shapes.py's own single-file-per-invocation
-convention, not something plotting introduces).
-
-Era/channel lists default to config.analysis.RUN3_ERAS / get_channels().
-"""
 from __future__ import annotations
 
 import argparse
+import getpass
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from condor.common import JobSpec, SubmissionPlan, make_tag, submit
+from condor.common import REPO_ROOT, JobSpec, SubmissionPlan, csv, submit
+from common.sample_paths import build_shape_output_paths
 from config.analysis import RUN3_ERAS, get_channels
 
-
-def csv(value: str) -> list[str]:
-    return [v.strip() for v in value.split(",") if v.strip()]
 
 
 def chunk(items: list[str], size: int) -> list[list[str]]:
@@ -46,9 +20,17 @@ def chunk(items: list[str], size: int) -> list[list[str]]:
 
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--input-dir", required=True, help="Directory with <era>-<channel>-shapes.root files (see submit_shapes.py).")
-    p.add_argument("--input-pattern", default="{era}-{channel}-shapes.root", help="Filename pattern within --input-dir, formatted with era/channel.")
-    p.add_argument("--output-dir", required=True, help="Base output directory for plots; a per-(era,channel) subdirectory is appended.")
+    p.add_argument("--ntupletag", default=None,
+                    help="CROWN ntuple production tag -- derives --input-dir when not given "
+                         "explicitly. Also the default --tag.")
+    p.add_argument("--user", default=getpass.getuser(), help="Username for --ntupletag-derived path defaults (default: current user).")
+    p.add_argument("--input-dir", default=None,
+                    help="Root shapes directory, before the <ss-os|ff>/<era>/<channel>/ nesting. "
+                         "Default: build_shape_output_paths(--ntupletag).output[/--tag].")
+    p.add_argument("--input-pattern", default="{qcd_label}/{era}/{channel}/shapes.root", help="Path pattern within --input-dir, formatted with era/channel/qcd_label.")
+    p.add_argument("--output-dir", default=None,
+                    help="Base plot output directory. Default: <repo>/plotting/plots/ -- NOT /web, "
+                         "which condor execute nodes can't write to.")
     p.add_argument("--eras", type=csv, default=list(RUN3_ERAS))
     p.add_argument("--channels", type=csv, default=get_channels())
     p.add_argument("--variables", type=csv, default=None, help="Comma-separated variable list (default: all in config/variables.yaml, handled by plot_shapes_control.py itself).")
@@ -56,8 +38,8 @@ def parse_args():
     p.add_argument("--log-y", action="store_true")
     p.add_argument("--blinded", action="store_true")
     p.add_argument("--embedding", action="store_true")
-    p.add_argument("--fake-factor", action="store_true")
-    p.add_argument("--tag", default=None)
+    p.add_argument("--fake-factor", action="store_true", help="Selects the 'ff' half of the ss-os/ff input+output split; also passed through to plot_shapes_control.py.")
+    p.add_argument("--tag", default=None, help="Shapes run tag to read (default: --ntupletag, as run.py/submit_shapes.py --tag) and condor run label.")
     p.add_argument("--request-cpus", type=int, default=1)
     p.add_argument("--request-memory-mb", type=int, default=2000)
     p.add_argument("--request-disk-kb", type=int, default=2_000_000)
@@ -67,13 +49,29 @@ def parse_args():
 
 def build_jobs(args) -> list:
     jobs = []
+    run_tag = args.tag or args.ntupletag
+    qcd_label = "ff" if args.fake_factor else "ss-os"
+
+    if args.input_dir:
+        input_root = args.input_dir
+    elif args.ntupletag:
+        input_root = build_shape_output_paths(args.ntupletag, user=args.user).output
+    else:
+        raise SystemExit("condor/submit_plotting.py: either --input-dir or --ntupletag is required.")
+    if run_tag and run_tag != args.ntupletag:
+        input_root = f"{input_root}/{run_tag}"
+
+    output_root = args.output_dir or str(REPO_ROOT / "plotting" / "plots")
     for era in args.eras:
+        # plot_shapes_control.py appends <channel>/ under this itself; don't nest it here too.
+        plot_dir = f"{output_root}/{qcd_label}/{era}/{args.ntupletag or 'notag'}/"
+        if run_tag != args.ntupletag:
+            plot_dir += f"{run_tag}/"
         for channel in args.channels:
-            input_file = str(Path(args.input_dir) / args.input_pattern.format(era=era, channel=channel))
-            output_dir = str(Path(args.output_dir) / era / channel)
+            input_file = str(Path(input_root) / args.input_pattern.format(era=era, channel=channel, qcd_label=qcd_label))
             common = [
-                f"--input {input_file}",
-                f"--output {output_dir}",
+                f"--input-file {input_file}",
+                f"--output-dir {plot_dir}",
                 f"--era {era}",
                 f"--channels {channel}",
             ]
@@ -103,9 +101,10 @@ def main():
     jobs = build_jobs(args)
     plan = SubmissionPlan(
         stage="plotting",
-        tag=args.tag or make_tag("plotting"),
+        tag=args.tag,
         entry_point="plotting/plot_shapes_control.py",
         jobs=jobs,
+        ntupletag=args.ntupletag,
         request_cpus=args.request_cpus,
         request_memory_mb=args.request_memory_mb,
         request_disk_kb=args.request_disk_kb,

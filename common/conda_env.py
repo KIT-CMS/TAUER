@@ -1,19 +1,6 @@
-"""
-Run a subprocess inside the `taukitflow` conda env.
-
-Phase 6d replacement for run.sh's `check_env()` (`conda activate taukitflow`)
--- see STATUS.md "## Phase 6d". `conda activate` mutates PATH/CONDA_* env-vars
-in a way that only takes effect in the shell that runs it, so (like
-common/cmsenv.py for CMSSW's `cmsenv`) this module is the one place that still
-shells out to bash, only to source `conda.sh` + `conda activate`; the actual
-command being run, its arguments, and all the orchestration/mode-dispatch
-logic around it are plain Python (run.py), not more bash layered on top.
-Mirrors the same activation sequence condor/common.py's generated wrapper
-already uses (same conda base/env, same "don't also source the LCG view"
-reasoning documented there).
-"""
 from __future__ import annotations
 
+import getpass
 import os
 import shlex
 import subprocess
@@ -21,8 +8,8 @@ from pathlib import Path
 from typing import Iterable, Mapping, Optional
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_CONDA_ENV = "taukitflow"
-DEFAULT_CONDA_BASE = "/work/sgiappic/MiniForge"
+DEFAULT_CONDA_ENV = "tauer"
+DEFAULT_CONDA_BASE = f"/work/{getpass.getuser()}/MiniForge"
 
 
 def run_in_conda(

@@ -44,7 +44,7 @@ miniforge/
 
 # Submodule build artifacts
 ntuple_processor/__pycache__/
-TauFakeFactors/datasets/__pycache__/
+fake_factors/datasets/__pycache__/
 
 # Training artifacts
 trainings/checkpoints/

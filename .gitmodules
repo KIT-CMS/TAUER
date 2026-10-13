@@ -1,10 +1,18 @@
 [submodule "ntuple_processor"]
 	path = ntuple_processor
 	url = git@github.com:KIT-CMS/ntuple_processor.git
+	branch = tauer_branch
 [submodule "TauFakeFactors"]
-	path = TauFakeFactors
+	path = fake_factors
 	url = git@github.com:KIT-CMS/TauFakeFactors.git
 [submodule "datasets"]
-	path = datasets
+	path = sample_database
 	url = git@github.com:KIT-CMS/KingMaker_sample_database.git
 	branch = main
+[submodule "CustomLogging"]
+	path = CustomLogging
+	url = git@github.com:KIT-CMS/CustomLogging.git
+[submodule "trainings/uncertainty-aware-training"]
+	path = trainings/uncertainty-aware-training
+	url = git@gitlab.etp.kit.edu:sgiappic/uncertainty-aware-training.git
+	branch = run3_htt

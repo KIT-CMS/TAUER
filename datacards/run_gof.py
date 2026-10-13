@@ -1,29 +1,4 @@
 #!/usr/bin/env python3
-"""Run a real Combine Goodness-of-Fit (GoF) test end-to-end.
-
-Python control-script replacement for the former datacards/run_gof.sh
-(Phase 6d; that script itself dates to Phase 4, see STATUS.md "## Phase 4").
-Same positional/optional arguments as the bash version.
-
-Ties together the existing datacard/workspace scripts and drives the standard
-GoF workflow (adapted from smhtt_ul/gof_tests.sh's GOF mode, house-ruled to
-TauKITFlow's combine_datacards/ layout -- no MorphingSMRun2Legacy binary):
-
-  1. place SYNCED_FILE (a shapes/convert_to_synced_shapes.py --gof output,
-     containing a "${CHANNEL}_${VARIABLE}" TDirectory) where make_datacards
-     expects it;
-  2. produce_gof_datacard.py  -> Combine datacard;
-  3. produce_gof_workspace.py -> default single-r workspace (ws.root);
-  4. combine -M GoodnessOfFit on real data (observed test statistic);
-  5. the same, throwing NTOYS toys (PARALLEL seeds), b-only (r=0);
-  6. combineTool.py -M CollectGoodnessOfFit -> gof.json;
-  7. print the observed statistic and the toy-based p-value; plotGof.py for
-     the KS/AD algos.
-
-ALGO: saturated (default) | KS | AD. NTOYS: total toys (default 300).
-Requires a valid grid environment only if the datacard has to be rebuilt; the
-GoF fits themselves are local (CMSSW/Combine, no xrootd).
-"""
 from __future__ import annotations
 
 import argparse
@@ -35,9 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.cmsenv import REPO_ROOT, get_fitdir, run_in_cmsenv
-
-DEFAULT_NTUPLE_TAG = "htt_260602_2024-25_v5"
-MASS = "125"
+from datacards import DEFAULT_NTUPLE_TAG, MASS, gof_card_dir
 
 
 def parse_args(argv=None):
@@ -76,22 +49,23 @@ def main(argv=None) -> int:
     # --- Build datacard + workspace ---
     datacard_cmd = [
         sys.executable,
-        str(REPO_ROOT / "datacards" / "produce_gof_datacard.py"),
+        str(REPO_ROOT / "datacards" / "produce_datacard.py"),
         era,
         channel,
-        variable,
+        "gof",
         args.ntuple_tag,
+        f"--variable={variable}",
     ]
     if args.use_asimov == "1":
         datacard_cmd.append("--use-asimov")
     subprocess.run(datacard_cmd, check=True)
 
     subprocess.run(
-        [sys.executable, str(REPO_ROOT / "datacards" / "produce_gof_workspace.py"), era, channel, variable],
+        [sys.executable, str(REPO_ROOT / "datacards" / "produce_workspace.py"), era, "gof", f"--channels={channel}", f"--variable={variable}"],
         check=True,
     )
 
-    workspace = fitdir / "output" / "datacards" / f"{era}-{channel}-{variable}-gof" / channel / era / "ws.root"
+    workspace = gof_card_dir(fitdir, era, channel, variable) / "ws.root"
     if not workspace.is_file():
         print(f"ERROR: workspace not built: {workspace}", file=sys.stderr)
         return 1

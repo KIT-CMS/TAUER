@@ -7,7 +7,7 @@ logger = setup_logging(logger=logging.getLogger(__name__))
 
 
 def emb_ttbar_contamination_estimation(
-    rootfile, channel, category, variable, sub_scale=0.1, embname="EMB"
+    rootfile, channel, category, variable, era_tag, sub_scale=0.1, embname="EMB"
 ):
     procs_to_subtract = ["TTT"]
     if embname == "EMB":
@@ -39,7 +39,7 @@ def emb_ttbar_contamination_estimation(
                 _name_string.format(
                     dataset=embname,
                     channel=channel,
-                    process="-Embedded",
+                    process="-EMB",
                     selection=category,
                     variation="Nominal",
                     variable=variable,
@@ -50,7 +50,7 @@ def emb_ttbar_contamination_estimation(
             _name_string.format(
                 dataset=embname,
                 channel=channel,
-                process="-Embedded",
+                process="-EMB",
                 selection="-" + category if category != "" else "",
                 variation="Nominal",
                 variable=variable,
@@ -84,11 +84,11 @@ def emb_ttbar_contamination_estimation(
         )
         if sub_scale > 0:
             variation_name = base_hist.GetName().replace(
-                "Nominal", "CMS_htt_emb_ttbar_EraDown"
+                "Nominal", f"CMS_htt_emb_ttbar_{era_tag}Down"
             )
         else:
             variation_name = base_hist.GetName().replace(
-                "Nominal", "CMS_htt_emb_ttbar_EraUp"
+                "Nominal", f"CMS_htt_emb_ttbar_{era_tag}Up"
             )
         base_hist.SetName(variation_name)
         base_hist.SetTitle(variation_name)

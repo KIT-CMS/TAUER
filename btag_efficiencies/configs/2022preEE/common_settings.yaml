@@ -1,14 +1,14 @@
-ntuple_path: "root://cmsdcache-kit-disk.gridka.de//store/user/sgiappic/CROWN/ntuples/htt_260526_2022-23_eff2/CROWNRun"
-output_path: "/ceph/sgiappic/CMS_FF/btag/"
-#friends: 
-file_path: "/ceph/sgiappic/CMS_FF/btag/"
+ntuple_path: "root://cmsdcache-kit-disk.gridka.de//store/user/$USER/CROWN/ntuples/htt_260902_22-23_btag/CROWNRun"
+output_path: "/ceph/$USER/CMS_FF/btag/"
+friends: ["selection"]
+file_path: "/ceph/$USER/CMS_FF/btag/"
 
-workdir_name: "btag_eff"
 
 era: "2022preEE"
 tree: "ntuple"
 nanoAOD_version: "nanoAOD_v12"
-sample_database: "/work/sgiappic/TauKITFlow/datasets"
+sample_database: "/work/$USER/TAUER/sample_database"
+variables_yaml: "/work/$USER/TAUER/config/variables.yaml"
 
 tau_vs_jet_wps:
   - "VVVLoose"

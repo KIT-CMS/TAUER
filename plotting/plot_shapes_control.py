@@ -1,10 +1,9 @@
 #!/usr/bin/env python
 """
 Control-plot and shape comparison plotting using mplhep (CMS style).
-Replaces the Dumbledraw-based plotting of smhtt_ul, matched visually
-against the smhtt_ul reference (Dumbledraw/styles.py, colors.yaml, labels.yaml).
 """
 import argparse
+import importlib
 import logging
 import os
 from pathlib import Path
@@ -17,18 +16,13 @@ import numpy as np
 import ROOT
 import yaml
 
-from config.analysis import RUN2_ERAS, RUN3_ERAS, get_center_of_mass, get_luminosity
+from config.analysis import ACTIVE_ANALYSIS, RUN2_ERAS, RUN3_ERAS, get_center_of_mass, get_data_eras, get_luminosity
 from config.logging_setup_configs import setup_logging
 from plotting.process_ordering import ControlShapeBkgProcesses
+from plotting.systematics_band import shape_systematic_uncertainty
 
 hep.style.use(hep.style.CMS)
 
-# The default CMS style is tuned for stand-alone 10x10in figures. Our canvas
-# is smaller and has two stacked panels, so the stock font/linewidths render
-# wildly oversized (tick numbers dwarfing the frame, spines ~2.5x thicker
-# than the tick marks themselves) -- rescale everything down together so
-# text, ticks and the frame stay proportionate to the smhtt_ul (ROOT/Dumbledraw)
-# reference plots this is meant to match.
 plt.rcParams.update({
     "font.size": 15,
     "axes.linewidth": 1.1,
@@ -48,8 +42,7 @@ plt.rcParams.update({
 logger = setup_logging(logger=logging.getLogger(__name__))
 
 
-# --- Color palette, straight from smhtt_ul's Dumbledraw/colors.yaml, so the
-# stack fill colours are identical to the reference plots. ---
+# --- Color palette for stack fill colours ---
 PROCESS_COLOURS = {
     "ZTT":      "#ffa90e",
     "ZL":       "#3f90da",
@@ -64,20 +57,15 @@ PROCESS_COLOURS = {
     "VV":       "#92dadd",
     "W":        "#e76300",
     "QCD":      "#b9ac70",
+    # Merged DY (ZTT+ZL+ZJ, unsplit); reuses ZTT's colour.
+    "DY":       "#ffa90e",
     "jetFakes": "#94a4a2",
     "jetFakesEMB": "#94a4a2",
     "QCDEMB":   "#b9ac70",
     "EMB":      "#ffa90e",
-    "ggH125":   "#5790fc",
-    "qqH125":   "#bd1f01",
-    "VH125":    "#e76300",
-    "ttH125":   "#832db6",
 }
 
-# Legend labels, transcribed from smhtt_ul's Dumbledraw/labels.yaml
-# legend_label block into matplotlib mathtext (ROOT TLatex's "#rightarrow"/
-# "#bar{}" markup is not understood by matplotlib and was rendering as
-# literal text, which is why labels used to overlap/overflow the legend box).
+# Legend labels, as matplotlib mathtext
 legend_label_dict = {
     "ZTT": r"Z$\rightarrow\tau\tau$",
     "ZL": r"Z$\rightarrow$ll",
@@ -92,24 +80,16 @@ legend_label_dict = {
     "VV": "Diboson",
     "W": "W+jets",
     "QCD": "QCD multijet",
+    "DY": r"Z/$\gamma^*\rightarrow$ll",
     "jetFakes": r"Jet$\rightarrow\tau_h$",
     "jetFakesEMB": r"Jet$\rightarrow\tau_h$",
     "QCDEMB": "QCD multijet",
     "EMB": r"$\tau$ embedded",
-    "ggH125": r"gg$\rightarrow$H (125)",
-    "qqH125": r"qq$\rightarrow$H (125)",
-    "VH125": "VH (125)",
-    "ttH125": "ttH (125)",
 }
 
 _JET1 = r"\text{Jet}_1"
 _JET2 = r"\text{Jet}_2"
 
-# X-axis labels. smhtt_ul's labels.yaml doesn't cover most of TauKITFlow's
-# newer jet-lepton delta variables (deltaEta_1j1, deltaR_12jj, ...), so these
-# are written fresh in matplotlib mathtext, following the same naming
-# conventions (leading/subleading jet, di-jet, lepton legs) as the entries
-# smhtt_ul does define for shared variables (jpt_1, mjj, pt_ttjj, ...).
 _COMMON_X_LABELS = {
     "jpt_1": r"Leading jet $p_T$ [GeV]",
     "jpt_2": r"Subleading jet $p_T$ [GeV]",
@@ -117,22 +97,8 @@ _COMMON_X_LABELS = {
     "jeta_2": r"Subleading jet $\eta$",
     "deltaEta_jj": r"$\Delta\eta(\mathrm{jet}_1,\mathrm{jet}_2)$",
     "deltaR_jj": r"$\Delta R(\mathrm{jet}_1,\mathrm{jet}_2)$",
-    "deltaEta_12j1": r"$\Delta\eta(\ell_1\ell_2,\mathrm{jet}_1)$",
-    "deltaEta_12j2": r"$\Delta\eta(\ell_1\ell_2,\mathrm{jet}_2)$",
     "deltaEta_12jj": r"$\Delta\eta(\ell_1\ell_2,\mathrm{jet}_1\mathrm{jet}_2)$",
-    "deltaR_12j1": r"$\Delta R(\ell_1\ell_2,\mathrm{jet}_1)$",
-    "deltaR_12j2": r"$\Delta R(\ell_1\ell_2,\mathrm{jet}_2)$",
     "deltaR_12jj": r"$\Delta R(\ell_1\ell_2,\mathrm{jet}_1\mathrm{jet}_2)$",
-    "deltaEta_1j1": r"$\Delta\eta(\ell_1,\mathrm{jet}_1)$",
-    "deltaEta_1j2": r"$\Delta\eta(\ell_1,\mathrm{jet}_2)$",
-    "deltaEta_2j1": r"$\Delta\eta(\ell_2,\mathrm{jet}_1)$",
-    "deltaEta_2j2": r"$\Delta\eta(\ell_2,\mathrm{jet}_2)$",
-    "deltaR_1j1": r"$\Delta R(\ell_1,\mathrm{jet}_1)$",
-    "deltaR_1j2": r"$\Delta R(\ell_1,\mathrm{jet}_2)$",
-    "deltaR_2j1": r"$\Delta R(\ell_2,\mathrm{jet}_1)$",
-    "deltaR_2j2": r"$\Delta R(\ell_2,\mathrm{jet}_2)$",
-    "deltaEta_ditaupair": r"$\Delta\eta(\ell_1,\ell_2)$",
-    "deltaR_ditaupair": r"$\Delta R(\ell_1,\ell_2)$",
     "m_vis": r"Visible di-$\tau$ mass [GeV]",
     "pt_vis": r"Visible di-$\tau$ $p_T$ [GeV]",
     "mjj": r"Di-jet mass $m_{jj}$ [GeV]",
@@ -143,14 +109,9 @@ _COMMON_X_LABELS = {
     "puppimet": r"Missing transverse energy [GeV]",
     "nbtag": "Number of b-tagged jets",
     "njets": "Number of jets",
-    "q_1": r"Leading lepton charge",
-    "q_2": r"Subleading lepton charge",
-    "iso_1": r"Leading lepton isolation",
-    "iso_2": r"Subleading lepton isolation",
 }
 
-# Per-channel leading/subleading lepton naming, mirroring smhtt_ul's
-# channel-specific x_label_dict blocks (mm/em/mt/et/tt use "Muon"/"Electron"/
+# Per-channel leading/subleading lepton naming (mm/em/mt/et/tt use "Muon"/"Electron"/
 # "Hadronic Tau" depending on slot).
 _CHANNEL_LEPTONS = {
     "mt": (r"Muon", r"\tau_h"),
@@ -174,20 +135,28 @@ def _channel_x_labels(channel: str) -> dict:
         "eta_2": f"{lep2_tex} $\\eta$",
         "mass_1": f"{lep1_tex} mass [GeV]",
         "mass_2": f"{lep2_tex} mass [GeV]",
-        "mt_1": r"Transverse mass $m_T(\ell_1, \slash{E}_T)$ [GeV]",
-        "mt_2": r"Transverse mass $m_T(\ell_2, \slash{E}_T)$ [GeV]",
+        "mt_1": f"Transverse mass $m_T$({lep1_tex}, $\\slash{{E}}_T$) [GeV]",
+        "mt_2": f"Transverse mass $m_T$({lep2_tex}, $\\slash{{E}}_T$) [GeV]",
         "tau_decaymode_1": f"{lep1_tex} decay mode",
         "tau_decaymode_2": f"{lep2_tex} decay mode",
+        "q_1": f"{lep1_tex} charge",
+        "q_2": f"{lep2_tex} charge",
+        "iso_1": f"{lep1_tex} isolation",
+        "iso_2": f"{lep2_tex} isolation",
+        "deltaEta_ditaupair": f"$\\Delta\\eta$({lep1_tex}, {lep2_tex})",
+        "deltaR_ditaupair": f"$\\Delta R$({lep1_tex}, {lep2_tex})",
+        "deltaEta_1j1": f"$\\Delta\\eta$({lep1_tex}, $\\mathrm{{jet}}_1$)",
+        "deltaEta_1j2": f"$\\Delta\\eta$({lep1_tex}, $\\mathrm{{jet}}_2$)",
+        "deltaEta_2j1": f"$\\Delta\\eta$({lep2_tex}, $\\mathrm{{jet}}_1$)",
+        "deltaEta_2j2": f"$\\Delta\\eta$({lep2_tex}, $\\mathrm{{jet}}_2$)",
+        "deltaR_1j1": f"$\\Delta R$({lep1_tex}, $\\mathrm{{jet}}_1$)",
+        "deltaR_1j2": f"$\\Delta R$({lep1_tex}, $\\mathrm{{jet}}_2$)",
+        "deltaR_2j1": f"$\\Delta R$({lep2_tex}, $\\mathrm{{jet}}_1$)",
+        "deltaR_2j2": f"$\\Delta R$({lep2_tex}, $\\mathrm{{jet}}_2$)",
     })
     return labels
 
 
-# Display text for the "year" part of the CMS lumi label. Covers both Run2
-# (ported from smhtt_ul's Dumbledraw DrawLumi() era branch, plotting/
-# plot_shapes_control.py there) and Run3. The numeric lumi (fb^-1) and
-# center-of-mass energy (TeV) come from config.analysis.get_luminosity() /
-# get_center_of_mass() -- single-sourced from config/samples.yaml, not
-# duplicated here.
 ERA_YEAR_LABEL = {
     "2016preVFP":   "2016 preVFP",
     "2016postVFP":  "2016 postVFP",
@@ -204,13 +173,15 @@ ERA_YEAR_LABEL = {
 
 
 def lumi_label(era: str) -> str:
-    """'8.08 fb$^{-1}$ (2022 preEE, 13.6 TeV)', matching smhtt_ul's DrawLumi() string."""
+    """e.g. '8.08 fb$^{-1}$ (2022 preEE, 13.6 TeV)'."""
     if era not in RUN2_ERAS and era not in RUN3_ERAS:
         logger.warning(f"Era {era!r} not in RUN2_ERAS/RUN3_ERAS; using it verbatim in the lumi label.")
         return era
     com = get_center_of_mass(era)
     com_str = str(int(com)) if com == int(com) else str(com)
-    return f"{get_luminosity(era):.2f} fb$^{{-1}}$ ({ERA_YEAR_LABEL.get(era, era)}, {com_str} TeV)"
+    # merged data eras (DATA_ERA_MERGE) show up as "2025+2026" with the summed lumi
+    year = "+".join(ERA_YEAR_LABEL.get(e, e) for e in get_data_eras(era))
+    return f"{get_luminosity(era):.2f} fb$^{{-1}}$ ({year}, {com_str} TeV)"
 
 
 CHANNEL_LABELS = {
@@ -220,35 +191,13 @@ CHANNEL_LABELS = {
     "em": r"$e\mu$",
 }
 
-# (dataset, process-selection) for the data-driven QCD estimates written by
-# shapes/estimations/qcd.py:qcd_estimation() -- not in _process_map/_dataset_map
-# since those only cover the raw MC samples from produce_shapes.py.
-# "QCD" (is_embedding=False) is what --do-qcd (run.py's default when no FF
-# friend-tree directory is configured) produces; "QCDEMB" is its embedding
-# counterpart (is_embedding=True), included here for completeness.
+# (dataset, process-selection) for estimated (not raw-MC) processes written by
+# shapes/do_estimations.py -- not in _process_map/_dataset_map, which only cover raw MC.
 _QCD_SS_OS_ESTIMATION_KEYS = {
     "QCD": ("QCDMC", "QCDMC"),
     "QCDEMB": ("QCD", "QCD"),
-}
-
-# Stage-0 signal datasets (dataset name in the shapes file, keyed by the
-# process-selection suffix) and the display scale factor for each -- one
-# fixed number per production mode so every non-empty signal is visible on
-# the same linear axis as the backgrounds, following smhtt_ul's own choices
-# (Dumbledraw/plot_shapes_control.py: 10x ggH, 100x qqH, 10000x VH, 1000x ttH
-# -- roughly inverse to each mode's cross-section, so all four land at a
-# similar height on the plot).
-_SIGNAL_DATASETS = {
-    "ggH125": "ggH",
-    "qqH125": "qqH",
-    "VH125": "VH",
-    "ttH125": "ttH",
-}
-_SIGNAL_SCALES = {
-    "ggH125": 10,
-    "qqH125": 100,
-    "VH125": 10000,
-    "ttH125": 1000,
+    "jetFakes": ("jetFakesMC", "jetFakesMC"),
+    "jetFakesEMB": ("jetFakes", "jetFakes"),
 }
 
 
@@ -260,13 +209,9 @@ def _th1_to_numpy(hist):
     return edges, y, yerr
 
 
-def _get_hist(rootfile, dataset, channel, process_selection, variation, variable):
-    # smhtt_ul-style key: {dataset}#{channel}{-process_selection}#{variation}#{variable}
-    # (see Dumbledraw/rootfile_parser_ntuple_processor_inputshapes.py:get()).
-    # There is no separate "category" dimension in these control-plot shapes:
-    # the ROOT file only splits by channel, background/data selection and
-    # systematic variation.
-    name = f"{dataset}#{channel}{process_selection}#{variation}#{variable}"
+def _get_hist(rootfile, dataset, channel, process_selection, variation, variable, category=""):
+    # Key: {dataset}#{channel}{-process_selection}[-category]#{variation}#{variable}
+    name = f"{dataset}#{channel}{process_selection}{'-' + category if category else ''}#{variation}#{variable}"
     h = rootfile.Get(name)
     if not h:
         logger.debug(f"Histogram not found: {name}")
@@ -274,87 +219,29 @@ def _get_hist(rootfile, dataset, channel, process_selection, variation, variable
     return h.Clone()
 
 
-def plot_control(
-    rootfile: ROOT.TFile,
-    channel: str,
-    era: str,
-    variable: str,
-    process_config: ControlShapeBkgProcesses,
-    output_dir: str,
+def draw_stack_plot(
+    edges: np.ndarray,
+    stack_values: list,
+    stack_labels: list,
+    stack_colors: list,
+    total_mc_err: np.ndarray,
+    x_label: str,
+    top_left_label: str,
+    top_right_label: str,
+    out_dir: str,
+    fname: str,
+    y_data: np.ndarray = None,
+    yerr_data: np.ndarray = None,
+    extra_steps: list = None,
     log_y: bool = False,
-    blinded: bool = False,
+    mc_err_label: str = "Bkg. stat. unc.",
 ):
     fig, (ax_top, ax_bot) = plt.subplots(
         2, 1, figsize=(6.6, 6.6), gridspec_kw={"height_ratios": [4, 1.2], "hspace": 0.03}, sharex=True
     )
 
-    bkg_hists  = {}
-    sig_hists  = {}
-    data_hist  = None
-
-    # ── Collect background histograms ────────────────────────────────────────
-    from shapes.estimations.defaults import _process_map, _dataset_map
-
-    bkg_processes = process_config()
-
-    for proc in bkg_processes:
-        if proc in _QCD_SS_OS_ESTIMATION_KEYS:
-            # "QCD" only shows up in ControlShapeBkgProcesses.FULLY_CLASSIC, i.e.
-            # exactly the default case (no --fake-factor, no --embedding). shapes/
-            # do_estimations.py already covers that default with the same-sign/
-            # opposite-sign data-driven QCD estimate (shapes/estimations/qcd.py:
-            # qcd_estimation(), run via `--do-qcd` -- run.py's mode_shapes() picks
-            # that over `--do-ff` whenever no FF friend-tree directory is
-            # configured). That estimation writes its output under its own
-            # "QCDMC"/"QCD" dataset+selection labels rather than through
-            # _process_map/_dataset_map, so it needs its own lookup here.
-            ds, sel = _QCD_SS_OS_ESTIMATION_KEYS[proc]
-            h = _get_hist(rootfile, ds, channel, "-" + sel, "Nominal", variable)
-        elif proc in _process_map:
-            ds = _dataset_map.get(proc, proc)
-            h = _get_hist(rootfile, ds, channel, "-" + _process_map[proc], "Nominal", variable)
-        else:
-            continue
-        if h:
-            bkg_hists[proc] = h
-
-    # Per-production-mode (not split into STXS stage-1.2 bins) signal shapes.
-    # _process_map only carries "qqH125" (and the VH_as_qqH125 merge used for
-    # datacards); the other three are simply plain datasets in the shapes
-    # file under their own name (see e.g. "ggH#mt-ggH125#Nominal#...",
-    # confirmed present in output/*-shapes.root), so look those up directly
-    # rather than only checking _process_map.
-    for sig_proc, dataset in _SIGNAL_DATASETS.items():
-        h = _get_hist(rootfile, dataset, channel, "-" + sig_proc, "Nominal", variable)
-        if h and h.Integral() > 0:
-            sig_hists[sig_proc] = h
-
-    # data (no process-selection suffix at all -- see _process_map["data"] == "data",
-    # which rootfile_parser_ntuple_processor_inputshapes.get() maps to category="")
-    if not blinded:
-        data_h_raw = _get_hist(rootfile, "data", channel, "", "Nominal", variable)
-        if data_h_raw:
-            data_hist = data_h_raw
-
-    if not bkg_hists:
-        logger.warning(f"No backgrounds found for {channel}/{variable}. Skipping.")
-        plt.close(fig)
-        return
-
-    # ── Stack backgrounds ────────────────────────────────────────────────────
-    stack_order = [p for p in bkg_processes if p in bkg_hists]
-    edges, _, _ = _th1_to_numpy(list(bkg_hists.values())[0])
-    x_centers   = 0.5 * (edges[:-1] + edges[1:])
-    bin_widths  = edges[1:] - edges[:-1]
-
-    stack_values = []
-    stack_labels = []
-    stack_colors = []
-    for proc in stack_order:
-        _, y, _ = _th1_to_numpy(bkg_hists[proc])
-        stack_values.append(y)
-        stack_labels.append(legend_label_dict.get(proc, proc))
-        stack_colors.append(PROCESS_COLOURS.get(proc, "#AAAAAA"))
+    x_centers  = 0.5 * (edges[:-1] + edges[1:])
+    bin_widths = edges[1:] - edges[:-1]
 
     hep.histplot(
         stack_values, edges,
@@ -366,41 +253,30 @@ def plot_control(
 
     # total MC uncertainty band
     total_mc = sum(stack_values)
-    total_mc_err = np.sqrt(sum(
-        np.array([bkg_hists[p].GetBinError(i + 1) ** 2 for i in range(len(x_centers))])
-        for p in stack_order
-    ))
     ax_top.bar(
         x_centers, 2 * total_mc_err, bottom=total_mc - total_mc_err,
-        width=bin_widths, color="gray", alpha=0.4,
-        hatch="////", linewidth=0, label="Bkg. stat. unc.",
+        width=bin_widths, color="gray", alpha=0.25,
+        hatch="//", edgecolor="#999999", linewidth=0, label=mc_err_label,
     )
 
-    # signals, one fixed scale factor per production mode (see _SIGNAL_SCALES)
-    for sig, h in sig_hists.items():
-        _, y_sig, _ = _th1_to_numpy(h)
-        col = PROCESS_COLOURS.get(sig, "#FF0000")
-        scale = _SIGNAL_SCALES.get(sig, 1)
-        sig_label = f"{scale}" + r"$\times$" + legend_label_dict.get(sig, sig)
+    # extra step histograms (e.g. signals), one fixed scale factor per curve
+    for step in extra_steps or []:
         hep.histplot(
-            y_sig * scale, edges,
-            histtype="step", linewidth=1.8, color=col,
-            label=sig_label, ax=ax_top,
+            step["y"], edges,
+            histtype="step", linewidth=1.8, color=step["color"],
+            label=step["label"], ax=ax_top,
         )
 
-    # data. Same marker size in both panels (smhtt_ul draws "data_obs" with
-    # one consistent marker style everywhere it appears).
+    # data. Same marker size in both panels.
     DATA_MARKERSIZE = 3.2
-    y_data = None
-    if data_hist:
-        _, y_data, yerr_data = _th1_to_numpy(data_hist)
+    if y_data is not None:
         ax_top.errorbar(
             x_centers, y_data, yerr=yerr_data,
             fmt="ko", markersize=DATA_MARKERSIZE, linewidth=1.2, label="Observed", zorder=10,
         )
 
     # ── Ratio panel ──────────────────────────────────────────────────────────
-    if data_hist is not None and total_mc.sum() > 0:
+    if y_data is not None and total_mc.sum() > 0:
         with np.errstate(divide="ignore", invalid="ignore"):
             ratio      = np.where(total_mc > 0, y_data / total_mc, 0.0)
             ratio_err  = np.where(total_mc > 0, yerr_data / total_mc, 0.0)
@@ -408,16 +284,13 @@ def plot_control(
         ax_bot.errorbar(x_centers, ratio, yerr=ratio_err, fmt="ko", markersize=DATA_MARKERSIZE, linewidth=1)
         ax_bot.bar(
             x_centers, 2 * mc_unc_rel, bottom=1.0 - mc_unc_rel,
-            width=bin_widths, color="gray", alpha=0.4, hatch="////", linewidth=0,
+            width=bin_widths, color="gray", alpha=0.25,
+            hatch="//", edgecolor="#999999", linewidth=0,
         )
     ax_bot.axhline(1.0, color="black", linewidth=0.8)
     ax_bot.set_ylim(0.5, 1.5)
     ax_bot.set_yticks([0.6, 0.8, 1.0, 1.2, 1.4])
     ax_bot.grid(axis="y", linestyle=":", linewidth=0.6, color="gray")
-    # hep.style.CMS sets yaxis.labellocation="top" globally (so "N_events" on
-    # the main panel sits near the top, HEP convention) -- override it back
-    # to centered just for this small ratio panel, where a top-anchored label
-    # reads as off-center.
     ax_bot.set_ylabel("Data/MC", fontsize=14, loc="center")
 
     # ── Axes decoration ──────────────────────────────────────────────────────
@@ -435,13 +308,6 @@ def plot_control(
         ax_top.yaxis.set_major_formatter(mticker.ScalarFormatter(useMathText=True))
         ax_top.ticklabel_format(axis="y", style="sci", scilimits=(0, 3))
         ax_top.yaxis.set_major_locator(mticker.MaxNLocator(nbins=5))
-        # Matplotlib repositions the "x10^n" offset text on every draw to sit
-        # right above the y-axis, next to the tick numbers -- not above the
-        # "N_events" title, which sits further left/outside the axes (it's
-        # rotated 90 deg alongside the tick labels). Force a draw to let the
-        # formatter compute the offset string and to get the title's actual
-        # on-screen position, then hide the auto-placed text and draw our own
-        # directly above "N_events" instead.
         fig.canvas.draw()
         offset_str = ax_top.yaxis.get_offset_text().get_text()
         ax_top.yaxis.get_offset_text().set_visible(False)
@@ -455,13 +321,9 @@ def plot_control(
                 va="bottom", ha="center", fontsize=13,
             )
 
-    ax_bot.set_xlabel(_channel_x_labels(channel).get(variable, variable), fontsize=15)
+    ax_bot.set_xlabel(x_label, fontsize=15)
 
-    # Some variables (e.g. pt_1 with a lepton-pT selection cut) are booked
-    # over a wider binning than where any background/data actually lands,
-    # leaving a stretch of fully-empty bins at one or both ends of the frame.
-    # Crop the x-axis to the first/last bin with any content instead of
-    # always showing the full booked range.
+    # Crop the x-axis to the first/last bin with any content
     has_content = total_mc > 0
     if y_data is not None:
         has_content = has_content | (y_data > 0)
@@ -477,36 +339,21 @@ def plot_control(
         handlelength=1.4, columnspacing=1.0, borderaxespad=0.6, labelspacing=0.35,
     )
 
-    # Above-frame row: channel label (left) and lumi/era string (right) --
-    # smhtt_ul's DrawChannelCategoryLabel()/DrawLumi(), both drawn just above
-    # the top axis line rather than inside it. Flush to the corners now that
-    # the y-axis "x10^n" offset text (above) no longer shares this row.
     ax_top.text(
-        0.0, 1.012, CHANNEL_LABELS.get(channel, channel),
+        0.0, 1.012, top_left_label,
         transform=ax_top.transAxes, va="bottom", ha="left", fontsize=15,
     )
     ax_top.text(
-        1.0, 1.012, lumi_label(era),
+        1.0, 1.012, top_right_label,
         transform=ax_top.transAxes, va="bottom", ha="right", fontsize=15,
     )
 
-    # Inside-frame CMS label block, top-left -- smhtt_ul's DrawCMS(), bold
-    # "Private Work" with the italic "(CMS data/simulation)" subtext below it.
     ax_top.text(
-        0.03, 0.945, "Private Work", transform=ax_top.transAxes,
-        va="top", ha="left", fontsize=15, fontweight="bold",
-    )
-    ax_top.text(
-        0.03, 0.885, "(CMS data/simulation)", transform=ax_top.transAxes,
-        va="top", ha="left", fontsize=12, fontstyle="italic",
+        0.03, 0.945, "Private work (CMS data)", transform=ax_top.transAxes,
+        va="top", ha="left", fontsize=11, fontstyle="italic",
     )
 
-    # Save. No fig.tight_layout(): the shared-x/gridspec_kw layout above plus
-    # the above-axes transAxes text triggers matplotlib's "not compatible with
-    # tight_layout" warning; savefig(bbox_inches="tight") already crops the
-    # figure to its actual content without it.
-    fname = f"{channel}_{era}_{variable}"
-    out = Path(output_dir) / era / channel
+    out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     for ext in ("pdf", "png"):
         fig.savefig(out / f"{fname}.{ext}", bbox_inches="tight", dpi=150)
@@ -514,10 +361,158 @@ def plot_control(
     plt.close(fig)
 
 
+try:
+    _analysis_plot = importlib.import_module(f"analyses.{ACTIVE_ANALYSIS}.plotting.plot_stxs")
+except ModuleNotFoundError:
+    _analysis_plot = None
+PROCESS_COLOURS.update(getattr(_analysis_plot, "SIGNAL_COLORS", {}))
+legend_label_dict.update(getattr(_analysis_plot, "SIGNAL_LABELS", {}))
+_SIGNAL_DATASETS = getattr(_analysis_plot, "CONTROL_SIGNAL_DATASETS", {})
+_SIGNAL_SCALES = getattr(_analysis_plot, "SIGNAL_SCALES", {})
+
+
+def plot_control(
+    rootfile: ROOT.TFile,
+    channel: str,
+    era: str,
+    variable: str,
+    process_config: ControlShapeBkgProcesses,
+    output_dir: str,
+    log_y: bool = False,
+    blinded: bool = False,
+    category: str = "",
+    show_signal: bool = True,
+    include_systematics: bool = True,
+):
+    bkg_hists  = {}
+    proc_selectors = {}
+    sig_hists  = {}
+    data_hist  = None
+
+    # ── Collect background histograms ────────────────────────────────────────
+    from shapes.estimations.defaults import _process_map, _dataset_map
+
+    bkg_processes = process_config()
+
+    for proc in bkg_processes:
+        if proc in _QCD_SS_OS_ESTIMATION_KEYS:
+            # do_estimations.py's --do-qcd estimation writes "QCDMC"/"QCD" dataset+selection
+            # labels rather than through _process_map/_dataset_map, so it needs this lookup.
+            ds, sel = _QCD_SS_OS_ESTIMATION_KEYS[proc]
+            h = _get_hist(rootfile, ds, channel, "-" + sel, "Nominal", variable, category=category)
+        elif proc in _process_map:
+            ds = _dataset_map.get(proc, proc)
+            sel = _process_map[proc]
+            h = _get_hist(rootfile, ds, channel, "-" + sel, "Nominal", variable, category=category)
+        else:
+            continue
+        if h:
+            bkg_hists[proc] = h
+            # same (dataset, selection) pair, kept so shape_systematic_uncertainty()
+            # can look up each process's Up/Down variants the same way.
+            proc_selectors[proc] = (ds, sel)
+
+    # Per-production-mode (not STXS-split) signal shapes: plain datasets in the shapes
+    # file under their own name, not in _process_map.
+    if show_signal:
+        for sig_proc, dataset in _SIGNAL_DATASETS.items():
+            h = _get_hist(rootfile, dataset, channel, "-" + sig_proc, "Nominal", variable, category=category)
+            if h and h.Integral() > 0:
+                sig_hists[sig_proc] = h
+
+    # data (no process-selection suffix at all -- see _process_map["data"] == "data",
+    # which rootfile_parser_ntuple_processor_inputshapes.get() maps to category="")
+    if not blinded:
+        data_h_raw = _get_hist(rootfile, "data", channel, "", "Nominal", variable, category=category)
+        if data_h_raw:
+            data_hist = data_h_raw
+
+    if not bkg_hists:
+        where = f"{channel}/{category}/{variable}" if category else f"{channel}/{variable}"
+        logger.warning(f"No backgrounds found for {where}. Skipping.")
+        return
+
+    # ── Stack backgrounds ────────────────────────────────────────────────────
+    stack_order = [p for p in bkg_processes if p in bkg_hists]
+    edges, _, _ = _th1_to_numpy(list(bkg_hists.values())[0])
+
+    stack_values = []
+    stack_labels = []
+    stack_colors = []
+    for proc in stack_order:
+        _, y, _ = _th1_to_numpy(bkg_hists[proc])
+        stack_values.append(y)
+        stack_labels.append(legend_label_dict.get(proc, proc))
+        stack_colors.append(PROCESS_COLOURS.get(proc, "#AAAAAA"))
+
+    n_bins = len(stack_values[0])
+    stat_err = np.sqrt(sum(
+        np.array([bkg_hists[p].GetBinError(i + 1) ** 2 for i in range(n_bins)])
+        for p in stack_order
+    ))
+
+    if include_systematics:
+        shape_err, found_systematics = shape_systematic_uncertainty(
+            rootfile=rootfile,
+            channel=channel,
+            era=era,
+            variable=variable,
+            bkg_hists=bkg_hists,
+            proc_selectors=proc_selectors,
+            n_bins=n_bins,
+            category=category,
+        )
+        total_mc_err = np.sqrt(stat_err ** 2 + shape_err ** 2)
+        if found_systematics:
+            mc_err_label = "Bkg. unc. (stat" + r" $\oplus$" + " syst.)"
+        else:
+            logger.warning(
+                f"--no-systematics not set, but no shape-systematic variations were found "
+                f"for {channel}/{variable} (category={category!r}) -- input shapes were likely "
+                f"produced with --skip-systematic-variations. Labeling the band as stat-only."
+            )
+            mc_err_label = "Bkg. stat. unc."
+    else:
+        total_mc_err = stat_err
+        mc_err_label = "Bkg. stat. unc."
+
+    extra_steps = []
+    for sig, h in sig_hists.items():
+        _, y_sig, _ = _th1_to_numpy(h)
+        scale = _SIGNAL_SCALES.get(sig, 1)
+        extra_steps.append({
+            "y": y_sig * scale,
+            "color": PROCESS_COLOURS.get(sig, "#FF0000"),
+            "label": f"{scale}" + r"$\times$" + legend_label_dict.get(sig, sig),
+        })
+
+    y_data, yerr_data = None, None
+    if data_hist:
+        _, y_data, yerr_data = _th1_to_numpy(data_hist)
+
+    draw_stack_plot(
+        edges=edges,
+        stack_values=stack_values,
+        stack_labels=stack_labels,
+        stack_colors=stack_colors,
+        total_mc_err=total_mc_err,
+        x_label=_channel_x_labels(channel).get(variable, variable),
+        top_left_label=CHANNEL_LABELS.get(channel, channel) + (f" ({category})" if category else ""),
+        top_right_label=lumi_label(era),
+        out_dir=Path(output_dir) / channel / category if category else Path(output_dir) / channel,
+        fname=f"Run{era}_{channel}__{variable}",
+        y_data=y_data,
+        yerr_data=yerr_data,
+        extra_steps=extra_steps,
+        log_y=log_y,
+        mc_err_label=mc_err_label,
+    )
+
+
 def parse_arguments():
-    parser = argparse.ArgumentParser(description="Plot control shapes for TauKITFlow.")
-    parser.add_argument("--input",    required=True, type=str, help="Input ROOT shapes file.")
-    parser.add_argument("--output",   required=True, type=str, help="Output directory.")
+    parser = argparse.ArgumentParser(description="Plot control shapes for TAUER.")
+    parser.add_argument("--input-file", required=True, type=str, help="Input ROOT shapes file.")
+    parser.add_argument("--output-dir", required=True, type=str, help="Output directory.")
     parser.add_argument("--era",      required=True, type=str, help="Era.")
     parser.add_argument(
         "--channels", default=["et", "mt", "tt"],
@@ -537,13 +532,49 @@ def parse_arguments():
         "--fake-factor",  action="store_true",
         help="Use fake factor for jet fakes."
     )
+    parser.add_argument(
+        "--no-signal", dest="show_signal", action="store_false",
+        help="Don't overlay signal step histograms (default: shown)."
+    )
+    parser.add_argument(
+        "--no-systematics", dest="include_systematics", action="store_false",
+        help="Don't fold shape systematics into the background uncertainty band (default: "
+             "included, quadrature-summed with MC stat. unc. -- see plotting/systematics_band.py "
+             "for the pre-fit-only caveat). Falls back to stat.-only if unset."
+    )
+    parser.add_argument(
+        "--categories", default=None,
+        type=lambda s: s.split(","),
+        help="Comma-separated category names to plot, one output subdirectory per category "
+             "(e.g. 'njets0,njets1,njets2p' for --special-analysis NjetsControl shapes -- see "
+             "shapes/special/njets_control_binning.py's _regions). Default: no category "
+             "dimension, i.e. plain control-plot shapes (matches every prior invocation)."
+    )
     return parser.parse_args()
 
 
 def main(args):
-    rootfile = ROOT.TFile(args.input, "read")
+    # Checked before plotting anything, so a --process-selection batch that's still
+    # partially running/failed fails loudly instead of silently missing a process. No-op
+    # for an unsplit run (no expected_processes.json manifest).
+    from common.shapes_merge import missing_processes
+
+    missing = missing_processes(Path(args.input_file))
+    if missing:
+        raise RuntimeError(
+            f"{args.input_file} is missing shapes for process(es) {missing} -- "
+            f"condor/submit_shapes.py --process-selection split this batch into one job per "
+            f"process and not all of them have completed/merged yet. Check condor_q for "
+            f"still-running or failed jobs, then re-run shapes/do_estimations.py (or "
+            f"condor/submit_estimations.py) once every job has finished so it can merge them, "
+            f"before plotting. This applies to both the ss-os and ff shapes trees -- if you're "
+            f"plotting the ff tree, make sure its ss-os sibling is complete too (ff reuse "
+            f"depends on it, see condor/submit_shapes.py's --process-selection help)."
+        )
+
+    rootfile = ROOT.TFile(args.input_file, "read")
     if rootfile.IsZombie():
-        raise RuntimeError(f"Cannot open {args.input}")
+        raise RuntimeError(f"Cannot open {args.input_file}")
 
     # Load variables.yaml and get all variables except flags
     with open(os.path.join(os.path.dirname(__file__), '../config/variables.yaml')) as f:
@@ -558,19 +589,22 @@ def main(args):
             fake_factor=args.fake_factor,
             nlo=False,
             channel=channel,
-            selection_option="CR",
         )
-        for variable in plot_vars:
-            plot_control(
-                rootfile=rootfile,
-                channel=channel,
-                era=args.era,
-                variable=variable,
-                process_config=proc_config,
-                output_dir=args.output,
-                log_y=args.log_y,
-                blinded=args.blinded,
-            )
+        for category in (args.categories or [""]):
+            for variable in plot_vars:
+                plot_control(
+                    rootfile=rootfile,
+                    channel=channel,
+                    era=args.era,
+                    variable=variable,
+                    process_config=proc_config,
+                    output_dir=args.output_dir,
+                    log_y=args.log_y,
+                    blinded=args.blinded,
+                    category=category,
+                    show_signal=args.show_signal,
+                    include_systematics=args.include_systematics,
+                )
     rootfile.Close()
 
 

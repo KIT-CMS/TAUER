@@ -1,18 +1,14 @@
 #!/usr/bin/env python
 """
-Quantitative comparator between TauKITFlow shape/histogram output and
-smhtt_ul's legacy control-shape output, for the same channel/era/variable.
+Quantitative comparator between two ROOT shape/histogram files for the same
+channel/era/variable (e.g. a new production against a reference/legacy one).
 
-This is explicit prep for Phase 3 (full validation-comparator framework),
-scoped down to control_plots_ul.sh's PLOT-mode input: a single ROOT file per
-side containing histograms named
+Each side is a single ROOT file containing histograms named
 
     {dataset}#{channel}{process_suffix}#{selection}#{variable}
 
-(see shapes/estimations/defaults.py:_name_string on the TauKITFlow side —
-smhtt_ul's shapes/produce_shapes.py + config/shapes/category_selection.py use
-the exact same convention, which is how plotting/plot_shapes_control.py
-looks histograms up on both sides).
+(see shapes/estimations/defaults.py:_name_string; also how
+plotting/plot_shapes_control.py looks histograms up).
 
 Agreement criterion: per-bin difference relative to the combined statistical
 uncertainty of both histograms,
@@ -32,8 +28,8 @@ just pass/fail), plus a summary.
 Usage:
     python plotting/compare_control_shapes.py \\
         --new-file    output/2022preEE-mt-shapes.root \\
-        --legacy-file /work/sgiappic/smhtt_ul/output/2022preEE-mt-htt_260602_2022-23_v5-260602/control_shapes-2022preEE-mt-htt_260602_2022-23_v5-260602.root \\
-        --channel mt --variables m_vis,pt_1,pt_2 --selection Nominal \\
+        --legacy-file /path/to/reference/control_shapes-2022preEE-mt.root \\
+        --channels mt --variables m_vis,pt_1,pt_2 --selection Nominal \\
         --max-n-sigma 3.0
 """
 import argparse
@@ -50,18 +46,18 @@ logger = setup_logging(logger=logging.getLogger(__name__))
 
 def parse_arguments():
     parser = argparse.ArgumentParser(
-        description="Compare TauKITFlow shapes against smhtt_ul legacy control shapes, bin-by-bin."
+        description="Compare two shape ROOT files, bin-by-bin."
     )
-    parser.add_argument("--new-file", required=True, type=str, help="TauKITFlow shapes ROOT file.")
-    parser.add_argument("--legacy-file", required=True, type=str, help="smhtt_ul legacy control_shapes-*.root file (PLOT-mode input).")
-    parser.add_argument("--channel", required=True, type=str, help="Channel, e.g. mt/et/tt/em.")
+    parser.add_argument("--new-file", required=True, type=str, help="New shapes ROOT file.")
+    parser.add_argument("--legacy-file", required=True, type=str, help="Reference/legacy control_shapes-*.root file to compare against.")
+    parser.add_argument("--channels", dest="channel", required=True, type=str, help="Channel, e.g. mt/et/tt/em.")
     parser.add_argument(
         "--variables", default=None, type=str,
         help="Comma-separated variable names to compare. Default: every variable present in --legacy-file for this channel/selection.",
     )
     parser.add_argument(
         "--processes", default=None, type=str,
-        help="Comma-separated process key infixes (e.g. DY-ZTT,TT-TTL,data) to restrict the comparison to. Default: every process present in --legacy-file for this channel/selection.",
+        help="Comma-separated process key infixes (e.g. ZTT,TTL,data) to restrict the comparison to. Default: every process present in --legacy-file for this channel/selection.",
     )
     parser.add_argument("--selection", default="Nominal", type=str, help="Selection/variation string, e.g. Nominal or same_sign.")
     parser.add_argument("--max-n-sigma", default=3.0, type=float, help="Per-bin agreement tolerance in combined statistical sigma.")

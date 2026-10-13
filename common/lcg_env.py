@@ -1,20 +1,3 @@
-"""
-Fetch config.analysis.get_output_features() under the CVMFS LCG Python view
-(utils/setup_root.sh).
-
-Phase 6d note (STATUS.md "## Phase 6d"): run.sh's bash version sourced
-utils/setup_root.sh unconditionally, up front, for every mode, purely to run
-`nice -n 19 python -c "from config.analysis import get_output_features; ..."`
-under the LCG view's Python (which has pyyaml available) rather than the
-`taukitflow` conda env's -- the *only* consumer of the result,
-OUTPUT_FEATURES, is PRESEL mode's `--columns` flag. This module makes that
-lazy (only called by run.py's PRESEL mode) instead of unconditional, which
-changes nothing observable about any mode's output but avoids paying the LCG
-env-sourcing cost for modes that never use it (XSEC, SHAPES, PLOT, ...).
-`utils/setup_root.sh` itself is left as bash (real CVMFS `source
-.../setup.sh` environment mutation -- the same class of exception as
-`utils/setup_cmssw.sh`); this module is the one place that shells out to it.
-"""
 from __future__ import annotations
 
 import subprocess

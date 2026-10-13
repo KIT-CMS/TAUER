@@ -1,4 +1,5 @@
 import hashlib
+import re
 import sys
 from typing import List, Tuple, Union
 
@@ -49,7 +50,8 @@ def add_paths(
     for idx in range(len(graph.unit_block.ntuples[0].friends)):
         friend_files = [it.friends[idx].path for it in graph.unit_block.ntuples]
 
-        friend_name = f'friends__{friend_files[0].split("CROWNFriends/")[-1].split("/")[0]}'
+        friend_tag_match = re.search(r"CROWN(?:Multi)?Friends?/([^/]+)/", friend_files[0])
+        friend_name = f"friends__{friend_tag_match.group(1) if friend_tag_match else friend_files[0]}"
         friend_dict, _ = generate_filepath_dict(friend_files, num_bytes=num_hash_bytes)
 
         a, b = ntuple_dict.keys(), friend_dict.keys()
@@ -69,15 +71,10 @@ def get_config_formatter(
         weight_expression: str,
         **kwargs,  # dont need more, see ntuple_processor/run/RunManager/__histo1d_from_hist for more details
     ) -> None:
-        replacement_dict = {"Era": era}
-
         process, channel_and_sample, variation, variable = name.split("#")
         channel, *sample_parts = channel_and_sample.split("-")
         sample = "-".join(sample_parts)
-        variation = variation.replace(f"_{variable}", "").replace("Channel", channel)
-
-        for k, v in replacement_dict.items():
-            variation = variation.replace(k, v)
+        variation = variation.replace(f"_{variable}", "")
 
         sample = "data" if process == "data" else sample
 
