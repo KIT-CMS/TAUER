@@ -63,3 +63,6 @@ validation_database/
 
 # condor/ submission tooling's generated per-run wrapper/submit/log/config files
 condor/run/
+
+# Run outputs of the b-tag efficiency and fake-factor measurements
+workdir/
