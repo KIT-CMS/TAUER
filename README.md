@@ -22,6 +22,7 @@
   - [9. NN training](#9-nn-training)
 - [HTCondor submission](#htcondor-submission)
   - [Splitting a job by process group](#splitting-a-job-by-process-group)
+  - [Checking sample availability on the GridKA dCache](#checking-sample-availability-on-the-gridka-dcache)
 - [Run2 (2018), tauES and embedding support](#run2-2018-taues-and-embedding-support)
 - [Additional details](#additional-details)
   - [Repository layout](#repository-layout)
@@ -126,9 +127,9 @@ read raw CROWN ntuples directly plus CROWN's shapes friend
 ```bash
 python3 run.py SHAPES --ntupletag <ntupletag> --era <era> --channels <channels> \
   --selection-friend <selection-tag> --ff-friend <ff-tag> --ff-type fake_factor \
-  --stxs-stage stage0                                  # full systematic-variation shapes
+  --stxs-stage stage0                                  # full systematic shapes
 python3 run.py SHAPES --ntupletag <ntupletag> --era <era> --channels <channels> \
-  --selection-friend <selection-tag> --skip-systematic-variations   # nominal-only, faster iteration
+  --selection-friend <selection-tag> --skip-systematics   # nominal-only, faster iteration
 ```
 
 Runs `shapes/produce_shapes.py` (booking/execution via the `ntuple_processor` submodule),
@@ -153,7 +154,7 @@ any number of extra friend tags/paths to every channel.
 
 The `same_sign` histograms both estimations need are booked unconditionally, so an FF run
 reuses an existing ss-os run for the same tag/era/channels: it books only the FF-weighted
-variations (`--ff-only`) and `hadd`s them onto a copy of the ss-os file rather than repeating
+systematics (`--ff-only`) and `hadd`s them onto a copy of the ss-os file rather than repeating
 the expensive event loop. The FF weight is read per event from the friend tree during the
 event loop, so it cannot be applied to already-filled histograms afterwards — hence the
 second, scoped pass.
@@ -418,12 +419,28 @@ inside one PID, so separate worker processes are what actually uses the requeste
 
 ---
 
+### Checking sample availability on the GridKA dCache
+
+`condor/submit_dcache_check.py` stats the `/store/...` path of every file of a list of sample nicks on
+`root://cmsdcache-kit-disk.gridka.de` (needs a grid proxy and `../KingMaker/sample_database`). Only the
+"not found" error (3011) counts as missing, other errors are reported separately.
+
+```bash
+python3 condor/submit_dcache_check.py --samples-file <nicks.txt> [--dry-run]   # one nick per line, one job per 1000 files
+python3 condor/submit_dcache_check.py --samples-file <nicks.txt> --missing-only   # resubmit the chunks without an output file
+python3 condor/submit_dcache_check.py --samples-file <nicks.txt> --merge          # per-nick report, works on partial results
+```
+
+The chunks and the output of `--merge` (`report.json`, `missing_files.txt`, `missing_dbs.txt`) are in
+`condor/run/dcache_check/<nicks file name>/`. Add the lines of `missing_dbs.txt` to `rucio rule add ... cms:<dbs>` to
+request the datasets on `T1_DE_KIT_Disk`. Use the same `--files-per-job` for `--missing-only`.
+
 ## Run2 (2018), tauES and embedding support
 
 Run3 (all 6 eras, all 4 channels where data exists) is the primary, fully validated
 production target. Run2/tauES/embedding support is real but narrower.
 
-- **Run2 in the code:** the Run2 branches exist (2018 samples and lumi in `config/backgrounds.yaml`, the Run2 nuisance
+- **Run2 in the code:** the Run2 branches exist (2018 samples and lumi in `config/backgrounds.yaml`, the Run2 systematic
   names, the embedded weight chain, CROWN's Run2 weight chain), but the entry points are Run3-only:
   `common/sample_paths.py` rejects any non-Run3 era, so `run.py`, the condor submitters, `FF-MEASURE` and `BTAG` cannot
   build their ntuple paths for 2018. The fake-factor and btag configs of the Run2 eras still carry the removed
@@ -469,13 +486,13 @@ TAUER/
 │
 ├── config/                        # Generic framework config
 │   ├── analysis.py                #   getters
-│   ├── nuisances.py               #   single source of the systematics, used by shapes and datacards
+│   ├── systematics.py             #   single source of the systematics, used by shapes and datacards
 │   ├── processes.py               #   single source of the background processes (datacard name, dataset key, groups)
 │   ├── backgrounds.yaml           #   shared background sample lists, per-era luminosity
 │   ├── variables.yaml             #   variable list for control plots/DNN/FF
 │   ├── logging_setup_configs.py
 │   └── shapes/                    #   generic binning mechanism (NOT selection logic)
-│       └── control_binning.py, gof_binning.py
+│       └── control_binning.py, categorization.py
 │
 ├── analyses/                      # Pluggable per-analysis code, selected via TAUER_ANALYSIS; same layout as the top level
 │   └── smhtt/                     # SM STXS H->tautau
@@ -486,7 +503,7 @@ TAUER/
 │       │   ├── selection/
 │       │   │   ├── process_selection.py       #   signal Selections generated per stage-0/stage-1.2 unit
 │       │   │   ├── category_selection.py      #   SR/CR category definitions, DNN_CLASS_MAPPING
-│       │   │   └── variations.py              #   LHEScaleWeight + non-flat THU weights of the STXS Run 3 scheme
+│       │   │   └── systematics.py              #   LHEScaleWeight + non-flat THU weights of the STXS Run 3 scheme
 │       │   └── estimations/estimations.py     #   qqH component merge (qqH + VH) for do_estimations
 │       ├── datacards/
 │       │   ├── systematics.py                 #   datacard signal names per STXS stage, signal uncertainties
@@ -503,7 +520,7 @@ TAUER/
 │   ├── selection/                  #   executable, era/channel-conditional selection logic
 │   │   ├── channel_selection.py    #     CROWN SR_mask / SR_mask_ss selection
 │   │   ├── process_selection.py    #     generic background (DY/TT/VV/W) weight/cut logic
-│   │   └── variations.py           #     generic systematic variation (Up/Down) definitions
+│   │   └── systematics.py           #     generic systematic (Up/Down) definitions
 │   ├── special/                    #   njets splitted shapes, ttbar and DY weigths from em channel
 │   └── estimations/                #   defaults.py, fakefactors.py, qcd.py, ttbar_emb.py
 │
@@ -526,7 +543,7 @@ TAUER/
 │
 ├── tau_es/                           # TauES measurement
 │   ├── energy_scales.py              #   canonical 100-point shift grid (-12.0%..+8.0%, 0.2%)
-│   ├── taues_measurement_binning.py  #   DM0/DM1/DM10_11/Inclusive categorization (mt only)
+│   ├── taues_categories.py  #   DM0/DM1/DM10_11/Inclusive categorization (mt only)
 │   ├── make_taues_datacard.py        #   builds the Combine datacard (taues RooMorphing fit)
 │   ├── run_taues_fit.py              #   workspace + MultiDimFit subcommands
 │   └── run_taues_category.py         #   chains the above for one (era, category); condor unit

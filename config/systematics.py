@@ -1,5 +1,5 @@
 """
-Single source of the systematic uncertainties: shapes/produce_shapes.py books the shape variations of these entries
+Single source of the systematic uncertainties: shapes/produce_shapes.py books the shape systematics of these entries
 and datacards/systematics.py adds them to the datacards. The STXS signal uncertainties come from
 analyses/<analysis>/datacards/systematics.py, the embedding ones are kept separately (Run 2 only).
 
@@ -28,7 +28,7 @@ TAU_CORRECTED = ("real_tau", "ttl", "vvl", "signal")
 LEP_FAKE = ("lep_fake", "signal")
 
 
-class Nuisance(NamedTuple):
+class Systematic(NamedTuple):
     name: str
     processes: Tuple[str, ...]
     channels: Tuple[str, ...]
@@ -40,10 +40,10 @@ class Nuisance(NamedTuple):
 
 
 def _shapes(names, processes, channels, **kwargs):
-    return [Nuisance(name, tuple(processes), tuple(channels), **kwargs) for name in names]
+    return [Systematic(name, tuple(processes), tuple(channels), **kwargs) for name in names]
 
 
-def nuisances(era: str, jetfakes: bool = True, qcd: bool = True, ff_ml: bool = False) -> list:
+def systematics(era: str, jetfakes: bool = True, qcd: bool = True, ff_ml: bool = False) -> list:
     tag = ERA_TAG[era]
     run2 = int(era[:4]) < 2022
     n = []
@@ -51,20 +51,20 @@ def nuisances(era: str, jetfakes: bool = True, qcd: bool = True, ff_ml: bool = F
     # ---- Luminosity ----
     if run2:
         n += [
-            Nuisance(f"lumi_13TeV_{tag}", MC, ALL, "lnN", {"2017": 1.0082, "2018": 1.0084}.get(era, 1.012)),
-            Nuisance("lumi_13TeV_correlated", MC, ALL, "lnN", {"2017": 1.009, "2018": 1.020}.get(era, 1.006)),
-            Nuisance("lumi_13TeV_1718", MC, ALL, "lnN", {"2017": 1.006, "2018": 1.002}.get(era, 1.0)),
+            Systematic(f"lumi_13TeV_{tag}", MC, ALL, "lnN", {"2017": 1.0082, "2018": 1.0084}.get(era, 1.012)),
+            Systematic("lumi_13TeV_correlated", MC, ALL, "lnN", {"2017": 1.009, "2018": 1.020}.get(era, 1.006)),
+            Systematic("lumi_13TeV_1718", MC, ALL, "lnN", {"2017": 1.006, "2018": 1.002}.get(era, 1.0)),
         ]
     else:
         # LUM POG decorrelation scheme for 2022-2024; TODO: 2025/2026 pinned to 2024 until LUM POG provides values
         year = "2024" if era in ("2025", "2026") else era[:4]
         for i, values in enumerate(({"2022": 1.0138, "2023": 1.0017, "2024": 1.0020}, {"2023": 1.0127, "2024": 1.0068}, {"2024": 1.0144}), 1):
             if year in values:
-                n.append(Nuisance(f"CMS_lumi_{i}", MC, ALL, "lnN", values[year]))
+                n.append(Systematic(f"CMS_lumi_{i}", MC, ALL, "lnN", values[year]))
 
     # ---- Triggers ----
     if run2:
-        n.append(Nuisance(f"CMS_eff_trigger_em_{tag}", MC, ("em",), "lnN", 1.02))
+        n.append(Systematic(f"CMS_eff_trigger_em_{tag}", MC, ("em",), "lnN", 1.02))
     else:
         n += _shapes([f"CMS_eff_e_trigger_{tag}", f"CMS_trig_t_etau_Medium_eff_{tag}"], MC, ("et",))
         n += _shapes([f"CMS_eff_m_trigger_{tag}"], MC, ("mt", "em"))
@@ -124,11 +124,11 @@ def nuisances(era: str, jetfakes: bool = True, qcd: bool = True, ff_ml: bool = F
     n += _shapes(["top_pt_reweighting"], ("ttbar",), ALL)
     # TODO: check the values for Run 3
     for name, procs, value in (("vvXsec", "vv", 1.05), ("tjXsec", "ttbar", 1.06), ("wjXsec", "w", 1.04), ("zjXsec", "z", 1.02)):
-        n.append(Nuisance(f"CMS_htt_{name}", (procs,), ALL, "lnN", value))
+        n.append(Systematic(f"CMS_htt_{name}", (procs,), ALL, "lnN", value))
 
     # ---- QCD and jet fakes ----
     if qcd and not jetfakes:
-        n += [Nuisance(f"CMS_ExtrapSSOS_{tag}_{ch}", ("qcd",), (ch,), "lnN", value) for ch, value in (("et", 1.05), ("mt", 1.03), ("tt", 1.05))]
+        n += [Systematic(f"CMS_ExtrapSSOS_{ch}_{tag}", ("qcd",), (ch,), "lnN", value) for ch, value in (("et", 1.05), ("mt", 1.03), ("tt", 1.05))]
     n += _shapes([f"CMS_htt_qcd_{j}_{s}_{era}" for j in ("0jet", "1jet", "2jet") for s in ("rate", "shape", "shape2")] + ["CMS_htt_qcd_iso"], ("qcd",), ("em",), source="estimation")
     if jetfakes:
         for ch, ff_processes in (("et", (("QCD", True), ("Wjets", True), ("ttbar", False))), ("mt", (("QCD", True), ("Wjets", True), ("ttbar", False))), ("tt", (("QCD", True), ("QCD_subleading", True)))):

@@ -1,7 +1,7 @@
 """
 Channel selection: CROWN's friend `SR_mask` (triggers, tau ID, isolation, vetoes, OS) for et/mt/tt/em, or
 `SR_mask_ss` for the same-sign QCD control region. The anti-isolated region is `AR_mask` of the friend, swapped in by
-the variations of shapes/selection/variations.py.
+the systematics of shapes/selection/systematics.py.
 """
 import logging
 

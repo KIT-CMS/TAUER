@@ -67,7 +67,7 @@ def make_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-dir", dest="output_dir", default=None)
     parser.add_argument(
         "--ff-type", dest="ff_type", default=None, choices=["fake_factor", "ml_fake_factor"],
-        help="Fake factor flavour of --ff-friend; ml_fake_factor books the machine-learned fake factor variations. Env: FF_TYPE.",
+        help="Fake factor flavour of --ff-friend; ml_fake_factor books the machine-learned fake factor systematics. Env: FF_TYPE.",
     )
     parser.add_argument(
         "--ff-friend", dest="ff_friend", default=None,
@@ -255,7 +255,7 @@ def mode_shapes(cfg, extra):
 
     directory_args = ["--directory", paths.ntuples]
 
-    # --skip-systematic-variations is not a separate mode -- passed through via `extra`.
+    # --skip-systematics is not a separate mode -- passed through via `extra`.
     if not os.environ.get("DNN_FRIENDS_DIR"):
         extra_args.append("--no-dnn-categorization")
 
@@ -293,7 +293,7 @@ def mode_shapes(cfg, extra):
         ss_os_file = _output_run_dir(cfg, "ss-os") / "shapes.root"
         if ss_os_file.exists():
             print(f"[SHAPES] Reusing existing ss-os shapes at {ss_os_file} -- booking only the "
-                  f"FF-weighted variations (--ff-only) and merging onto a copy of it, instead of "
+                  f"FF-weighted systematics (--ff-only) and merging onto a copy of it, instead of "
                   f"redoing the full (expensive) shape production.")
             ff_only_file = run_dir / "shapes_ff_only.root"
             result = _produce(ff_only_file, ff_only=True)
@@ -313,7 +313,7 @@ def mode_shapes(cfg, extra):
                 return 1
         else:
             print(f"[SHAPES] No existing ss-os shapes found at {ss_os_file}; producing full shapes "
-                  f"(including FF variations) from scratch.")
+                  f"(including FF systematics) from scratch.")
             result = _produce(outfile, ff_only=False)
             if result.returncode != 0:
                 return result.returncode
@@ -409,7 +409,7 @@ def mode_train_shapes(cfg, extra):
         "--nprocs", str(cfg["nprocs"]),
         "--nthreads", str(cfg["nthreads"]),
         "--xrootd",
-        "--skip-systematic-variations",
+        "--skip-systematics",
         *extra,
     ]
     return run_conda(cmd, env_overrides={"PYTHONPATH": pythonpath_with_tff()}).returncode

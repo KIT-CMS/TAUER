@@ -23,7 +23,7 @@ def parse_args():
     p.add_argument("--ff-friend", default=None,
                     help="Same flag/value as condor/submit_shapes.py's --ff-friend for this "
                          "ntupletag -- only its truthiness matters (picks --do-ff vs --do-qcd).")
-    p.add_argument("--do-emb-tt", action="store_true", help="Add embedded ttbar contamination variation (see shapes/do_estimations.py --do-emb-tt).")
+    p.add_argument("--do-emb-tt", action="store_true", help="Add embedded ttbar contamination systematic (see shapes/do_estimations.py --do-emb-tt).")
     p.add_argument("--special-analysis", dest="special", default=None, help="See shapes/do_estimations.py --special-analysis (e.g. TauES).")
     p.add_argument("--tag", default=None,
                     help="Must match condor/submit_shapes.py's --tag for this ntupletag -- drives the "

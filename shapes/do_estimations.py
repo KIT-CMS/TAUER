@@ -14,7 +14,7 @@ from shapes.estimations.ttbar_emb import emb_ttbar_contamination_estimation
 from common.shapes_merge import merge_if_needed, merge_ff_reuse_if_needed
 from config.analysis import ACTIVE_ANALYSIS
 from config.logging_setup_configs import setup_logging, LogContext
-from config.nuisances import ERA_TAG
+from config.systematics import ERA_TAG
 import tau_es.energy_scales as tau_es_energy_scales
 
 try:
@@ -31,7 +31,7 @@ def parse_args():
     parser.add_argument(
         "--do-emb-tt",
         action="store_true",
-        help="Add embedded ttbar contamination variation to file.",
+        help="Add embedded ttbar contamination systematic to file.",
     )
     parser.add_argument(
         "--do-ff",
@@ -52,10 +52,10 @@ def parse_args():
     return parser.parse_args()
 
 
-def parse_process_name(name, variation_key):
+def parse_process_name(name, systematic_key):
     logger.debug("Processing histogram %s", name.GetName())
-    dataset, selection, variation, variable = name.GetName().split("#")
-    if variation_key in variation:
+    dataset, selection, systematic, variable = name.GetName().split("#")
+    if systematic_key in systematic:
         sel_split = selection.split("-", maxsplit=1)
         # Set category to default since not present in control plots.
         category = ""
@@ -70,50 +70,50 @@ def parse_process_name(name, variation_key):
             channel = sel_split[0]
             # Control plots have no category: the histogram is {channel}-{process}[-{category}].
             process, _, category = sel_split[1].partition("-")
-        return channel, category, variable, variation, process
+        return channel, category, variable, systematic, process
     else:
         return None, None, None, None, None
 
 
-def add_input_to_inputdict(input_dict, channel, category, variable, variation, process):
+def add_input_to_inputdict(input_dict, channel, category, variable, systematic, process):
     if channel not in input_dict:
-        input_dict[channel] = {category: {variable: {variation: [process]}}}
+        input_dict[channel] = {category: {variable: {systematic: [process]}}}
     if category not in input_dict[channel]:
-        input_dict[channel][category] = {variable: {variation: [process]}}
+        input_dict[channel][category] = {variable: {systematic: [process]}}
     if variable not in input_dict[channel][category]:
-        input_dict[channel][category][variable] = {variation: [process]}
-    if variation not in input_dict[channel][category][variable]:
-        input_dict[channel][category][variable][variation] = [process]
-    if variation in input_dict[channel][category][variable]:
-        input_dict[channel][category][variable][variation].append(process)
+        input_dict[channel][category][variable] = {systematic: [process]}
+    if systematic not in input_dict[channel][category][variable]:
+        input_dict[channel][category][variable][systematic] = [process]
+    if systematic in input_dict[channel][category][variable]:
+        input_dict[channel][category][variable][systematic].append(process)
 
 
 def parse_histograms_for_ff(inputfile):
     ff_inputs = {}
-    available_variations = set()
+    available_systematics = set()
     for key in inputfile.GetListOfKeys():
-        channel, category, variable, variation, process = parse_process_name(
+        channel, category, variable, systematic, process = parse_process_name(
             key, "anti_iso"
         )
-        available_variations.add(variation)
+        available_systematics.add(systematic)
         if channel is not None:
             add_input_to_inputdict(
-                ff_inputs, channel, category, variable, variation, process
+                ff_inputs, channel, category, variable, systematic, process
             )
-    logger.debug(available_variations)
+    logger.debug(available_systematics)
     return ff_inputs
 
 
 def parse_histograms_for_qcd(inputfile):
     qcd_inputs = {}
     for key in inputfile.GetListOfKeys():
-        channel, category, variable, variation, process = parse_process_name(
+        channel, category, variable, systematic, process = parse_process_name(
             key, "same_sign"
         )
         if channel is not None:
             if channel in ["et", "mt", "em", "tt", "mm", "ee"]:
                 add_input_to_inputdict(
-                    qcd_inputs, channel, category, variable, variation, process
+                    qcd_inputs, channel, category, variable, systematic, process
                 )
     return qcd_inputs
 
@@ -121,8 +121,8 @@ def parse_histograms_for_qcd(inputfile):
 def parse_histograms_for_emb_estimation(inputfile):
     emb_categories = {}
     for key in inputfile.GetListOfKeys():
-        dataset, selection, variation, variable = key.GetName().split("#")
-        if "Nominal" in variation:
+        dataset, selection, systematic, variable = key.GetName().split("#")
+        if "Nominal" in systematic:
             sel_split = selection.split("-", maxsplit=1)
             if "EMB" in dataset or ("emb" in dataset and "jetFakes" not in dataset):
                 channel = sel_split[0]
@@ -152,14 +152,10 @@ def main(args):
     tauES_names = []
     eleES_names = []
     if args.special == "TauES":
-        # Extends _dataset_map/_process_map with the TauES variations (tau_es/energy_scales.py).
+        # Extends _dataset_map/_process_map with the TauES shifts (tau_es/energy_scales.py).
         tauES_names = list(tau_es_energy_scales.PROCNAMES)
     elif args.special == "EleES":
-        eleESvariations = [-1.5 + 0.05 * i for i in range(0, 51)]
-        for variation in eleESvariations:
-            name = str(round(variation, 2)).replace("-", "minus").replace(".", "p")
-            processname = f"emb{name}"
-            eleES_names.append(processname)
+        eleES_names = [tau_es_energy_scales.shift_to_procname(-1.5 + 0.05 * i) for i in range(0, 51)]
     else:
         pass
     if args.do_qcd:
@@ -198,23 +194,23 @@ def main(args):
                         selection=category,
                         variable=var,
                     )
-                    for variation in qcd_inputs[channel][category][var]:
+                    for systematic in qcd_inputs[channel][category][var]:
                         estimated_hist = qcd_estimation(
                             **common_kwargs,
-                            variation=variation,
+                            systematic=systematic,
                             is_embedding=False,
                             is_nlo=False,
                             extrapolation_factor=extrapolation_factor,
                         )
                         estimated_hist.Write(estimated_hist.GetName(), ROOT.TObject.kOverwrite)
                     if channel in ["em"]:
-                        for variation, scale in zip(
+                        for systematic, scale in zip(
                             ["subtrMCUp", "subtrMCDown"], [0.8, 1.2]
                         ):
                             for use_emb in [False]:
                                 estimated_hist = qcd_estimation(
                                     **common_kwargs,
-                                    variation=variation,
+                                    systematic=systematic,
                                     is_embedding=use_emb,
                                     extrapolation_factor=extrapolation_factor,
                                     sub_scale=scale,
@@ -233,14 +229,14 @@ def main(args):
                         continue
                     logger.info("Do estimation for category %s", category)
                     for var in qqh_procs[channel][category]:
-                        for variation in qqh_procs[channel][category][var]:
+                        for systematic in qqh_procs[channel][category][var]:
                             estimated_hist = _analysis_estimations.qqh_merge_estimation(
-                                input_file, channel, category, var, variation=variation
+                                input_file, channel, category, var, systematic=systematic
                             )
                             estimated_hist.Write(estimated_hist.GetName(), ROOT.TObject.kOverwrite)
     if args.do_emb_tt:
         emb_categories = parse_histograms_for_emb_estimation(input_file)
-        logger.info("Producing embedding ttbar variations.")
+        logger.info("Producing embedding ttbar systematics.")
         logger.debug("%s", json.dumps(emb_categories, sort_keys=True, indent=4))
         for channel in emb_categories:
             for category in emb_categories[channel]:
@@ -295,7 +291,7 @@ def main(args):
                         )
                         estimated_hist.Write(estimated_hist.GetName(), ROOT.TObject.kOverwrite)
     if args.do_ff:
-        logger.info("Starting estimations for fake factors and their variations")
+        logger.info("Starting estimations for fake factors and their systematics")
         ff_inputs = parse_histograms_for_ff(input_file)
         logger.debug("%s", json.dumps(ff_inputs, sort_keys=True, indent=4))
         for ch in ff_inputs:
@@ -303,7 +299,7 @@ def main(args):
                 logger.info("Do estimation for category %s", cat)
                 with LogContext(logger).duplicate_filter():
                     for var in ff_inputs[ch][cat]:
-                        for variation in ff_inputs[ch][cat][var]:
+                        for systematic in ff_inputs[ch][cat][var]:
 
                             _fake_factor_estimation = partial(
                                 fake_factor_estimation,
@@ -313,11 +309,11 @@ def main(args):
                                 variable=var,
                             )
                             estimated_hist = _fake_factor_estimation(
-                                variation=variation,
+                                systematic=systematic,
                             )
                             estimated_hist.Write(estimated_hist.GetName(), ROOT.TObject.kOverwrite)
                             estimated_hist = _fake_factor_estimation(
-                                variation=variation,
+                                systematic=systematic,
                                 is_embedding=False,
                             )
                             estimated_hist.Write(estimated_hist.GetName(), ROOT.TObject.kOverwrite)

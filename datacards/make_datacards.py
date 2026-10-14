@@ -56,7 +56,7 @@ parser.add_argument("--stxs-stage", type=str, default="stage0", choices=["stage0
 parser.add_argument("--real-data", type=str2bool, default=False, help="Use data_obs instead of generating Asimov")
 parser.add_argument("--embedding", type=str2bool, default=True, help="Use embedded samples")
 parser.add_argument("--jetfakes", type=str2bool, default=True, help="Use jetFakes (FF method)")
-parser.add_argument("--ff-type", choices=["fake_factor", "ml_fake_factor"], default="fake_factor", help="Fake factor flavour of the shapes (ml_fake_factor books the machine-learned variations)")
+parser.add_argument("--ff-type", choices=["fake_factor", "ml_fake_factor"], default="fake_factor", help="Fake factor flavour of the shapes (ml_fake_factor books the machine-learned systematics)")
 parser.add_argument("--bbb", type=str2bool, default=True, help="Apply autoMCStats (Bin-by-Bin) uncertainties")
 
 parser.add_argument("--correlate-emb", type=str2bool, default=True)

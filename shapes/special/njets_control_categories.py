@@ -1,6 +1,6 @@
 """
 Categorization for njets-binned data/MC control plots ("NjetsControl"), all
-channels. Modeled on shapes/special/ttbar_dy_weight_binning.py (structurally
+channels. Modeled on shapes/special/ttbar_dy_weight_categories.py (structurally
 identical -- lives under shapes/special/ instead since, unlike that module,
 it has no config-side consumer other than produce_shapes.py itself): three
 named sub-categories rather than a joint 2D histogram, since ntuple_processor's
@@ -17,8 +17,8 @@ process-level booking, independent of which categorization is passed in).
 import os
 
 import yaml
-from ntuple_processor.utils import Selection
 
+from config.shapes.categorization import build_categorization
 from config.shapes.control_binning import control_binning
 
 _channels = list(control_binning.keys())
@@ -47,16 +47,6 @@ def _variables_for(channel):
     return variables
 
 
-categorization = {
-    channel: [
-        (
-            Selection(name=region, cuts=[(cut, "category_selection")]),
-            # control_binning is an ObjBuildingDict -- indexing it already
-            # returns a built Histogram(name=variable, variable=variable,
-            # edges=binning), not raw bin edges.
-            [control_binning[channel][variable] for variable in _variables_for(channel)],
-        )
-        for region, cut in _regions.items()
-    ]
-    for channel in _channels
-}
+categorization = build_categorization(
+    {channel: {region: (cut, [control_binning[channel][variable] for variable in _variables_for(channel)]) for region, cut in _regions.items()} for channel in _channels}
+)

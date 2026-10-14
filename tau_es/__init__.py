@@ -11,7 +11,7 @@ already existed in TAUER before this slice:
   ``shapes/produce_shapes.py --special-analysis TauES`` (Phase 2a) -- these
   produce the per-shift embedded ("emb<shift>") shape templates from CROWN
   ntuples. That is shape *production*, unchanged by this package.
-- ``tau_es/taues_measurement_binning.py`` (Phase 2a) -- the
+- ``tau_es/taues_categories.py`` (Phase 2a) -- the
   DM0/DM1/DM10_11/Inclusive categorization used both by shape production
   above and by this package's datacard step.
 - ``tau_es/energy_scales.py`` (new in this slice) -- the single source of
@@ -22,7 +22,7 @@ already existed in TAUER before this slice:
   module's docstring for the single-sourcing fix.
 
 What lives here (naming: "tau_es", not "taues_fit" or "morphing_taues" --
-matches the existing ``tau_es/taues_measurement_binning.py`` naming
+matches the existing ``tau_es/taues_categories.py`` naming
 and reads as "the tauES calculation", the thing the task asked to extract):
 
 - ``energy_scales.py`` -- canonical shift-point list + naming-convention helpers.

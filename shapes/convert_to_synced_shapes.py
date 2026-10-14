@@ -130,12 +130,12 @@ def main(args):
             else:
                 if split_name[3] not in args.variable_selection:
                     continue
-        variation = split_name[2]
+        systematic = split_name[2]
         # V-associated hadronic events booked as qqH125 are merged into the qqH dataset by --do-qqh-procs
         if split_name[0] == "VH" and process == "qqH_htt125":
             continue
-        # Skip variations necessary for estimations which are of no further use.
-        if "same_sign" in variation or "anti_iso" in variation:
+        # Skip systematics necessary for estimations which are of no further use.
+        if "same_sign" in systematic or "anti_iso" in systematic:
             continue
 
         # Check if channel and category are already in the map
@@ -158,8 +158,8 @@ def main(args):
                 process = "EMB_"+category+"_"+tau_es_map[process]
 
         name_output = "{process}".format(process=process)
-        if "Nominal" not in variation:
-            name_output += "_" + variation
+        if "Nominal" not in systematic:
+            name_output += "_" + systematic
         logging.debug(
             "Adding histogram with name %s as %s to category %s.",
             key.GetName(),

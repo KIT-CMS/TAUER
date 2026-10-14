@@ -112,7 +112,7 @@ def merge_ff_reuse_if_needed(
         log.warning(
             "%s has %d ff-only part(s) waiting but its ss-os sibling (%s) is missing or "
             "unresolvable -- cannot merge; leaving the ff-only part(s) in place (they only "
-            "contain FF-weighted variations, not a complete shapes file on their own).",
+            "contain FF-weighted systematics, not a complete shapes file on their own).",
             ff_path, len(parts), ss_os_path,
         )
         return False
@@ -168,8 +168,8 @@ def missing_processes(shapes_path: Path) -> list[str]:
             fields = key.GetName().split("#")
             if len(fields) != 4:
                 continue
-            dataset, _selection, variation, _variable = fields
-            if "anti_iso" in variation:
+            dataset, _selection, systematic, _variable = fields
+            if "anti_iso" in systematic:
                 present_anti_iso.add(dataset)
             else:
                 present_other.add(dataset)
@@ -179,7 +179,7 @@ def missing_processes(shapes_path: Path) -> list[str]:
     if is_ff:
         # Both halves required for a normal process: an ff run's merged file inherits every
         # ss-os process's nominal content (present_other) and adds this process's own
-        # FF-weighted variations (present_anti_iso) on top. SIGNAL_PROCESSES are the
+        # FF-weighted systematics (present_anti_iso) on top. SIGNAL_PROCESSES are the
         # exception -- they never get an anti_iso half in an --ff-only production.
         present_both = present_anti_iso & present_other
         present = present_both | (present_other & {

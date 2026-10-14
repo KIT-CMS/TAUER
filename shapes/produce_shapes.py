@@ -11,7 +11,7 @@ import yaml
 import importlib
 
 import shapes.selection.process_selection as selection
-import shapes.selection.variations as variations
+import shapes.selection.systematics as selection_systematics
 import shapes.utils as shape_utils
 from analyses.smhtt.common import stxs_tools
 import common.ntuple_processor_config_helper as ntuple_processor_config_helper
@@ -20,17 +20,17 @@ from config.logging_setup_configs import setup_logging
 from config.analysis import ACTIVE_ANALYSIS
 
 analysis_selection = importlib.import_module(f"analyses.{ACTIVE_ANALYSIS}.shapes.selection.process_selection")
-analysis_variations = importlib.import_module(f"analyses.{ACTIVE_ANALYSIS}.shapes.selection.variations")
+analysis_selection_systematics = importlib.import_module(f"analyses.{ACTIVE_ANALYSIS}.shapes.selection.systematics")
 default_categorization = importlib.import_module(f"analyses.{ACTIVE_ANALYSIS}.shapes.selection.category_selection").categorization
-from tau_es.taues_measurement_binning import categorization as taues_categorization
-from shapes.special.ttbar_dy_weight_binning import categorization as ttbar_dy_weight_categorization
-from shapes.special.njets_control_binning import categorization as njets_control_categorization
+from tau_es.taues_categories import categorization as taues_categorization
+from shapes.special.ttbar_dy_weight_categories import categorization as ttbar_dy_weight_categorization
+from shapes.special.njets_control_categories import categorization as njets_control_categorization
 import tau_es.energy_scales as tau_es_energy_scales
 from shapes.selection.channel_selection import channel_selection
 from config.shapes.control_binning import control_binning as default_control_binning
 from common.sample_paths import build_selection_friend_dir, parse_ntuple_directory
 from config.analysis import build_files_dict, get_mc_ntuple_era
-from config.nuisances import nuisances
+from config.systematics import systematics
 from config.processes import BACKGROUNDS, GROUPS, SIGNAL_DATASETS, expand
 from ntuple_processor import GraphManager, RunManager, UnitManager
 
@@ -88,8 +88,8 @@ def parse_arguments():
         help="Use all signal processes for control plots.",
     )
     parser.add_argument(
-        "--skip-systematic-variations", action="store_true",
-        help="Skip systematic variations (faster, nominal shapes only).",
+        "--skip-systematics", action="store_true",
+        help="Skip systematics (faster, nominal shapes only).",
     )
     parser.add_argument("--nprocs", dest="num_processes", default=1, type=int, help="Number of parallel processes for histogram production.")
     parser.add_argument("--nthreads", dest="num_threads", default=1, type=int, help="Number of threads per process.")
@@ -101,7 +101,7 @@ def parse_arguments():
     parser.add_argument("--graph-dir", default=None, type=str, help="Directory to write the serialized graph files.")
     parser.add_argument(
         "--collect-config-only", action="store_true",
-        help="Only collect cuts/weights/datasets/variations into a YAML file.",
+        help="Only collect cuts/weights/datasets/systematics into a YAML file.",
     )
     parser.add_argument("--config-output-file", default="tmp_config.yaml", type=str, help="YAML output file for --collect-config-only.")
     parser.add_argument("--enable-booking-check", action="store_true", help="Enable double-booking check (slow).")
@@ -113,12 +113,12 @@ def parse_arguments():
     )
     parser.add_argument(
         "--ff-type", choices=["none", "fake_factor", "ml_fake_factor"], default="none",
-        help="Set to 'fake_factor' to book the anti-iso regions weighted with CROWN's ff_weight and their variations; "
-             "'ml_fake_factor' for friends made with the machine-learned fake factors (their variations are booked).",
+        help="Set to 'fake_factor' to book the anti-iso regions weighted with CROWN's ff_weight and their systematics; "
+             "'ml_fake_factor' for friends made with the machine-learned fake factors (their systematics are booked).",
     )
     parser.add_argument(
         "--ff-only", action="store_true",
-        help="Book only the FF-weighted anti-iso variations (requires --ff-type != none); "
+        help="Book only the FF-weighted anti-iso systematics (requires --ff-type != none); "
              "skip signals/same_sign/systematics. For hadd'ing onto an already-produced "
              "non-FF shapes file, see run.py's SHAPES ff qcd-label handling.",
     )
@@ -132,7 +132,7 @@ def parse_arguments():
         help="Produce shapes for a special analysis instead of the default categorization. "
              "'TauES': mt-only tau energy-scale fit inputs (per-shift embedded datasets, "
              "tau_es/energy_scales.py). 'TTbarDYWeight': em-only nbtag x m_vis-Z-peak 2x2 "
-             "categorization (shapes/special/ttbar_dy_weight_binning.py) for the ttbar/DY "
+             "categorization (shapes/special/ttbar_dy_weight_categories.py) for the ttbar/DY "
              "normalization measurement. 'NjetsControl': njets==0/==1/>=2 categorization "
              "over the control-plot variable set, all channels.",
     )
@@ -222,8 +222,6 @@ def get_control_units(channel, era, datasets, variables, apply_tauid, do_gofs=Fa
     control_units = {}
     control_binning = default_control_binning
     if do_gofs:
-        from config.shapes.gof_binning import load_gof_binning
-        control_binning = load_gof_binning(era, channel)
         if do_2dGofs:
             variables_2d = []
             for var1, var2 in combinations(variables, 2):
@@ -370,7 +368,7 @@ def main(args):
                 friend_directories=friend_directories,
                 files=files,
                 directory=ntuple_directory, nominals=nominals,
-                tauESvariations=_es_shifts,
+                tauESshifts=_es_shifts,
                 selections=[
                     channel_selection(
                         channel=channel, era=args.era, special="TauES",
@@ -412,7 +410,7 @@ def main(args):
 
     def _book(processes, vlist):
         shape_utils.book_histograms(
-            processes=processes, variations=vlist,
+            processes=processes, systematics=vlist,
             manager=unit_manager,
             datasets=nominals[args.era]["units"][channel],
             enable_check=args.enable_booking_check,
@@ -424,9 +422,9 @@ def main(args):
         _book(processes, vlist)
 
     def _book_qcd(processes, vlist):
-        # register_raw=False: only the renamed variation copies are booked, the raw units are the "Nominal" booked above
+        # register_raw=False: only the renamed systematic copies are booked, the raw units are the "Nominal" booked above
         shape_utils.book_histograms(
-            processes=processes, variations=vlist,
+            processes=processes, systematics=vlist,
             manager=unit_manager,
             datasets=nominals[args.era]["units"][channel],
             enable_check=args.enable_booking_check,
@@ -434,7 +432,7 @@ def main(args):
         )
 
     def _book_qcd_ss(processes):
-        _book_qcd(processes, [variations.same_sign])
+        _book_qcd(processes, [selection_systematics.same_sign])
 
     def _book_qcd_ss_nonff(processes):
         if args.ff_only:
@@ -449,7 +447,7 @@ def main(args):
                     manager=unit_manager,
                     additional_emb_procS=nominals[args.era]["tauES_procS"][channel],
                     datasets=nominals[args.era]["units"][channel],
-                    variations=[variations.same_sign],
+                    systematics=[selection_systematics.same_sign],
                     enable_check=args.enable_booking_check,
                 )
             continue
@@ -459,30 +457,30 @@ def main(args):
         if channel in {"mt", "et", "tt"}:
             _book_qcd_ss_nonff(embS | dataS | trueTauBkgS | leptonFakesS | jetFakesS)
         if channel in {"mt", "et", "tt"} and args.ff_type != "none":
-            _book_qcd(embS | dataS | trueTauBkgS | leptonFakesS | jetFakesS, [variations.anti_iso])
+            _book_qcd(embS | dataS | trueTauBkgS | leptonFakesS | jetFakesS, [selection_systematics.anti_iso])
         elif channel == "em":
             _book_qcd_ss_nonff((dataS | embS | simulatedProcsS) - signalsS)
         elif channel in {"mm", "ee"}:
             _book_qcd_ss_nonff(procS)
-        if not args.skip_systematic_variations:
-            for unit, unit_variations in analysis_variations.signal_variations(args.stxs_stage).items():
-                if unit in signalsS and unit_variations:
-                    _book_nonff({unit}, unit_variations)
+        if not args.skip_systematics:
+            for unit, unit_systematics in analysis_selection_systematics.signal_systematics(args.stxs_stage).items():
+                if unit in signalsS and unit_systematics:
+                    _book_nonff({unit}, unit_systematics)
             use_ff = channel in {"mt", "et", "tt"} and args.ff_type != "none"
-            for nuisance in nuisances(mc_era, jetfakes=use_ff, ff_ml=args.ff_type.startswith("ml_")):
-                if nuisance.kind != "shape" or channel not in nuisance.channels or nuisance.source == "estimation":
+            for syst in systematics(mc_era, jetfakes=use_ff, ff_ml=args.ff_type.startswith("ml_")):
+                if syst.kind != "shape" or channel not in syst.channels or syst.source == "estimation":
                     continue
-                keys = expand(nuisance.processes)
-                if nuisance.source != "ff":
-                    _book_nonff(set(keys) & procS | (signalsS if "signal" in keys else set()), variations.shape_variations(nuisance))
+                keys = expand(syst.processes)
+                if syst.source != "ff":
+                    _book_nonff(set(keys) & procS | (signalsS if "signal" in keys else set()), selection_systematics.shape_systematics(syst))
                 if use_ff and "jetFakes" in keys:
                     # the fake factor shifts act on data too, the CROWN shifts only on the subtracted MC
-                    subtracted = (dataS | embS if nuisance.source == "ff" else set()) | (set(GROUPS["ff_subtraction"]) & procS)
-                    _book_qcd(subtracted, variations.anti_iso_variations(nuisance))
+                    subtracted = (dataS | embS if syst.source == "ff" else set()) | (set(GROUPS["ff_subtraction"]) & procS)
+                    _book_qcd(subtracted, selection_systematics.anti_iso_systematics(syst))
             if channel in ["et", "mt"]:
-                _book_nonff(embS, [variations.emb_tau_id_eff_lt, variations.emb_tau_id_eff_lt_corr])
+                _book_nonff(embS, [selection_systematics.emb_tau_id_eff_lt, selection_systematics.emb_tau_id_eff_lt_corr])
             if channel in ["et", "em"] and int(args.era[:4]) < 2022:
-                _book_nonff(embS, [variations.emb_e_es])
+                _book_nonff(embS, [selection_systematics.emb_e_es])
 
     g_manager = GraphManager(unit_manager.booked_units, True)
     g_manager.optimize(args.optimization_level)

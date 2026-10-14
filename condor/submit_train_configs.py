@@ -34,9 +34,9 @@ def parse_args():
     p.add_argument("--selection-friend", required=True,
                     help="CROWN shapes_preparation FRIEND tree version tag, e.g. "
                          "'shapes_preparation_260930'. See README's flag reference.")
-    p.add_argument("--include-systematic-variations", action="store_true",
-                    help="By default this passes --skip-systematic-variations. Set this "
-                         "flag to collect shifted variations into the config too.")
+    p.add_argument("--include-systematics", action="store_true",
+                    help="By default this passes --skip-systematics. Set this "
+                         "flag to collect shifted systematics into the config too.")
     p.add_argument("--tag", default=None, help="Matches run.py's --tag/TAG. See README's flag reference.")
     p.add_argument("--request-cpus", type=int, default=1)
     p.add_argument("--request-memory-mb", type=int, default=4000)
@@ -83,8 +83,8 @@ def build_jobs(args) -> list[JobSpec]:
             ]
             if args.selection_friend:
                 job_args.append(f"--selection-friend {args.selection_friend}")
-            if not args.include_systematic_variations:
-                job_args.append("--skip-systematic-variations")
+            if not args.include_systematics:
+                job_args.append("--skip-systematics")
             if ff_friend_dir:
                 job_args.append("--ff-type fake_factor" if args.ff_type == "none" else f"--ff-type {args.ff_type}")
             elif args.ff_type != "none":

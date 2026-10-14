@@ -19,7 +19,7 @@ eyeball:
 
   2. NUISANCES: the set of nuisance-parameter names on each side, split into
      shared / new-only / legacy-only. A difference is *expected and intentional* --
-     systematics naming was deliberately reconciled to shapes/selection/variations.py
+     systematics naming was deliberately reconciled to shapes/selection/systematics.py
      (JEC 27-source split vs. the legacy regional grouping, tau-ID/ES pT- vs.
      decay-mode splitting, etc.). The comparator therefore does not fail on
      nuisance-set differences by default; it lists them for auditing. Pass

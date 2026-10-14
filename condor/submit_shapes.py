@@ -40,7 +40,7 @@ def parse_args():
                          "(era, channel) into one job per group. See README's \"submit_shapes.py "
                          "--process-selection\" section for the full mechanism.")
     p.add_argument("--stxs-stage", default="stage0", choices=["stage0", "stage1p2"], help="Signal split, same as run.py/produce_shapes.py --stxs-stage.")
-    p.add_argument("--skip-systematic-variations", action="store_true")
+    p.add_argument("--skip-systematics", action="store_true")
     p.add_argument("--control-plots", action="store_true")
     p.add_argument("--special-analysis", default=None,
                     choices=[None, "TauES", "TTbarDYWeight", "NjetsControl"],
@@ -121,8 +121,8 @@ def build_jobs(args) -> list[JobSpec]:
             if args.selection_friend:
                 common.append(f"--selection-friend {args.selection_friend}")
             common.append(f"--stxs-stage {args.stxs_stage}")
-            if args.skip_systematic_variations:
-                common.append("--skip-systematic-variations")
+            if args.skip_systematics:
+                common.append("--skip-systematics")
             if args.control_plots:
                 common.append("--control-plots")
             if not args.dnn_categorization and not args.special_analysis:
@@ -146,7 +146,7 @@ def build_jobs(args) -> list[JobSpec]:
 
             # Same ss-os reuse as run.py's mode_shapes: if a plain ss-os run for this exact
             # (ntupletag, tag, era, channel) already exists, book only the FF-weighted
-            # variations (--ff-only) instead of redoing the full production. Falls through
+            # systematics (--ff-only) instead of redoing the full production. Falls through
             # to a full booking otherwise; shapes/do_estimations.py's merge_ff_reuse_if_needed()
             # hadd's the parts together later.
             ss_os_shapes = None
@@ -156,10 +156,10 @@ def build_jobs(args) -> list[JobSpec]:
                 ss_os_shapes = Path(*ss_os_dir_parts) / "shapes.root"
                 if ss_os_shapes.exists():
                     print(f"[condor] {era}/{channel}: reusing existing ss-os shapes at {ss_os_shapes} "
-                          f"-- booking only --ff-only variations instead of a full re-run.")
+                          f"-- booking only --ff-only systematics instead of a full re-run.")
                 else:
                     print(f"[condor] {era}/{channel}: no existing ss-os shapes at {ss_os_shapes} "
-                          f"-- booking the full ff shapes (incl. FF variations) from scratch.")
+                          f"-- booking the full ff shapes (incl. FF systematics) from scratch.")
             ff_reuse = bool(ss_os_shapes and ss_os_shapes.exists())
 
             if args.process_selection:

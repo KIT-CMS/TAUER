@@ -154,7 +154,7 @@ def group_members(stage: str) -> dict:
 
 
 def thu_values() -> dict:
-    """`<PROCESS>_<STXS_BIN>` -> {nuisance: (down, up)} lnN from thu_norm_stxs1p2.json, '-' entries dropped."""
+    """`<PROCESS>_<STXS_BIN>` -> {systematic: (down, up)} lnN from thu_norm_stxs1p2.json, '-' entries dropped."""
     result = {}
     for name, nps in _recommendations()["thu"]["values"].items():
         result[name] = {}
@@ -166,7 +166,7 @@ def thu_values() -> dict:
 
 
 def thu_lnN(members: list) -> dict:
-    """THU nuisance -> (down, up) lnN of a datacard process: member values averaged with the recommended sigma x fraction (1 where absent)."""
+    """THU systematic -> (down, up) lnN of a datacard process: member values averaged with the recommended sigma x fraction (1 where absent)."""
     values, info, fractions = thu_values(), _name_info(), _recommendations()["fractions"]
     weight = {m: xsec(info[m][1]) * fractions[info[m][1]][m] for m in members}
     lnN = {}
@@ -177,19 +177,19 @@ def thu_lnN(members: list) -> dict:
     return lnN
 
 
-def lhe_scale_nuisances(members: list) -> dict:
-    """LHEScaleWeight nuisance -> the members of this unit it applies to, empty nuisances dropped."""
+def lhe_scale_systematics(members: list) -> dict:
+    """LHEScaleWeight systematic -> the members of this unit it applies to, empty systematics dropped."""
     result = {np_name: [m for m in members if m in names] for np_name, names in lhe_scale_scheme().items()}
     return {np_name: hit for np_name, hit in result.items() if hit}
 
 
 def lhe_scale_scheme() -> dict:
-    """LHEScaleWeight nuisance -> list of `<PROCESS>_<STXS_BIN>` it applies to."""
+    """LHEScaleWeight systematic -> list of `<PROCESS>_<STXS_BIN>` it applies to."""
     return _recommendations()["lhe_scale"]
 
 
 def write_lhe_scale_table(output_path: str = str(LHE_SCALE_TABLE)) -> dict:
-    """LHEScaleWeight nuisance -> [[stxs_family code, HTXS bin], ...] it applies to, read by CROWN's STXSLheScale."""
+    """LHEScaleWeight systematic -> [[stxs_family code, HTXS bin], ...] it applies to, read by CROWN's STXSLheScale."""
     info = _name_info()
     table = {np_name: [[FAMILIES[info[n][0]][0], info[n][2]] for n in names if n in info] for np_name, names in lhe_scale_scheme().items()}
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -418,7 +418,7 @@ if __name__ == "__main__":
     parser.add_argument("--update-sample-database", nargs="+", metavar="ROOT", help="Only write the recommended xsec of the signal samples into these sample database roots.")
     parser.add_argument("--scan-chunk", nargs=3, metavar=("DBS", "START", "STOP"), help="Only scan the files START:STOP of a dataset into --scan-dir (condor job).")
     parser.add_argument("--scan-dir", default=None, help="Directory of the scan chunks: written by --scan-chunk, read to calculate the table instead of scanning it.")
-    parser.add_argument("--lhe-scale-table", action="store_true", help="Only write the LHEScaleWeight nuisance table read by CROWN's STXSLheScale.")
+    parser.add_argument("--lhe-scale-table", action="store_true", help="Only write the LHEScaleWeight systematic table read by CROWN's STXSLheScale.")
     cli = parser.parse_args()
     if cli.lhe_scale_table:
         write_lhe_scale_table()

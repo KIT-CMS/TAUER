@@ -34,15 +34,8 @@ same reason as before: ntuple_processor's Histogram only ever books a 1D
 Histo1D (see ntuple_processor/run.py's __histo1d_from_histo), no Histo2D
 support anywhere in this framework.
 """
-import numpy as np
-from ntuple_processor.utils import Selection
-from ntuple_processor import Histogram
-
-# Same em-channel m_vis binning as config/shapes/control_binning.py (8 GeV
-# bins, 0-256 GeV) -- m_vis is still histogrammed in every region (for the
-# closure-check shape and cross-checks against the old Z-peak categorization),
-# even though pzetamissvis is now the region-defining cut.
-_m_vis_binning = np.linspace(0, 256, 33)
+from config.shapes.categorization import build_categorization
+from config.shapes.control_binning import control_binning
 
 _pzeta_threshold = -25.0
 _dy_like_cut = f"(pzetamissvis > {_pzeta_threshold})"
@@ -50,39 +43,12 @@ _tt_like_cut = f"(pzetamissvis <= {_pzeta_threshold})"
 
 categories = {
     "em": {
-        "nbtag0_pzetahi": {
-            "cut": f"(nbtag == 0 && {_dy_like_cut})",
-            "bins": _m_vis_binning,
-        },
-        "nbtag0_pzetalo": {
-            "cut": f"(nbtag == 0 && {_tt_like_cut})",
-            "bins": _m_vis_binning,
-        },
-        "nbtagge1_pzetahi": {
-            "cut": f"(nbtag >= 1 && {_dy_like_cut})",
-            "bins": _m_vis_binning,
-        },
-        "nbtagge1_pzetalo": {
-            "cut": f"(nbtag >= 1 && {_tt_like_cut})",
-            "bins": _m_vis_binning,
-        },
+        "nbtag0_pzetahi": f"(nbtag == 0 && {_dy_like_cut})",
+        "nbtag0_pzetalo": f"(nbtag == 0 && {_tt_like_cut})",
+        "nbtagge1_pzetahi": f"(nbtag >= 1 && {_dy_like_cut})",
+        "nbtagge1_pzetalo": f"(nbtag >= 1 && {_tt_like_cut})",
     }
 }
 
-categorization = {
-    "em": [
-        (
-            Selection(
-                name=region, cuts=[(categories["em"][region]["cut"], "category_selection")]
-            ),
-            [
-                Histogram(
-                    "m_vis",
-                    "m_vis",
-                    categories["em"][region]["bins"],
-                )
-            ],
-        )
-        for region in categories["em"]
-    ]
-}
+# m_vis is the control-plot em binning, histogrammed in every region
+categorization = build_categorization({"em": {region: (cut, [control_binning["em"]["m_vis"]]) for region, cut in categories["em"].items()}})

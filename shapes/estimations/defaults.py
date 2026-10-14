@@ -6,4 +6,4 @@ _dataset_map = {"data": "data", **{p.datacard: p.dataset for p in BACKGROUNDS.va
 _process_map = {"data": "data", **{p.datacard: p.datacard for p in BACKGROUNDS.values()},
                 "ZTT_NLO": "ZTT", "ZL_NLO": "ZL", "ZJ_NLO": "ZJ", "W_NLO": "W"}
 
-_name_string = "{dataset}#{channel}{process}{selection}#{variation}#{variable}"
+_name_string = "{dataset}#{channel}{process}{selection}#{systematic}#{variable}"

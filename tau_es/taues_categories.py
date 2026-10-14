@@ -6,8 +6,9 @@ Decay-mode categorization reads the `tau_decaymode_2` branch (this repo's CROWN 
 Run3 and 2018 alike).
 """
 import numpy as np
-from ntuple_processor.utils import Selection
 from ntuple_processor import Histogram
+
+from config.shapes.categorization import build_categorization
 
 discriminator_variable = "m_vis"
 discriminator_binning = np.arange(35, 85, 2.5)
@@ -42,20 +43,6 @@ categories = {
     }
 }
 
-categorization = {
-    "mt": [
-        (
-            Selection(
-                name=x, cuts=[(categories["mt"][x]["cut"], "category_selection")]
-            ),
-            [
-                Histogram(
-                    categories["mt"][x]["var"],
-                    categories["mt"][x]["expression"],
-                    categories["mt"][x]["bins"],
-                )
-            ],
-        )
-        for x in categories["mt"]
-    ]
-}
+categorization = build_categorization(
+    {"mt": {x: (c["cut"], [Histogram(c["var"], c["expression"], c["bins"])]) for x, c in categories["mt"].items()}}
+)

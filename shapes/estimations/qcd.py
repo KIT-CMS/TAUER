@@ -62,7 +62,7 @@ def qcd_estimation(
     channel,
     selection,
     variable,
-    variation="Nominal",
+    systematic="Nominal",
     is_embedding=True,
     is_nlo=False,
     extrapolation_factor=1.2,
@@ -72,7 +72,7 @@ def qcd_estimation(
     logger.debug("channel: %s", channel)
     logger.debug("selection: %s", selection)
     logger.debug("variable: %s", variable)
-    logger.debug("variation: %s", variation)
+    logger.debug("systematic: %s", systematic)
     logger.debug("is_embedding: %s", is_embedding)
     logger.debug("extrapolation_factor: %s", extrapolation_factor)
     logger.debug("sub_scale: %s", sub_scale)
@@ -101,7 +101,7 @@ def qcd_estimation(
         _name_string.format,
         channel=channel,
         variable=variable,
-        variation="same_sign" if "subtrMC" in variation else variation,
+        systematic="same_sign" if "subtrMC" in systematic else systematic,
         selection="-" + selection if selection != "" else "",
     )
 
@@ -116,23 +116,23 @@ def qcd_estimation(
     proc_name = "QCD" if is_embedding else "QCDMC"
     if is_nlo:
         proc_name = "_".join([proc_name, "NLO"])
-    if variation in ["same_sign"]:
-        qcd_variation = "Nominal"
+    if systematic in ["same_sign"]:
+        qcd_systematic = "Nominal"
     else:
-        qcd_variation = variation.replace("same_sign_", "")
+        qcd_systematic = systematic.replace("same_sign_", "")
     logger.debug(f"Use extrapolation_factor factor with value {extrapolation_factor} to scale from ss to os region.")
     if base_hist.Integral() > 0.0:
         base_hist.Scale(extrapolation_factor)
     else:
         logger.warning(f"No data in same-sign region for histogram {base_hist.GetName()}. Setting extrapolation factor to 0.0")
         base_hist.Scale(0.0)
-    variation_name = (
+    systematic_name = (
         base_hist.GetName()
         .replace("data", proc_name)
-        .replace(variation if "subtrMC" not in variation else "same_sign", qcd_variation)
+        .replace(systematic if "subtrMC" not in systematic else "same_sign", qcd_systematic)
         .replace(channel, "-".join([channel, proc_name]), 1)
     )
-    base_hist.SetName(variation_name)
-    base_hist.SetTitle(variation_name)
+    base_hist.SetName(systematic_name)
+    base_hist.SetTitle(systematic_name)
     replace_negative_entries_and_renormalize(base_hist, tolerance=100.05)
     return base_hist

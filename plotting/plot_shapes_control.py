@@ -209,9 +209,9 @@ def _th1_to_numpy(hist):
     return edges, y, yerr
 
 
-def _get_hist(rootfile, dataset, channel, process_selection, variation, variable, category=""):
-    # Key: {dataset}#{channel}{-process_selection}[-category]#{variation}#{variable}
-    name = f"{dataset}#{channel}{process_selection}{'-' + category if category else ''}#{variation}#{variable}"
+def _get_hist(rootfile, dataset, channel, process_selection, systematic, variable, category=""):
+    # Key: {dataset}#{channel}{-process_selection}[-category]#{systematic}#{variable}
+    name = f"{dataset}#{channel}{process_selection}{'-' + category if category else ''}#{systematic}#{variable}"
     h = rootfile.Get(name)
     if not h:
         logger.debug(f"Histogram not found: {name}")
@@ -467,9 +467,9 @@ def plot_control(
             mc_err_label = "Bkg. unc. (stat" + r" $\oplus$" + " syst.)"
         else:
             logger.warning(
-                f"--no-systematics not set, but no shape-systematic variations were found "
+                f"--no-systematics not set, but no shape-systematics were found "
                 f"for {channel}/{variable} (category={category!r}) -- input shapes were likely "
-                f"produced with --skip-systematic-variations. Labeling the band as stat-only."
+                f"produced with --skip-systematics. Labeling the band as stat-only."
             )
             mc_err_label = "Bkg. stat. unc."
     else:
@@ -547,7 +547,7 @@ def parse_arguments():
         type=lambda s: s.split(","),
         help="Comma-separated category names to plot, one output subdirectory per category "
              "(e.g. 'njets0,njets1,njets2p' for --special-analysis NjetsControl shapes -- see "
-             "shapes/special/njets_control_binning.py's _regions). Default: no category "
+             "shapes/special/njets_control_categories.py's _regions). Default: no category "
              "dimension, i.e. plain control-plot shapes (matches every prior invocation)."
     )
     return parser.parse_args()

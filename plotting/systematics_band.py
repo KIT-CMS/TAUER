@@ -12,7 +12,7 @@ different sources are added in quadrature (treated as uncorrelated with each
 other) -- so this is not simply "quadrature-sum every process x every
 source" but a proper per-source correlated-then-quadrature combination. It
 is NOT a post-fit uncertainty: it ignores the fit's pulls/constraints and
-correlations between nuisances the way `combine` would apply them, so treat
+correlations between systematics the way `combine` would apply them, so treat
 it as an upper-bound-ish sanity-check band for control plots, not a
 substitute for a real post-fit band.
 """

@@ -3,7 +3,7 @@ import logging
 from config.analysis import AR_MASK_BRANCH, SR_MASK_SS_BRANCH
 from config.logging_setup_configs import setup_logging
 from ntuple_processor.utils import Cut, Weight
-from ntuple_processor.variations import (
+from ntuple_processor.systematics import (
     ReplaceCut,
     ReplaceCutAndAddWeight,
     ReplaceVariable,
@@ -15,7 +15,7 @@ logger = setup_logging(logger=logging.getLogger(__name__))
 SHIFT_DIRECTIONS = ("Up", "Down")
 
 # CROWN's fake factor weight of the anti-isolated region (fake_factor_2 for et/mt, the failing tau's for tt); its shifts are
-# ff_weight__<nuisance>Up/Down
+# ff_weight__<systematic>Up/Down
 FF_WEIGHT = "ff_weight"
 
 
@@ -32,23 +32,23 @@ def _anti_iso(suffix=""):
 anti_iso = ReplaceCutAndAddWeight("anti_iso", "SR_mask", _anti_iso(), Weight(FF_WEIGHT, "fake_factor"))
 
 
-def shape_variations(nuisance):
-    """Up/Down variations of a config.nuisances.Nuisance in the signal region."""
-    return [ReplaceVariable(f"{nuisance.name}{d}", f"{nuisance.name}{d}") for d in SHIFT_DIRECTIONS]
+def shape_systematics(syst):
+    """Up/Down systematics of a config.systematics.Systematic in the signal region."""
+    return [ReplaceVariable(f"{syst.name}{d}", f"{syst.name}{d}") for d in SHIFT_DIRECTIONS]
 
 
-def anti_iso_variations(nuisance):
-    """Up/Down variations of a config.nuisances.Nuisance in the anti-isolated region, named anti_iso_<shift> as
+def anti_iso_systematics(syst):
+    """Up/Down systematics of a config.systematics.Systematic in the anti-isolated region, named anti_iso_<shift> as
     shapes/do_estimations.py expects: a shift of the fake factor weight, or a CROWN shift that also moves the anti-iso
     mask and the fake factor weight of the shifted friend trees."""
-    if nuisance.source == "ff":
+    if syst.source == "ff":
         return [
-            ReplaceCutAndAddWeight(f"anti_iso_{nuisance.name}{d}", "SR_mask", _anti_iso(), Weight(f"{FF_WEIGHT}__{nuisance.name}{d}", "fake_factor"))
+            ReplaceCutAndAddWeight(f"anti_iso_{syst.name}{d}", "SR_mask", _anti_iso(), Weight(f"{FF_WEIGHT}__{syst.name}{d}", "fake_factor"))
             for d in SHIFT_DIRECTIONS
         ]
     return [
         ReplaceVariableReplaceCutAndAddWeight(
-            f"anti_iso_{nuisance.name}{d}", f"{nuisance.name}{d}", "SR_mask", _anti_iso(f"__{nuisance.name}{d}"), Weight(f"{FF_WEIGHT}__{nuisance.name}{d}", "fake_factor")
+            f"anti_iso_{syst.name}{d}", f"{syst.name}{d}", "SR_mask", _anti_iso(f"__{syst.name}{d}"), Weight(f"{FF_WEIGHT}__{syst.name}{d}", "fake_factor")
         )
         for d in SHIFT_DIRECTIONS
     ]
@@ -72,9 +72,9 @@ emb_tau_id_eff_lt_corr = [
 ]
 
 emb_e_es = [  # TODO Embedding electron scale, check if right
-    ReplaceVariable(name, variation)
+    ReplaceVariable(name, systematic)
     for shift in SHIFT_DIRECTIONS
-    for name, variation in [
+    for name, systematic in [
         (f"CMS_scale_e_barrel_emb{shift}", f"eleEsBarrel{shift}"),
         (f"CMS_scale_e_endcap_emb{shift}", f"eleEsEndcap{shift}"),
     ]

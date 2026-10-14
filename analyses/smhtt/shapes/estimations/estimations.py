@@ -9,21 +9,21 @@ _qqh_dataset_map = {**_dataset_map, "qqH_htt125": "qqH", "VH_as_qqH125": "VH"}
 _qqh_process_map = {**_process_map, "qqH_htt125": "qqH_htt125", "VH_as_qqH125": "qqH_htt125"}
 
 
-def _get_qqh_component_hist(rootfile, proc, channel, selection, variable, variation):
+def _get_qqh_component_hist(rootfile, proc, channel, selection, variable, systematic):
     name = _name_string.format(
         dataset=_qqh_dataset_map[proc],
         channel=channel,
         process="-" + _qqh_process_map[proc],
         selection="-" + selection if selection != "" else "",
-        variation=variation,
+        systematic=systematic,
         variable=variable,
     )
     hist = rootfile.Get(name)
     if hist:
         return hist
-    if variation != "Nominal":
+    if systematic != "Nominal":
         logger.debug(
-            "No %s for %s, falling back to Nominal for the qqH merge", variation, name
+            "No %s for %s, falling back to Nominal for the qqH merge", systematic, name
         )
         return _get_qqh_component_hist(
             rootfile, proc, channel, selection, variable, "Nominal"
@@ -31,15 +31,15 @@ def _get_qqh_component_hist(rootfile, proc, channel, selection, variable, variat
     raise KeyError(f"Missing Nominal histogram {name} needed for the qqH merge")
 
 
-def qqh_merge_estimation(rootfile, channel, selection, variable, variation="Nominal"):
+def qqh_merge_estimation(rootfile, channel, selection, variable, systematic="Nominal"):
     procs_to_add = ["qqH_htt125", "VH_as_qqH125"]
     base_hist = _get_qqh_component_hist(
-        rootfile, procs_to_add[0], channel, selection, variable, variation
+        rootfile, procs_to_add[0], channel, selection, variable, systematic
     ).Clone()
     for proc in procs_to_add[1:]:
         base_hist.Add(
             _get_qqh_component_hist(
-                rootfile, proc, channel, selection, variable, variation
+                rootfile, proc, channel, selection, variable, systematic
             )
         )
     return base_hist
@@ -50,7 +50,7 @@ def parse_histograms_for_qqh(inputfile):
 
     qqh_procs = {}
     for key in inputfile.GetListOfKeys():
-        dataset, selection, variation, variable = key.GetName().split("#")
+        dataset, selection, systematic, variable = key.GetName().split("#")
         if dataset in ["qqH", "VH"]:
             sel_split = selection.split("-", maxsplit=1)
             category = ""
@@ -67,6 +67,6 @@ def parse_histograms_for_qqh(inputfile):
             if process != "qqH_htt125":
                 continue
             add_input_to_inputdict(
-                qqh_procs, channel, category, variable, variation, process
+                qqh_procs, channel, category, variable, systematic, process
             )
     return qqh_procs

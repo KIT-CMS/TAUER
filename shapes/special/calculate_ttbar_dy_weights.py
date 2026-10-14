@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Measures ttbar/DY normalization weights (k_TT, k_DY) from the em-channel
-"tt_dy_weight" categorization (shapes/special/ttbar_dy_weight_binning.py): nbtag==0 vs
+"tt_dy_weight" categorization (shapes/special/ttbar_dy_weight_categories.py): nbtag==0 vs
 nbtag>=1, crossed with pzetamissvis > -25 ("DY-like") vs <= -25 ("TT/VV-like").
 
 Read-only w.r.t. ntuples: only opens already-produced shapes.root files (HTCondor-submitted
@@ -43,7 +43,7 @@ import ROOT
 
 from common.sample_paths import build_shape_output_paths
 from config.logging_setup_configs import setup_logging
-from shapes.special.ttbar_dy_weight_binning import categories as _categories
+from shapes.special.ttbar_dy_weight_categories import categories as _categories
 from shapes.estimations.defaults import _name_string
 
 logger = setup_logging(logger=logging.getLogger(__name__))
@@ -74,7 +74,7 @@ _DATA = ("data", "")
 def _get_hist(rootfile, dataset, process, category, variable=VARIABLE):
     name = _name_string.format(
         dataset=dataset, channel=CHANNEL, process=process,
-        selection="-" + category, variation="Nominal", variable=variable,
+        selection="-" + category, systematic="Nominal", variable=variable,
     )
     hist = rootfile.Get(name)
     if not hist:

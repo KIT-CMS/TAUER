@@ -69,10 +69,10 @@ FF_ML = {("2018", "mt"): {"QCD": FF_CORR_COMPONENTS, "Wjets": FF_CORR_COMPONENTS
 FF_ML_COMPONENTS = ("", "Stat", "Normalization")
 
 
-# the CROWN fake factor shifts are named like the nuisances: fake_factor_<leg>__<nuisance>Up/Down
+# the CROWN fake factor shifts are named like the systematics: fake_factor_<leg>__<systematic>Up/Down
 def ff_component_names(process: str, era: str, channel: str, dr_sr: bool = True, ml: bool = False) -> list[str]:
     ff_era = ff_config_era(era)
-    name = lambda *parts: "_".join(["CMS_fake_t", process, *filter(None, parts), ff_era, channel])
+    name = lambda *parts: "_".join(["CMS_fake_t", process, *filter(None, parts), channel, ff_era])
     if ml and (ff_era, channel) in FF_ML:
         names = [name(c) for c in FF_ML_COMPONENTS] + [name("fraction"), name("fraction", "Stat")]
         if dr_sr:

@@ -59,7 +59,7 @@ def parse_arguments():
         "--processes", default=None, type=str,
         help="Comma-separated process key infixes (e.g. ZTT,TTL,data) to restrict the comparison to. Default: every process present in --legacy-file for this channel/selection.",
     )
-    parser.add_argument("--selection", default="Nominal", type=str, help="Selection/variation string, e.g. Nominal or same_sign.")
+    parser.add_argument("--selection", default="Nominal", type=str, help="Selection/systematic string, e.g. Nominal or same_sign.")
     parser.add_argument("--max-n-sigma", default=3.0, type=float, help="Per-bin agreement tolerance in combined statistical sigma.")
     parser.add_argument(
         "--max-rel-diff", default=None, type=float,
@@ -95,8 +95,8 @@ def _list_keys(rootfile, channel, selection, variables=None, processes=None):
         parts = name.split("#")
         if len(parts) != 4:
             continue
-        dataset, sel_string, variation, variable = parts
-        if variation != selection:
+        dataset, sel_string, systematic, variable = parts
+        if systematic != selection:
             continue
         if not sel_string.startswith(channel):
             continue

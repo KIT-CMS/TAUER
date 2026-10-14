@@ -1,5 +1,5 @@
 from ntuple_processor import dataset_from_crownoutput, Unit
-from ntuple_processor.variations import (
+from ntuple_processor.systematics import (
     get_quantities_from_expression,
     ReplaceCut,
     ReplaceWeight,
@@ -7,6 +7,7 @@ from ntuple_processor.variations import (
 )
 import os
 import re
+import tau_es.energy_scales as tau_es_energy_scales
 from copy import deepcopy
 from concurrent.futures import ProcessPoolExecutor
 import logging
@@ -32,7 +33,7 @@ def add_process(
     selections,
     categorization,
     channel,
-    variations=None,
+    systematics=None,
     copy=False,
 ):
     """
@@ -41,11 +42,11 @@ def add_process(
     if not isinstance(selections, list):
         selections = [selections]
     unitlist = []
-    if variations is not None:
-        for variation in variations:
+    if systematics is not None:
+        for systematic in systematics:
             for category_selection, actions in categorization[channel]:
                 full_selection = selections + [category_selection]
-                unitlist.append(Unit(dataset, full_selection, actions, variation))
+                unitlist.append(Unit(dataset, full_selection, actions, systematic))
     else:
         for category_selection, actions in categorization[channel]:
             full_selection = selections + [category_selection]
@@ -77,7 +78,7 @@ def add_control_process(
     analysis_unit[name] = [(Unit(dataset, selections, control_binning))]
 
 
-def book_histograms(manager, processes, datasets, variations=None, enable_check=False, register_raw=True):
+def book_histograms(manager, processes, datasets, systematics=None, enable_check=False, register_raw=True):
     logger.debug(f"Booking {processes}")
     logger.debug(f"Datasets: {datasets.keys()}")
     if not isinstance(processes, set):
@@ -86,18 +87,18 @@ def book_histograms(manager, processes, datasets, variations=None, enable_check=
     if missing:
         logger.warning(f"Skipping processes with no booked units: {missing}")
     unitlist = [unit for process in processes if process in datasets for unit in datasets[process]]
-    if variations is not None:
-        variationlist = []
-        for variation in variations:
-            if isinstance(variation, list):
-                variationlist.extend(variation)
+    if systematics is not None:
+        systematiclist = []
+        for systematic in systematics:
+            if isinstance(systematic, list):
+                systematiclist.extend(systematic)
             else:
-                variationlist.append(variation)
+                systematiclist.append(systematic)
     else:
-        variationlist = None
+        systematiclist = None
     manager.book(
         unitlist,
-        variationlist,
+        systematiclist,
         enable_check=enable_check,
         register_raw=register_raw,
     )
@@ -278,7 +279,7 @@ def add_tauES_datasets(
     files,
     directory,
     nominals,
-    tauESvariations,
+    tauESshifts,
     selections,
     categorization,
     additional_emb_procS,
@@ -288,9 +289,8 @@ def add_tauES_datasets(
     xrootd=False,
     shiftstring="EMBtauESshift",
 ):
-    for variation in tauESvariations:
-        name = str(round(variation, 2)).replace("-", "minus").replace(".", "p")
-        processname = f"emb{name}"
+    for shift in tauESshifts:
+        processname = tau_es_energy_scales.shift_to_procname(shift)
         logger.info(f"Adding {processname}")
         dataset = dataset_from_crownoutput(
             processname,
@@ -312,8 +312,8 @@ def add_tauES_datasets(
         )
         nominals[era]["datasets"][channel][processname] = dataset
         updated_unit = []
-        additional_emb_procS.add(f"emb{name}")
-        shiftname = f"{shiftstring}_{name}"
+        additional_emb_procS.add(processname)
+        shiftname = f"{shiftstring}_{processname.removeprefix('emb')}"
         for category_selection, actions in categorization[channel]:
             full_selection = selections + [category_selection]
             new_selections = deepcopy(full_selection)
@@ -364,7 +364,7 @@ def book_tauES_histograms(
     manager,
     additional_emb_procS,
     datasets,
-    variations,
+    systematics,
     enable_check=False,
     shiftstring="EMBtauESshift",
 ):
@@ -383,39 +383,39 @@ def book_tauES_histograms(
     for tau_es_shift in additional_emb_procS:
         logger.debug(f"Booking {tau_es_shift}")
         shiftname = f"{shiftstring}_{tau_es_shift.replace('emb', '')}"
-        updated_variations = deepcopy(variations)
-        final_variations = []
+        updated_systematics = deepcopy(systematics)
+        final_systematics = []
         unitlist = datasets[tau_es_shift]
         if len(unitlist) == 0:
             continue
         quants = unitlist[0].dataset.quantities_per_vars
-        for variation in updated_variations:
-            if isinstance(variation, list):
-                variationlist = variation
+        for systematic in updated_systematics:
+            if isinstance(systematic, list):
+                systematiclist = systematic
             else:
-                variationlist = [variation]
-            for subvariation in variationlist:
-                if isinstance(subvariation, ReplaceCut):
-                    subvariation.cut.expression = replace_expression(
-                        subvariation.cut.expression, quants
+                systematiclist = [systematic]
+            for subsystematic in systematiclist:
+                if isinstance(subsystematic, ReplaceCut):
+                    subsystematic.cut.expression = replace_expression(
+                        subsystematic.cut.expression, quants
                     )
-                elif isinstance(subvariation, ReplaceWeight):
-                    subvariation.weight.expression = replace_expression(
-                        subvariation.weight.expression, quants
+                elif isinstance(subsystematic, ReplaceWeight):
+                    subsystematic.weight.expression = replace_expression(
+                        subsystematic.weight.expression, quants
                     )
-                elif isinstance(subvariation, ReplaceCutAndAddWeight):
-                    subvariation.replace_cut.cut.expression = replace_expression(
-                        subvariation.replace_cut.cut.expression, quants
+                elif isinstance(subsystematic, ReplaceCutAndAddWeight):
+                    subsystematic.replace_cut.cut.expression = replace_expression(
+                        subsystematic.replace_cut.cut.expression, quants
                     )
-                    subvariation.add_weight.weight.expression = replace_expression(
-                        subvariation.add_weight.weight.expression, quants
+                    subsystematic.add_weight.weight.expression = replace_expression(
+                        subsystematic.add_weight.weight.expression, quants
                     )
                 else:
                     pass
-                final_variations.append(subvariation)
-        logger.warning(f"final_variations: {final_variations}")
+                final_systematics.append(subsystematic)
+        logger.warning(f"final_systematics: {final_systematics}")
         manager.book(
             unitlist,
-            final_variations,
+            final_systematics,
             enable_check=enable_check,
         )

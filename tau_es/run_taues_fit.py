@@ -4,8 +4,8 @@ Run the tauES measurement fit against a datacard built by
 tau_es/make_taues_datacard.py.
 
 Combine/CombineHarvester/CMSSW stay external dependencies, reached via
-``utils/setup_cmssw.sh`` -- this script only ``subprocess.run()``s the real external
-binaries (``text2workspace.py``/``combineTool.py -M T2W``, ``combine -M MultiDimFit``).
+``utils/setup_cmssw.sh`` -- this script only runs the real external
+binaries through common.cmsenv.run_in_cmsenv (``text2workspace.py``/``combineTool.py -M T2W``, ``combine -M MultiDimFit``).
 
 Two subcommands:
   workspace  -- text2workspace.py (via combineTool.py -M T2W) on a datacard
@@ -33,43 +33,27 @@ combineCards.py.
 import argparse
 import logging
 import os
-import shutil
-import subprocess
 
+from common.cmsenv import run_in_cmsenv
 from config.logging_setup_configs import setup_logging
 
 logger = setup_logging(logger=logging.getLogger(__name__))
 
 
-def _run(cmd, logger, **kwargs):
-    logger.info("Running: %s", " ".join(cmd))
-    result = subprocess.run(["nice", "-n", "19", *cmd], **kwargs)
-    if result.returncode != 0:
-        raise RuntimeError(f"Command failed (rc={result.returncode}): {' '.join(cmd)}")
-    return result
-
-
 def cmd_workspace(args):
-    combine_tool = shutil.which("combineTool.py")
-    if combine_tool is None:
-        raise RuntimeError("combineTool.py not found in PATH -- source utils/setup_cmssw.sh first.")
     os.makedirs(os.path.dirname(args.workspace) or ".", exist_ok=True)
     cmd = [
-        combine_tool, "-M", "T2W",
+        "combineTool.py", "-M", "T2W",
         "-i", args.datacard,
         "-o", os.path.basename(args.workspace),
         "--parallel", str(args.parallel),
         "--X-no-check-norm",
     ]
-    _run(cmd, logger, cwd=os.path.dirname(args.workspace) or ".")
+    run_in_cmsenv(cmd, cwd=os.path.dirname(args.workspace) or ".")
     logger.info(f"Workspace written: {args.workspace}")
 
 
 def cmd_fit(args):
-    combine = shutil.which("combine")
-    if combine is None:
-        raise RuntimeError("combine not found in PATH -- source utils/setup_cmssw.sh first.")
-
     pois = "taues,r" if args.with_r else "taues"
     ranges = f"taues={args.taues_min},{args.taues_max}"
     set_params = f"taues={args.taues_init}"
@@ -80,7 +64,7 @@ def cmd_fit(args):
     workdir = os.path.dirname(args.workspace) or "."
 
     initial_fit_cmd = [
-        combine, "-M", "MultiDimFit", "-n", f"_initialFit_{args.tag}",
+        "combine", "-M", "MultiDimFit", "-n", f"_initialFit_{args.tag}",
         "--algo", "singles", "--redefineSignalPOIs", pois,
         "--setParameterRanges", ranges,
         "--robustFit", "1", "-m", "0", "-d", args.workspace,
@@ -89,13 +73,10 @@ def cmd_fit(args):
         "--X-rtd", "FITTER_NEW_CROSSING_ALGO", "--X-rtd", "FITTER_NEVER_GIVE_UP", "--X-rtd", "FITTER_BOUND",
         "--cminFallbackAlgo", "Minuit2,0:0.1", "--cminFallbackAlgo", "Minuit,0:0.1",
     ]
-    _run(initial_fit_cmd, logger, cwd=workdir)
+    run_in_cmsenv(initial_fit_cmd, cwd=workdir)
 
-    combine_tool = shutil.which("combineTool.py")
-    if combine_tool is None:
-        raise RuntimeError("combineTool.py not found in PATH -- source utils/setup_cmssw.sh first.")
     scan_cmd = [
-        combine_tool, "-M", "MultiDimFit", "-d", args.workspace,
+        "combineTool.py", "-M", "MultiDimFit", "-d", args.workspace,
         "--algo", "grid", "--X-rtd", "MINIMIZER_analytic", "--cminDefaultMinimizerStrategy", "0",
         "-P", "taues", "-m", "0", "--redefineSignalPOIs", pois,
         "--setParameterRanges", ranges, "--floatOtherPOIs", "1",
@@ -105,7 +86,7 @@ def cmd_fit(args):
         "--cminFallbackAlgo", "Minuit2,0:0.1", "--cminFallbackAlgo", "Minuit,0:0.1",
         "-n", args.tag,
     ]
-    _run(scan_cmd, logger, cwd=workdir)
+    run_in_cmsenv(scan_cmd, cwd=workdir)
 
     result_file = os.path.join(workdir, f"higgsCombine{args.tag}.MultiDimFit.mH0.root")
     logger.info(f"Fit scan output: {result_file}")

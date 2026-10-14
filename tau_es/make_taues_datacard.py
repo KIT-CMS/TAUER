@@ -12,7 +12,7 @@ via CombineHarvester's Python bindings.
   CMS_eff_emb_t, emb_t, CMS_eff_m, CMS_3ProngEff, CMS_1ProngPi0Eff, jetFakes shape
   stats/syst), with $CHANNEL/$ERA as CombineHarvester wildcards.
 - ``--categories`` defaults to Inclusive but also supports one bin per DM category
-  (DM0,DM1,DM10_11,Inclusive), since taues_measurement_binning.py defines all four.
+  (DM0,DM1,DM10_11,Inclusive), since taues_categories.py defines all four.
 - ``BuildRooMorphing`` isn't on the ``CombineHarvester.CombineTools.ch`` Python module --
   it's in the separate CombinePdfs library, reached via
   ``ROOT.gSystem.Load("libCombineHarvesterCombinePdfs")`` + ``ROOT.ch.BuildRooMorphing(...)``.
@@ -30,7 +30,7 @@ from datacards.tools import (
     replace_with_asimov,
 )
 from tau_es.energy_scales import shift_values, procname_to_shift_string, shift_to_procname
-from tau_es.taues_measurement_binning import categories as taues_categories
+from tau_es.taues_categories import categories as taues_categories
 
 BACKGROUND_PROCESSES = ["ZL", "TTL", "VVL", "jetFakes"]
 SIGNAL_PROCESSES = ["EMB"]
@@ -85,7 +85,7 @@ def parse_args():
     p.add_argument("--era", default="2018", help="Run2 era with tauES/embedding support (2018 today).")
     p.add_argument("--channels", dest="channel", default="mt", help="Only mt is supported today (Phase 2a scope).")
     p.add_argument("--categories", type=csv, default=["Inclusive"],
-                    help="Comma-separated subset of taues_measurement_binning.py's categories "
+                    help="Comma-separated subset of taues_categories.py's categories "
                          "(DM0, DM1, DM10_11, Inclusive). Default matches the reference C++'s "
                          "FIT-mode default (Inclusive only).")
     p.add_argument("--input-file", required=True,
@@ -128,7 +128,7 @@ def build_datacard(args, logger):
     if args.era not in ERA_TAG:
         raise ValueError(f"Unsupported era {args.era!r}; supported: {sorted(ERA_TAG)}")
     if args.channel not in taues_categories:
-        raise ValueError(f"No tauES categorization for channel {args.channel!r} in taues_measurement_binning.py")
+        raise ValueError(f"No tauES categorization for channel {args.channel!r} in taues_categories.py")
 
     unknown = set(args.categories) - set(taues_categories[args.channel])
     if unknown:

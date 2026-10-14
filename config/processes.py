@@ -1,6 +1,6 @@
 """
 Single source of the background processes: the datacard name (also the process part of the booked histogram name), the
-ntuple_processor dataset key and the groups the systematics of config/nuisances.py are assigned to.
+ntuple_processor dataset key and the groups the systematics of config/systematics.py are assigned to.
 """
 from typing import NamedTuple
 

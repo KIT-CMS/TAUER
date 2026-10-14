@@ -1,5 +1,5 @@
 from analyses.smhtt.common import stxs_tools
-from config.nuisances import ERA_TAG
+from config.systematics import ERA_TAG
 
 
 def datacard_signal(name: str, stage: str) -> str:
@@ -146,5 +146,5 @@ def add_signal_systematics(add_syst, processes, channels, stage: str = "stage0")
         procs = [datacard_signal(group, stage)]
         for np_name, (down, up) in stxs_tools.thu_lnN(members).items():
             add_syst(np_name, "lnN", procs, channels.all, up if down == up else (down, up))
-        for np_name in stxs_tools.lhe_scale_nuisances(members):
+        for np_name in stxs_tools.lhe_scale_systematics(members):
             add_syst(np_name, "shape", procs, channels.all)

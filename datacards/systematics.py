@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, List, Optional, Tuple
 
 from config.analysis import ACTIVE_ANALYSIS
 from config.logging_setup_configs import setup_logging
-from config.nuisances import nuisances
+from config.systematics import systematics
 from config.processes import BACKGROUNDS, expand
 
 _analysis_systematics = importlib.import_module(f"analyses.{ACTIVE_ANALYSIS}.datacards.systematics")
@@ -58,7 +58,7 @@ def add_systematics(
     shape_systematics: bool = True,
     record: Optional[List[Tuple[str, str, Tuple[str, ...], Tuple[str, ...]]]] = None,
 ) -> None:
-    """Add the nuisances of config/nuisances.py plus the analysis signal and embedding ones. With cb=None only
+    """Add the systematics of config/systematics.py plus the analysis signal and embedding ones. With cb=None only
     `record` is filled with (name, type, processes, channels)."""
     logger.debug(f"calling add_systematics {locals()}")
     channels, processes = Channels(), Processes(run2=int(era[:4]) < 2022, stxs_stage=stxs_stage)
@@ -81,8 +81,8 @@ def add_systematics(
                 syst_map = value
             cb.cp().process(list(procs)).channel(list(chans)).AddSyst(cb, name, syst_type, syst_map)
 
-    for nuisance in nuisances(era, jetfakes=jetfakes, qcd=qcd, ff_ml=ff_ml):
-        add_syst(nuisance.name, nuisance.kind, processes.resolve(nuisance.processes), nuisance.channels, nuisance.value)
+    for syst in systematics(era, jetfakes=jetfakes, qcd=qcd, ff_ml=ff_ml):
+        add_syst(syst.name, syst.kind, processes.resolve(syst.processes), syst.channels, syst.value)
 
     _analysis_systematics.add_signal_systematics(add_syst, processes, channels, stxs_stage)
 

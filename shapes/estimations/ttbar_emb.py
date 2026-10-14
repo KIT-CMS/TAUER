@@ -18,7 +18,7 @@ def emb_ttbar_contamination_estimation(
                     channel=channel,
                     process="-" + _process_map[embname],
                     selection=category,
-                    variation="Nominal",
+                    systematic="Nominal",
                     variable=variable,
                 )
             )
@@ -29,7 +29,7 @@ def emb_ttbar_contamination_estimation(
                 channel=channel,
                 process="-" + _process_map[embname],
                 selection="-" + category if category != "" else "",
-                variation="Nominal",
+                systematic="Nominal",
                 variable=variable,
             )
         ).Clone()
@@ -41,7 +41,7 @@ def emb_ttbar_contamination_estimation(
                     channel=channel,
                     process="-EMB",
                     selection=category,
-                    variation="Nominal",
+                    systematic="Nominal",
                     variable=variable,
                 )
             )
@@ -52,7 +52,7 @@ def emb_ttbar_contamination_estimation(
                 channel=channel,
                 process="-EMB",
                 selection="-" + category if category != "" else "",
-                variation="Nominal",
+                systematic="Nominal",
                 variable=variable,
             )
         ).Clone()
@@ -64,7 +64,7 @@ def emb_ttbar_contamination_estimation(
                     channel=channel,
                     process="-" + _process_map[proc],
                     selection=category,
-                    variation="Nominal",
+                    systematic="Nominal",
                     variable=variable,
                 )
             )
@@ -76,20 +76,20 @@ def emb_ttbar_contamination_estimation(
                     channel=channel,
                     process="-" + _process_map[proc],
                     selection="-" + category if category != "" else "",
-                    variation="Nominal",
+                    systematic="Nominal",
                     variable=variable,
                 )
             ),
             -sub_scale,
         )
         if sub_scale > 0:
-            variation_name = base_hist.GetName().replace(
+            systematic_name = base_hist.GetName().replace(
                 "Nominal", f"CMS_htt_emb_ttbar_{era_tag}Down"
             )
         else:
-            variation_name = base_hist.GetName().replace(
+            systematic_name = base_hist.GetName().replace(
                 "Nominal", f"CMS_htt_emb_ttbar_{era_tag}Up"
             )
-        base_hist.SetName(variation_name)
-        base_hist.SetTitle(variation_name)
+        base_hist.SetName(systematic_name)
+        base_hist.SetTitle(systematic_name)
     return base_hist

@@ -70,13 +70,13 @@ class ControlShapeBkgProcesses:
         fake_factor: bool,
         nlo: bool = False,
         channel: Literal["em", "mm", "ee", "mt", "et", "tt", None] = None,
-        draw_jet_fake_variation: Union[str, None] = None,
+        draw_jet_fake_systematic: Union[str, None] = None,
     ) -> None:
         self._embedding = embedding
         self._fake_factor = fake_factor
         self._nlo = nlo
         self._channel = channel
-        self._draw_jet_fake_variation = draw_jet_fake_variation
+        self._draw_jet_fake_systematic = draw_jet_fake_systematic
 
         self._pipe = [
             self.channel_modification,
@@ -117,9 +117,9 @@ class ControlShapeBkgProcesses:
                 return ["QCD", "VVT", "VVL", "W", "TTT", "TTL", "ZL", "ZTT"]
             if self._embedding:
                 return ["QCDEMB", "VVL", "W", "TTL", "ZL", "EMB"]
-            if self._draw_jet_fake_variation is not None and not self._embedding:
+            if self._draw_jet_fake_systematic is not None and not self._embedding:
                 return ["VVT", "VVL", "W", "TTT", "TTL", "ZL", "ZTT"]
-            if self._draw_jet_fake_variation is not None and self._embedding:    
+            if self._draw_jet_fake_systematic is not None and self._embedding:    
                 return ["VVL", "W", "TTL", "ZL", "EMB"]
         if self._channel in {"mm", "ee"}:
             bkg_processes = ["QCD", "VVL", "W", "TTL", "ZL"]

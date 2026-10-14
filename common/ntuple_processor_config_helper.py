@@ -71,14 +71,14 @@ def get_config_formatter(
         weight_expression: str,
         **kwargs,  # dont need more, see ntuple_processor/run/RunManager/__histo1d_from_hist for more details
     ) -> None:
-        process, channel_and_sample, variation, variable = name.split("#")
+        process, channel_and_sample, systematic, variable = name.split("#")
         channel, *sample_parts = channel_and_sample.split("-")
         sample = "-".join(sample_parts)
-        variation = variation.replace(f"_{variable}", "")
+        systematic = systematic.replace(f"_{variable}", "")
 
         sample = "data" if process == "data" else sample
 
-        config[channel][era][process][sample][variation] = NestedDefaultDict(
+        config[channel][era][process][sample][systematic] = NestedDefaultDict(
             cut=cut_expression or "(float)1.",
             weight=weight_expression or "(float)1.",
         )

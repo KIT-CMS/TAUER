@@ -13,7 +13,7 @@ def fake_factor_estimation(
     channel,
     selection,
     variable,
-    variation="Nominal",
+    systematic="Nominal",
     is_embedding=False,
     special="",
     doTauES=False,
@@ -43,7 +43,7 @@ def fake_factor_estimation(
     _string = _common_name_string(
         dataset="data",
         process="",
-        variation="anti_iso" if "scale_t" in variation else variation,
+        systematic="anti_iso" if "scale_t" in systematic else systematic,
     )
     logger.debug(f"Trying to get object {_string}")
     base_hist = rootfile.Get(_string).Clone()
@@ -51,32 +51,32 @@ def fake_factor_estimation(
         _string = _common_name_string(
             dataset=_dataset_map[proc],
             process="-" + _process_map[proc],
-            variation=variation,
+            systematic=systematic,
         )
         logger.debug(f"Trying to get object {_string}")
         base_hist.Add(rootfile.Get(_string), -1)
     proc_name = "jetFakes" if is_embedding else "jetFakesMC"
     if doTauES:
         proc_name = "jetFakes{}".format(special)
-    if variation in ["anti_iso"]:
-        ff_variation = "Nominal"
+    if systematic in ["anti_iso"]:
+        ff_systematic = "Nominal"
     else:
-        ff_variation = variation.replace("anti_iso_", "")
-    variation_name = (
+        ff_systematic = systematic.replace("anti_iso_", "")
+    systematic_name = (
         base_hist.GetName()
         .replace("data", proc_name)
         .replace(
-            variation if "scale_t" not in variation else "anti_iso",
-            ff_variation,
+            systematic if "scale_t" not in systematic else "anti_iso",
+            ff_systematic,
         )
         .replace("#" + channel, "#" + "-".join([channel, proc_name]), 1)
     )
-    base_hist.SetName(variation_name)
-    base_hist.SetTitle(variation_name)
+    base_hist.SetName(systematic_name)
+    base_hist.SetTitle(systematic_name)
     if floor_negative:
         for i in range(1, base_hist.GetNbinsX() + 1):
             if base_hist.GetBinContent(i) < 0:
                 base_hist.SetBinContent(i, 0.0)
                 base_hist.SetBinError(i, 0.0)
-    logger.debug("Finished estimation of shape %s.", variation_name)
+    logger.debug("Finished estimation of shape %s.", systematic_name)
     return base_hist
