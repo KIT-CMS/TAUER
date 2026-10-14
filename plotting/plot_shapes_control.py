@@ -20,6 +20,7 @@ from config.analysis import ACTIVE_ANALYSIS, RUN2_ERAS, RUN3_ERAS, get_center_of
 from config.logging_setup_configs import setup_logging
 from plotting.process_ordering import ControlShapeBkgProcesses
 from plotting.systematics_band import shape_systematic_uncertainty
+from shapes import naming
 
 hep.style.use(hep.style.CMS)
 
@@ -191,14 +192,8 @@ CHANNEL_LABELS = {
     "em": r"$e\mu$",
 }
 
-# (dataset, process-selection) for estimated (not raw-MC) processes written by
-# shapes/do_estimations.py -- not in _process_map/_dataset_map, which only cover raw MC.
-_QCD_SS_OS_ESTIMATION_KEYS = {
-    "QCD": ("QCDMC", "QCDMC"),
-    "QCDEMB": ("QCD", "QCD"),
-    "jetFakes": ("jetFakesMC", "jetFakesMC"),
-    "jetFakesEMB": ("jetFakes", "jetFakes"),
-}
+# plotted process -> histogram process, the embedding estimates are the same jetFakes/QCD histograms
+HISTOGRAM_PROCESSES = {"QCDEMB": "QCD", "jetFakesEMB": "jetFakes"}
 
 
 def _th1_to_numpy(hist):
@@ -209,12 +204,10 @@ def _th1_to_numpy(hist):
     return edges, y, yerr
 
 
-def _get_hist(rootfile, dataset, channel, process_selection, systematic, variable, category=""):
-    # Key: {dataset}#{channel}{-process_selection}[-category]#{systematic}#{variable}
-    name = f"{dataset}#{channel}{process_selection}{'-' + category if category else ''}#{systematic}#{variable}"
-    h = rootfile.Get(name)
+def _get_hist(rootfile, process, channel, variable, category="", systematic=None):
+    h = rootfile.Get(naming.path(variable, channel, HISTOGRAM_PROCESSES.get(process, process), category or None, systematic=systematic))
     if not h:
-        logger.debug(f"Histogram not found: {name}")
+        logger.debug(f"Histogram not found: {variable}/{channel}/{process} (category={category!r}, systematic={systematic})")
         return None
     return h.Clone()
 
@@ -367,7 +360,7 @@ except ModuleNotFoundError:
     _analysis_plot = None
 PROCESS_COLOURS.update(getattr(_analysis_plot, "SIGNAL_COLORS", {}))
 legend_label_dict.update(getattr(_analysis_plot, "SIGNAL_LABELS", {}))
-_SIGNAL_DATASETS = getattr(_analysis_plot, "CONTROL_SIGNAL_DATASETS", {})
+_SIGNALS = getattr(_analysis_plot, "CONTROL_SIGNALS", ())
 _SIGNAL_SCALES = getattr(_analysis_plot, "SIGNAL_SCALES", {})
 
 
@@ -385,47 +378,25 @@ def plot_control(
     include_systematics: bool = True,
 ):
     bkg_hists  = {}
-    proc_selectors = {}
     sig_hists  = {}
     data_hist  = None
 
     # ── Collect background histograms ────────────────────────────────────────
-    from shapes.estimations.defaults import _process_map, _dataset_map
-
     bkg_processes = process_config()
 
     for proc in bkg_processes:
-        if proc in _QCD_SS_OS_ESTIMATION_KEYS:
-            # do_estimations.py's --do-qcd estimation writes "QCDMC"/"QCD" dataset+selection
-            # labels rather than through _process_map/_dataset_map, so it needs this lookup.
-            ds, sel = _QCD_SS_OS_ESTIMATION_KEYS[proc]
-            h = _get_hist(rootfile, ds, channel, "-" + sel, "Nominal", variable, category=category)
-        elif proc in _process_map:
-            ds = _dataset_map.get(proc, proc)
-            sel = _process_map[proc]
-            h = _get_hist(rootfile, ds, channel, "-" + sel, "Nominal", variable, category=category)
-        else:
-            continue
+        h = _get_hist(rootfile, proc, channel, variable, category=category)
         if h:
             bkg_hists[proc] = h
-            # same (dataset, selection) pair, kept so shape_systematic_uncertainty()
-            # can look up each process's Up/Down variants the same way.
-            proc_selectors[proc] = (ds, sel)
 
-    # Per-production-mode (not STXS-split) signal shapes: plain datasets in the shapes
-    # file under their own name, not in _process_map.
     if show_signal:
-        for sig_proc, dataset in _SIGNAL_DATASETS.items():
-            h = _get_hist(rootfile, dataset, channel, "-" + sig_proc, "Nominal", variable, category=category)
+        for sig_proc in _SIGNALS:
+            h = _get_hist(rootfile, sig_proc, channel, variable, category=category)
             if h and h.Integral() > 0:
                 sig_hists[sig_proc] = h
 
-    # data (no process-selection suffix at all -- see _process_map["data"] == "data",
-    # which rootfile_parser_ntuple_processor_inputshapes.get() maps to category="")
     if not blinded:
-        data_h_raw = _get_hist(rootfile, "data", channel, "", "Nominal", variable, category=category)
-        if data_h_raw:
-            data_hist = data_h_raw
+        data_hist = _get_hist(rootfile, naming.DATA, channel, variable, category=category)
 
     if not bkg_hists:
         where = f"{channel}/{category}/{variable}" if category else f"{channel}/{variable}"
@@ -458,7 +429,6 @@ def plot_control(
             era=era,
             variable=variable,
             bkg_hists=bkg_hists,
-            proc_selectors=proc_selectors,
             n_bins=n_bins,
             category=category,
         )
@@ -587,7 +557,6 @@ def main(args):
         proc_config = ControlShapeBkgProcesses(
             embedding=args.embedding,
             fake_factor=args.fake_factor,
-            nlo=False,
             channel=channel,
         )
         for category in (args.categories or [""]):

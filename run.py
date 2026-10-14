@@ -326,10 +326,8 @@ def mode_shapes(cfg, extra):
     print(f"[SHAPES] Running post-processing estimations on {outfile}")
     # --do-ff needs FF friend trees; without them, fall back to --do-qcd's ss->os
     # extrapolation (shapes/estimations/qcd.py:qcd_estimation) -- both read the same
-    # `same_sign` histograms produce_shapes.py always books, so no production-side change.
+    # `_ss` histograms produce_shapes.py always books, so no production-side change.
     estimation_args = ["--do-ff"] if cfg["ff_friends_dir"] else ["--do-qcd"]
-    # Merges the "qqh"/"vh_as_qqh" STXS-split histograms back into one qqH_htt125 shape.
-    estimation_args.append("--do-qqh-procs")
     cmd = [
         "python",
         "shapes/do_estimations.py",
@@ -364,7 +362,7 @@ def mode_plot(cfg, extra):
         "--era", cfg["era"],
         "--channels", cfg["channels"],
         "--variables", variables,
-        # An ff-labeled shapes.root has no QCD/QCDMC -- without --fake-factor,
+        # An ff-labeled shapes.root has no QCD -- without --fake-factor,
         # plot_shapes_control.py's QCD-seeking default silently drops that background.
         *(["--fake-factor"] if cfg["ff_friends_dir"] else []),
         *extra,

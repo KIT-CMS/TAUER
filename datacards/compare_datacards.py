@@ -2,7 +2,7 @@
 """
 Quantitative comparator between a TAUER Combine datacard and a legacy
 SMRun2Legacy datacard produced for the same era/channel/category from the same
-synced shape input.
+shape input.
 
 Companion to plotting/compare_control_shapes.py (which does the *control-shape*
 bin-by-bin comparison). This one operates one level downstream, on the Combine
@@ -13,7 +13,7 @@ eyeball:
      legacy rate equal to the new rate?  Reported as a relative difference
        rel_diff = |rate_new - rate_legacy| / max(|rate_new|, |rate_legacy|, eps)
      Because TAUER's datacards/make_datacards.py is the *relocated*
-     SMRun2Legacy scripts/make_datacards.py fed the identical synced ROOT file,
+     SMRun2Legacy scripts/make_datacards.py fed the identical shapes ROOT file,
      the process yields are expected to agree to ~float precision; any
      non-trivial rel_diff is a real regression in the relocation and is flagged.
 

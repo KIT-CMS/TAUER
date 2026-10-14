@@ -152,8 +152,8 @@ def load_variables_from_config(channel):
     return _filtered
 
 
-# process name -> ntuple_processor dataset key
-PROCESS_DATASET_KEYS = {"data": "data", **{k: p.dataset for k, p in BACKGROUNDS.items()}, **SIGNAL_DATASETS}
+# process name -> ntuple_processor dataset keys
+PROCESS_DATASET_KEYS = {"data": ("data",), **{k: (p.dataset,) for k, p in BACKGROUNDS.items()}, **SIGNAL_DATASETS}
 
 SIGNAL_PROCESSES = set(SIGNAL_DATASETS)
 
@@ -166,7 +166,7 @@ def signal_unit_names(stxs_stage, keys):
 def add_processes(add_fn, datasets, select_fn, channel, stxs_stage="stage0"):
     # Guard on dataset-key presence
     def _add(name, selections_fn):
-        dataset = datasets.get(PROCESS_DATASET_KEYS[name])
+        dataset = datasets.get(PROCESS_DATASET_KEYS[name][0])
         if not dataset or not dataset.ntuples:
             return
         add_fn(name=name, dataset=dataset, selections=selections_fn())
@@ -183,11 +183,9 @@ def add_processes(add_fn, datasets, select_fn, channel, stxs_stage="stage0"):
     _add("vvj",  lambda: select_fn(selection.VVJ))
     _add("w",    lambda: select_fn(selection.W))
     _add("emb",  lambda: select_fn(selection.ZTT_embedded))
-    # EW qqH = VBF + hadronic-V-associated production merged, they are booked as
-    # a separate process ("vh_as_qqh") and summed back into "qqh" in do_estimations.py
     for unit, info in stxs_tools.signal_units(stxs_stage).items():
-        dataset = datasets.get(info["dataset"])
-        if dataset and dataset.ntuples:
+        dataset = shape_utils.combine_datasets([datasets.get(key) for key in info["datasets"]])
+        if dataset:
             add_fn(name=unit, dataset=dataset, selections=select_fn(analysis_selection.signal_selection(stxs_stage, unit)))
 
 
@@ -256,14 +254,12 @@ def get_control_units(channel, era, datasets, variables, apply_tauid, do_gofs=Fa
     return control_units
 
 
-def collect_config(graphs, era, channel, filename):
-    r_manager = RunManager(
-        graphs, create_histograms=False, create_config=True,
-        config_formatter=ntuple_processor_config_helper.get_config_formatter(era=era),
-    )
+def collect_config(graphs, era, channel, filename, processes):
+    r_manager = RunManager(graphs, create_histograms=False, create_config=True)
     r_manager.nthreads = 1
     for _graph in graphs:
         logger.info(f"Creating config for graph {_graph.name}")
+        r_manager.config_formatter = ntuple_processor_config_helper.get_config_formatter(era=era, graph=_graph, processes=processes)
         r_manager.node_to_root(_graph)
         ntuple_processor_config_helper.add_paths(graph=_graph, channel=channel, era=era, r_manager=r_manager)
     _path, _basename = os.path.split(filename)
@@ -307,11 +303,11 @@ def main(args):
 
     procS = args.process_selection if args.process_selection is not None else {
         "data", "ztt", "zl", "zj", "ttt", "ttl", "ttj",
-        "vvt", "vvl", "vvj", "w", "ggh", "qqh", "tth", "vh", "vh_as_qqh",
+        "vvt", "vvl", "vvj", "w", "ggh", "qqh", "tth", "vh",
     }
     # Restrict validation to the dataset keys procS actually needs -- every other key gets
     # a full xrootd validation pass in get_nominal_datasets() and is then thrown away.
-    needed_keys = {PROCESS_DATASET_KEYS[p] for p in procS if p in PROCESS_DATASET_KEYS}
+    needed_keys = {key for p in procS if p in PROCESS_DATASET_KEYS for key in PROCESS_DATASET_KEYS[p]}
     validation_files = {
         args.era: {
             channel: {k: v for k, v in files[args.era][channel].items() if k in needed_keys}
@@ -422,7 +418,7 @@ def main(args):
         _book(processes, vlist)
 
     def _book_qcd(processes, vlist):
-        # register_raw=False: only the renamed systematic copies are booked, the raw units are the "Nominal" booked above
+        # register_raw=False: only the region/shift copies are booked, the raw units are the nominal ones booked above
         shape_utils.book_histograms(
             processes=processes, systematics=vlist,
             manager=unit_manager,
@@ -491,7 +487,10 @@ def main(args):
     if args.collect_config_only:
         if len(args.channels) > 1:
             raise NotImplementedError("Config collection for multiple channels is not yet supported.")
-        collect_config(graphs=graphs, era=args.era, channel=args.channels[0], filename=args.config_output_file)
+        collect_config(
+            graphs=graphs, era=args.era, channel=args.channels[0], filename=args.config_output_file,
+            processes={unit.path.split("/")[-1] for unit in unit_manager.booked_units},
+        )
         return
 
     if args.only_create_graphs:

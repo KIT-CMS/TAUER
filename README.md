@@ -256,21 +256,25 @@ The ntuples are always stage-0: the split is a cut on the HTXS stage-1.2 bin and
 source utils/setup_cmssw.sh
 export FITDIR=/path/to/combine/workdir
 
-python3 datacards/produce_datacard.py <era> <channel> <analysis> <ntupletag> \
+python3 datacards/produce_datacard.py <era> <channel> <analysis> <shapes.root> --variable <variable> \
   --stxs-stage stage0 --ff-type fake_factor --output-dir <datacard-dir>
 python3 datacards/produce_workspace.py <era> <analysis> <cores>
 
 # Goodness-of-fit / Impacts (single-variable, single-category workflow):
-python3 datacards/produce_datacard.py <era> <channel> gof <ntupletag> --variable <variable> \
+python3 datacards/produce_datacard.py <era> <channel> gof <shapes.root> --variable <variable> \
   --stxs-stage stage0 --embedding true --jetfakes true --output-dir <datacard-dir>
 python3 datacards/produce_workspace.py <era> gof --channels <channel> --variable <variable>
-python3 datacards/run_gof.py <era> <channel> <variable> <synced_shape_file> saturated 20 <ntupletag> 0 4
+python3 datacards/run_gof.py <era> <channel> <variable> <shapes.root> saturated 20 0 4
 python3 datacards/run_impacts.py <era> <channel> <variable> 4
 ```
 
 `<analysis>` is the categorization scheme (e.g. `stxs_stage0_run3`). `--stxs-stage` is the same flag as in the shapes
 and must match them, also for GoF: the signal shifts are booked under the names they carry in the datacards. `--output-dir`
 sets where the cards are written.
+
+`<shapes.root>` is the output of `run.py SHAPES` for the era and channel, read directly by the datacards: its histograms are
+`<variable>/<channel>[_<category>][_ss|_ar]/<process>[_<systematic>]` (`shapes/naming.py`), the `<channel>_<category>` directories being the
+Combine bins and `_ss`/`_ar` the same-sign and anti-isolated inputs of the QCD and fake factor estimates. `--variable` is the discriminant; GoF uses a control-variable run, whose single bin is `<channel>`.
 
 `produce_datacard.py` enters CMSSW and runs `datacards/make_datacards.py` (the
 category/systematics/CardWriter logic); `run_gof.py`/`run_impacts.py` drive
@@ -281,16 +285,14 @@ category/systematics/CardWriter logic); `run_gof.py`/`run_impacts.py` drive
 ```bash
 source utils/setup_cmssw.sh
 python3 tau_es/run_taues_category.py --era <era> --channels mt --category <category> \
-  --input-file <taues-synced-file> --output-dir <fit-dir>
+  --input-file <taues-shapes.root> --output-dir <fit-dir> [--variable m_vis]
 ```
 
 Chains `tau_es/make_taues_datacard.py` (builds a Combine datacard with a continuous `taues`
 RooMorphing parameter) → `tau_es/run_taues_fit.py workspace` → `tau_es/run_taues_fit.py fit`
 (`combine -M MultiDimFit`) for one (era, category) — categories are `DM0`, `DM1`, `DM10_11`,
-`Inclusive`. The synced input file comes from
-`shapes/produce_shapes.py --special-analysis TauES` →
-`shapes/do_estimations.py --special-analysis TauES` →
-`shapes/convert_to_synced_shapes.py --special-analysis TauES`.
+`Inclusive`. The input is the `shapes.root` of `run.py SHAPES --special-analysis TauES`, read directly
+(`<variable>/mt_<category>/<process>[_<systematic>]`, the shift-point templates as `EMB_<shift>`).
 
 ### 8. B-tag efficiency measurement
 
@@ -363,7 +365,7 @@ python3 condor/submit_training.py --master-config <merged-config-from-adjust_con
                                                           # per-(era,channel) split parallelized
 python3 condor/submit_btag_efficiency.py --ntupletag <btag-ntupletag> --selection-friend <selection-tag> \
   --steps presel --eras <eras> --channels <channels> --dry-run   # --steps calc: one job per era
-python3 condor/submit_taues_fit.py --era <era> --input-file <taues-synced-file> \
+python3 condor/submit_taues_fit.py --era <era> --input-file <taues-shapes.root> \
   --output-dir <fit-dir> --categories <categories> --dry-run
 python3 condor/submit_ff.py --ntupletag <ntupletag> --selection-friend <selection-tag> \
   --steps presel,ff,ff-corr --eras <eras> --dry-run      # one job per era (--split-by-channel:
@@ -386,7 +388,7 @@ One flag drives both which processes get produced and how many condor jobs that 
 
 ```bash
 python3 condor/submit_shapes.py --ntupletag <ntupletag> --eras <era> --channels <channel> \
-  --selection-friend <selection-tag> --process-selection "data,ztt+zl+zj,ttt+ttl+ttj,vvt+vvl+vvj,w,ggh+qqh+tth+vh+vh_as_qqh" \
+  --selection-friend <selection-tag> --process-selection "data,ztt+zl+zj,ttt+ttl+ttj,vvt+vvl+vvj,w,ggh+qqh+tth+vh" \
   --dry-run
 ```
 
@@ -515,7 +517,7 @@ TAUER/
 ├── shapes/                         # Shape production
 │   ├── produce_shapes.py           #   reads raw CROWN ntuples directly and attaches CROWN's shapes_preparation friends
 │   ├── do_estimations.py           #   fake-factor/QCD/embedding estimations
-│   ├── convert_to_synced_shapes.py #   Combine-ready synced shape file
+│   ├── naming.py                   #   histogram paths <variable>/<bin>/<process>[_<systematic>] (Combine layout)
 │   ├── utils.py                    #   dataset/file helpers, tauES dataset booking
 │   ├── selection/                  #   executable, era/channel-conditional selection logic
 │   │   ├── channel_selection.py    #     CROWN SR_mask / SR_mask_ss selection

@@ -6,7 +6,7 @@ conversion, Asimov replacement, NN-output rebinning).
 import ctypes
 import logging
 import math
-from typing import Literal, Optional, Dict, List, Union
+from typing import Literal, Optional, Dict, List
 
 import ROOT
 
@@ -87,48 +87,36 @@ def filter_zero_yield_systs(cb: ch.CombineHarvester) -> None:
     cb.FilterSysts(filter_syst)
 
 
-def load_systematic_shapes(cb: ch.CombineHarvester, root_file: Union[str, Dict[str, str]], channel: str) -> None:
-    # root_file is either a single path shared by all bins of the channel, or a
-    # {bin_name: path} map when categories are split one-category-per-file
-    # (stxs_stage0_run3).
-    per_bin_files = root_file if isinstance(root_file, dict) else {None: root_file}
+def load_systematic_shapes(cb: ch.CombineHarvester, root_file: str, channel: str, variable: str) -> None:
+    logger.info(f"Loading shape systematics for {channel} from {root_file}")
+    tfile = ROOT.TFile.Open(root_file, "READ")
 
-    for bin_name, path in per_bin_files.items():
-        logger.info(f"Loading shape systematics for {channel}" + (f" bin {bin_name}" if bin_name else "") + f" from {path}")
-        tfile = ROOT.TFile.Open(path, "READ")
+    def has_shapes(s):
+        mass, process = s.mass(), s.process()
+        process = f"{process}{mass}" if mass and mass != "*" else process
+        base = f"{variable}/{s.bin()}/{process}_{s.name()}"
+        return bool(tfile.Get(base + "Up")) and bool(tfile.Get(base + "Down"))
 
-        def has_shapes(s):
-            mass, process = s.mass(), s.process()
-            process = f"{process}{mass}" if mass and mass != "*" else process
-            base = f"{s.bin()}/{process}_{s.name()}"
-            return bool(tfile.Get(base + "Up")) and bool(tfile.Get(base + "Down"))
-
-        def filter_missing(s):
-            if s.channel() != channel:
-                return False
-            if bin_name is not None and s.bin() != bin_name:
-                return False
-            if s.type() not in ("shape",):
-                return False
-            if not has_shapes(s):
-                logger.warning(f"Removing systematic {s.name()} on {s.process()} with missing shape")
-                return True
+    def filter_missing(s):
+        if s.channel() != channel or s.type() != "shape":
             return False
+        if not has_shapes(s):
+            logger.warning(f"Removing systematic {s.name()} on {s.process()} with missing shape")
+            return True
+        return False
 
-        cb.FilterSysts(filter_missing)
-        tfile.Close()
+    cb.FilterSysts(filter_missing)
+    tfile.Close()
 
-        scope = cb.cp().channel([channel])
-        if bin_name is not None:
-            scope = scope.cp().bin([bin_name])
-        scope.cp().backgrounds().ExtractShapes(path, "$BIN/$PROCESS", "$BIN/$PROCESS_$SYSTEMATIC")
-        pattern = signal_shape_pattern(cb)
-        scope.cp().signals().ExtractShapes(path, pattern, f"{pattern}_$SYSTEMATIC")
+    scope = cb.cp().channel([channel])
+    scope.cp().backgrounds().ExtractShapes(root_file, f"{variable}/$BIN/$PROCESS", f"{variable}/$BIN/$PROCESS_$SYSTEMATIC")
+    pattern = signal_shape_pattern(cb, variable)
+    scope.cp().signals().ExtractShapes(root_file, pattern, f"{pattern}_$SYSTEMATIC")
 
 
-def signal_shape_pattern(cb) -> str:
+def signal_shape_pattern(cb, variable: str) -> str:
     """Signal shape name: `$PROCESS$MASS` for mass-labelled signals, plain `$PROCESS` for the mass-less STXS stage-1.2 models."""
-    return "$BIN/$PROCESS" if set(cb.mass_set()) <= {"*", ""} else "$BIN/$PROCESS$MASS"
+    return f"{variable}/$BIN/$PROCESS" if set(cb.mass_set()) <= {"*", ""} else f"{variable}/$BIN/$PROCESS$MASS"
 
 
 def convert_shapes_to_lnN(cb: ch.CombineHarvester) -> None:

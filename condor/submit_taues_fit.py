@@ -17,7 +17,8 @@ def parse_args():
     p.add_argument("--era", default="2018", help="Run2 era with tauES/embedding support (2018 today).")
     p.add_argument("--channels", dest="channel", default="mt")
     p.add_argument("--categories", type=csv, default=DEFAULT_CATEGORIES)
-    p.add_argument("--input-file", required=True, help="Synced tauES shape ROOT file (see shapes/convert_to_synced_shapes.py --special-analysis TauES).")
+    p.add_argument("--input-file", required=True, help="TauES shapes.root of run.py SHAPES --special-analysis TauES.")
+    p.add_argument("--variable", default=None, help="Discriminant of the shapes file (default: tau_es.taues_categories.discriminator_variable).")
     p.add_argument("--output-dir", required=True, help="Base output directory; a per-category subdirectory is appended.")
     p.add_argument("--real-data", action="store_true")
     p.add_argument("--bbb", action="store_true")
@@ -42,6 +43,8 @@ def build_jobs(args) -> list:
             f"--output-dir {args.output_dir}",
             f"--points {args.points}",
         ]
+        if args.variable:
+            job_args.append(f"--variable {args.variable}")
         if args.real_data:
             job_args.append("--real-data")
         if args.bbb:

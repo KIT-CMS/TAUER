@@ -27,6 +27,7 @@ def parse_args():
     p.add_argument("--channels", dest="channel", default="mt")
     p.add_argument("--category", required=True, help="One of DM0, DM1, DM10_11, Inclusive.")
     p.add_argument("--input-file", required=True)
+    p.add_argument("--variable", default="m_vis")
     p.add_argument("--output-dir", required=True)
     p.add_argument("--real-data", action="store_true")
     p.add_argument("--bbb", action="store_true")
@@ -51,7 +52,7 @@ def main():
 
     datacard_args = argparse.Namespace(
         era=args.era, channel=args.channel, categories=[args.category],
-        input_file=args.input_file, output_folder=category_folder,
+        input_file=args.input_file, variable=args.variable, output_dir=category_folder,
         real_data=args.real_data, shift_min=args.shift_min, shift_max=args.shift_max,
         shift_step=args.shift_step, taues_min=args.taues_min, taues_max=args.taues_max,
         taues_init=args.taues_init, bbb=args.bbb, log_level=args.log_level,

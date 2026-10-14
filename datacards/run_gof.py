@@ -3,14 +3,13 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.cmsenv import REPO_ROOT, get_fitdir, run_in_cmsenv
-from datacards import DEFAULT_NTUPLE_TAG, MASS, gof_card_dir
+from datacards import MASS, gof_card_dir
 
 
 def parse_args(argv=None):
@@ -21,10 +20,9 @@ def parse_args(argv=None):
     parser.add_argument("era")
     parser.add_argument("channel")
     parser.add_argument("variable")
-    parser.add_argument("synced_file", type=Path)
+    parser.add_argument("shapes", type=Path, help="shapes.root of run.py SHAPES for this era and channel, holding <variable>/<channel>/<process>")
     parser.add_argument("algo", nargs="?", default="saturated", choices=["saturated", "KS", "AD"])
     parser.add_argument("ntoys", nargs="?", type=int, default=300)
-    parser.add_argument("ntuple_tag", nargs="?", default=DEFAULT_NTUPLE_TAG)
     parser.add_argument("use_asimov", nargs="?", default="0", choices=["0", "1"])
     parser.add_argument("parallel", nargs="?", type=int, default=10)
     return parser.parse_args(argv)
@@ -35,16 +33,11 @@ def main(argv=None) -> int:
     era, channel, variable = args.era, args.channel, args.variable
     job_id = f"{era}_{channel}_{variable}"
 
-    if not args.synced_file.is_file():
-        print(f"ERROR: synced shape file not found: {args.synced_file}", file=sys.stderr)
+    if not args.shapes.is_file():
+        print(f"ERROR: shapes file not found: {args.shapes}", file=sys.stderr)
         return 1
 
     fitdir = Path(get_fitdir())
-    shapes_dir = fitdir / "output" / "shapes"
-    shapes_dir.mkdir(parents=True, exist_ok=True)
-    dest = shapes_dir / f"{era}-{channel}-{args.ntuple_tag}-{variable}.root"
-    print(f"[run_gof] placing synced file: {args.synced_file} -> {dest}")
-    shutil.copyfile(args.synced_file, dest)
 
     # --- Build datacard + workspace ---
     datacard_cmd = [
@@ -53,7 +46,7 @@ def main(argv=None) -> int:
         era,
         channel,
         "gof",
-        args.ntuple_tag,
+        str(args.shapes),
         f"--variable={variable}",
     ]
     if args.use_asimov == "1":

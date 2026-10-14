@@ -6,26 +6,20 @@ from typing import List, Union, Literal
 IMPORTANCE_TO_PROCESS = {
     0.00: "EMB",
     0.10: "ZTT",
-    0.11: "ZTT_NLO",
     0.20: "TTT",
     0.30: "VVT",
     1.00: "jetFakesEMB",
     1.10: "jetFakes",
     1.20: "JetFakesW",
     1.21: "W",
-    1.22: "W_NLO",
     1.30: "JetFakesQCD",
     1.31: "QCD",
-    1.32: "QCD_NLO",
     1.33: "QCDEMB",
-    1.34: "QCDEMB_NLO",
     1.40: "JetFakesTT",
     1.41: "TTJ",
     2.00: "VVJ",
     3.00: "ZJ",
-    3.10: "ZJ_NLO",
     4.00: "ZL",
-    4.10: "ZL_NLO",
     5.00: "TTL",
     6.00: "VVL",
 }
@@ -55,32 +49,20 @@ class ControlShapeBkgProcesses:
     CLASSIC_FF = ['VVL', 'TTL', 'ZL', 'jetFakes', 'VVT', 'TTT', 'ZTT']
     EMB_CLASSIC = ['VVL', 'TTL', 'ZL', 'ZJ', 'VVJ', 'TTJ', 'W', 'EMB']
 
-    LO_NLO_PROCESSES = {
-        "ZTT": "ZTT_NLO",
-        "W": "W",
-        "QCD": "QCD_NLO",
-        "ZL": "ZL_NLO",
-        "QCDEMB": "QCDEMB_NLO",
-        "ZJ": "ZJ_NLO",
-    }
-
     def __init__(
         self,
         embedding: bool,
         fake_factor: bool,
-        nlo: bool = False,
         channel: Literal["em", "mm", "ee", "mt", "et", "tt", None] = None,
         draw_jet_fake_systematic: Union[str, None] = None,
     ) -> None:
         self._embedding = embedding
         self._fake_factor = fake_factor
-        self._nlo = nlo
         self._channel = channel
         self._draw_jet_fake_systematic = draw_jet_fake_systematic
 
         self._pipe = [
             self.channel_modification,
-            self.lo_to_nlo_replacement,
         ]
 
         self.ordering = deepcopy(IMPORTANCE_TO_PROCESS)
@@ -100,11 +82,6 @@ class ControlShapeBkgProcesses:
     @property
     def _is_classic_ff(self) -> bool:
         return not self._embedding and self._fake_factor
-
-    def lo_to_nlo_replacement(self, bkg_process: str, /) -> List[str]:
-        if not self._nlo:
-            return bkg_process
-        return [self.LO_NLO_PROCESSES.get(it, it) for it in bkg_process]
 
     def channel_modification(self, bkg_processes: List[str], /) -> List[str]:
         # TODO: Find out if this is needed! (currently port from plot_shapes-control.py)

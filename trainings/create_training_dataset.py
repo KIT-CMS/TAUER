@@ -261,7 +261,7 @@ def create_process_folds(
             .pipe(add.additional_nominal_cuts)
             .pipe(add.weight_like_uncertainties)
             .pipe(add.shift_like_uncertainties)
-            .pipe(exemplary_remove_cut_regions, regions=("same_sign", "same_sign_anti_iso"))
+            .pipe(exemplary_remove_cut_regions, regions=("ss",))
         )
 
         if subprocess == "jetFakes":

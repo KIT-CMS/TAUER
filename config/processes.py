@@ -24,8 +24,8 @@ BACKGROUNDS = {
     "emb": Process("EMB", "EMB"),
 }
 
-# stage0 signal keys -> dataset key (the STXS units of analyses/<analysis>/common/stxs_tools.py belong to these)
-SIGNAL_DATASETS = {"ggh": "ggH", "qqh": "qqH", "tth": "ttH", "vh": "VH", "vh_as_qqh": "VH"}
+# stage0 signal keys -> dataset keys (the STXS units of analyses/<analysis>/common/stxs_tools.py belong to these)
+SIGNAL_DATASETS = {"ggh": ("ggH",), "qqh": ("qqH", "VH"), "tth": ("ttH",), "vh": ("VH",)}
 
 # process groups of the simulated backgrounds, by sample and by origin of the hadronic tau (T/L/J)
 GROUPS = {

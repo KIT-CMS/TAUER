@@ -4,6 +4,7 @@ import sys
 from typing import List, Tuple, Union
 
 
+import shapes.naming as naming
 from common.helper_collection import NestedDefaultDict
 from ntuple_processor import RunManager
 
@@ -38,6 +39,10 @@ def generate_filepath_dict(
             raise ValueError("Cannot find unique keys for paths")
 
 
+def dataset_key(graph: object) -> str:
+    return re.sub(r"\W", "_", graph.name)
+
+
 def add_paths(
     graph: object,
     channel: str,
@@ -45,7 +50,7 @@ def add_paths(
     r_manager: RunManager,
 ):
     ntuple_dict, num_hash_bytes = generate_filepath_dict([it.path for it in graph.unit_block.ntuples])
-    r_manager.config[channel][era][graph.name]["paths"]["ntuple"] = ntuple_dict
+    r_manager.config[channel][era][dataset_key(graph)]["paths"]["ntuple"] = ntuple_dict
 
     for idx in range(len(graph.unit_block.ntuples[0].friends)):
         friend_files = [it.friends[idx].path for it in graph.unit_block.ntuples]
@@ -57,11 +62,13 @@ def add_paths(
         a, b = ntuple_dict.keys(), friend_dict.keys()
         assert not a - b and not b - a, "Hash collision detected. This should not have happen."
 
-        r_manager.config[channel][era][graph.name]["paths"][friend_name] = friend_dict
+        r_manager.config[channel][era][dataset_key(graph)]["paths"][friend_name] = friend_dict
 
 
 def get_config_formatter(
     era: str,
+    graph: object,
+    processes: set,
     **kwargs,
 ):
     def _config_formatter(
@@ -71,14 +78,15 @@ def get_config_formatter(
         weight_expression: str,
         **kwargs,  # dont need more, see ntuple_processor/run/RunManager/__histo1d_from_hist for more details
     ) -> None:
-        process, channel_and_sample, systematic, variable = name.split("#")
-        channel, *sample_parts = channel_and_sample.split("-")
-        sample = "-".join(sample_parts)
-        systematic = systematic.replace(f"_{variable}", "")
+        _, bin_, histogram = name.split("/")
+        channel = bin_.split("_")[0]
+        category, region = naming.split_bin(bin_, channel)
+        assert (split := naming.split_histogram(histogram, processes)), f"Unknown process in {name}"
+        process, shift = split
 
-        sample = "data" if process == "data" else sample
-
-        config[channel][era][process][sample][systematic] = NestedDefaultDict(
+        config[channel][era][dataset_key(graph)][f"{process}_{category}" if category else process][
+            "_".join(part for part in (region, shift) if part) or "Nominal"
+        ] = NestedDefaultDict(
             cut=cut_expression or "(float)1.",
             weight=weight_expression or "(float)1.",
         )

@@ -34,7 +34,6 @@ def shape_systematic_uncertainty(
     era: str,
     variable: str,
     bkg_hists: Dict[str, "ROOT.TH1"],
-    proc_selectors: Dict[str, Tuple[str, str]],
     n_bins: int,
     category: str = "",
     get_hist: Optional[Callable] = None,
@@ -54,11 +53,10 @@ def shape_systematic_uncertainty(
         delta = np.zeros(n_bins)
         found_any = False
         for proc in procs:
-            if proc not in bkg_hists or proc not in proc_selectors:
+            if proc not in bkg_hists:
                 continue
-            dataset, selection = proc_selectors[proc]
-            h_up = get_hist(rootfile, dataset, channel, "-" + selection, f"{name}Up", variable, category=category)
-            h_down = get_hist(rootfile, dataset, channel, "-" + selection, f"{name}Down", variable, category=category)
+            h_up = get_hist(rootfile, proc, channel, variable, category=category, systematic=f"{name}Up")
+            h_down = get_hist(rootfile, proc, channel, variable, category=category, systematic=f"{name}Down")
             if h_up is None or h_down is None:
                 continue
             found_any = True

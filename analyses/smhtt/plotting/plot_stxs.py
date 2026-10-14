@@ -32,12 +32,7 @@ SIGNAL_LABELS = {
     "VH_htt125": "VH (125)",
     "ttH_htt125": "ttH (125)",
 }
-CONTROL_SIGNAL_DATASETS = {
-    "ggH_htt125": "ggH",
-    "qqH_htt125": "qqH",
-    "VH_htt125": "VH",
-    "ttH_htt125": "ttH",
-}
+CONTROL_SIGNALS = tuple(SIGNAL_COLORS)
 SIGNAL_SCALES = {
     "ggH_htt125": 10,
     "qqH_htt125": 100,
@@ -63,13 +58,6 @@ plt.rcParams.update({
 })
 
 logger = setup_logging(logger=logging.getLogger(__name__))
-
-SIGNAL_DATASETS = {
-    "ggH":  "ggH_htt125",
-    "qqH":  "qqH_htt125",
-    "ttH":  "ttH_htt125",
-    "VH":   "VH_htt125",
-}
 
 HTXS_VARIABLES = [
     "HTXS_stage1_2_fine_cat_pTjet30GeV",
@@ -122,8 +110,8 @@ def inclusive_lumi_text(eras: list, variant: str) -> str:
 
 def collect_signal_hists(rootfile, channel, variable, scale=1.0):
     hists = {}
-    for dataset, sig_proc in SIGNAL_DATASETS.items():
-        h = _get_hist(rootfile, dataset, channel, "-" + sig_proc, "Nominal", variable)
+    for sig_proc in CONTROL_SIGNALS:
+        h = _get_hist(rootfile, sig_proc, channel, variable)
         if h and h.Integral() > 0:
             h = h.Clone()
             h.SetDirectory(0)

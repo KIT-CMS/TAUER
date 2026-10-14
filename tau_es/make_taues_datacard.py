@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 Build a Combine datacard for the tauES measurement (continuous ``taues`` RooMorphing fit),
-from a synced tauES shape file (shapes/convert_to_synced_shapes.py --special-analysis TauES output),
+directly from the tauES shapes.root of run.py SHAPES (--special-analysis TauES, shapes/naming.py layout
+``<variable>/mt_<category>/<process>[_<systematic>]``, shift-point templates as ``EMB_<shift>``),
 via CombineHarvester's Python bindings.
 
 - ``taues`` RooRealVar range defaults to -2.5..1.6 (overridable via --taues-range).
@@ -30,7 +31,7 @@ from datacards.tools import (
     replace_with_asimov,
 )
 from tau_es.energy_scales import shift_values, procname_to_shift_string, shift_to_procname
-from tau_es.taues_categories import categories as taues_categories
+from tau_es.taues_categories import categories as taues_categories, discriminator_variable
 
 BACKGROUND_PROCESSES = ["ZL", "TTL", "VVL", "jetFakes"]
 SIGNAL_PROCESSES = ["EMB"]
@@ -46,11 +47,11 @@ def csv(value):
     return [v.strip() for v in value.split(",") if v.strip()]
 
 
-def _load_taues_systematic_shapes(cb, ch, ROOT, root_file, channel, logger):
+def _load_taues_systematic_shapes(cb, ch, ROOT, root_file, channel, variable, logger):
     """Local counterpart of datacards.tools.load_systematic_shapes,
     needed because that function hardcodes the main analysis's no-underscore
     Higgs mass-token convention ("$PROCESS$MASS", e.g. "ggH_htt125"), while
-    the tauES measurement's synced shape file names signal templates
+    the tauES measurement's shapes file names signal templates
     "EMB_<shift>" with an underscore before the shift/mass token (matching
     the reference C++'s own "$BIN/$PROCESS_$MASS" ExtractShapes rule -- see
     make_taues_datacard's module docstring). Same filter-then-extract
@@ -61,7 +62,7 @@ def _load_taues_systematic_shapes(cb, ch, ROOT, root_file, channel, logger):
     def has_shapes(s):
         mass, process = s.mass(), s.process()
         process = f"{process}_{mass}" if mass and mass != "*" else process
-        base = f"{s.bin()}/{process}_{s.name()}"
+        base = f"{variable}/{s.bin()}/{process}_{s.name()}"
         return bool(tfile.Get(base + "Up")) and bool(tfile.Get(base + "Down"))
 
     def filter_missing(s):
@@ -76,8 +77,8 @@ def _load_taues_systematic_shapes(cb, ch, ROOT, root_file, channel, logger):
     tfile.Close()
 
     scope = cb.cp().channel([channel])
-    scope.cp().backgrounds().ExtractShapes(root_file, "$BIN/$PROCESS", "$BIN/$PROCESS_$SYSTEMATIC")
-    scope.cp().signals().ExtractShapes(root_file, "$BIN/$PROCESS_$MASS", "$BIN/$PROCESS_$MASS_$SYSTEMATIC")
+    scope.cp().backgrounds().ExtractShapes(root_file, f"{variable}/$BIN/$PROCESS", f"{variable}/$BIN/$PROCESS_$SYSTEMATIC")
+    scope.cp().signals().ExtractShapes(root_file, f"{variable}/$BIN/$PROCESS_$MASS", f"{variable}/$BIN/$PROCESS_$MASS_$SYSTEMATIC")
 
 
 def parse_args():
@@ -89,9 +90,9 @@ def parse_args():
                          "(DM0, DM1, DM10_11, Inclusive). Default matches the reference C++'s "
                          "FIT-mode default (Inclusive only).")
     p.add_argument("--input-file", required=True,
-                    help="Synced tauES shape ROOT file, e.g. "
-                         "shapes/convert_to_synced_shapes.py --special-analysis TauES output "
-                         "(htt_mt.inputs-sm-Run<era>-ML.root or equivalent).")
+                    help="TauES shapes.root of run.py SHAPES --special-analysis TauES, read directly "
+                         "(<variable>/mt_<category>/<process>[_<systematic>], EMB shift points as EMB_<shift>).")
+    p.add_argument("--variable", default=discriminator_variable, help="Discriminant: the variable directory of the shapes file.")
     p.add_argument("--output-dir", default="output_taues_cards")
     p.add_argument("--real-data", action="store_true", help="Use data_obs instead of an Asimov dataset.")
     p.add_argument("--shift-min", type=float, default=None, help="Override tau_es.energy_scales.SHIFT_MIN for the morphing template grid.")
@@ -151,9 +152,9 @@ def build_datacard(args, logger):
     # datacards/make_datacards.py's ExtractShapes/AddSystematics/load_systematic_shapes.
     logger.info(f"Extracting nominal shapes from {args.input_file}")
     cb.cp().channel([args.channel]).backgrounds().ExtractShapes(
-        args.input_file, "$BIN/$PROCESS", "$BIN/$PROCESS_$SYSTEMATIC")
+        args.input_file, f"{args.variable}/$BIN/$PROCESS", f"{args.variable}/$BIN/$PROCESS_$SYSTEMATIC")
     cb.cp().channel([args.channel]).process(SIGNAL_PROCESSES).ExtractShapes(
-        args.input_file, "$BIN/$PROCESS_$MASS", "$BIN/$PROCESS_$MASS_$SYSTEMATIC")
+        args.input_file, f"{args.variable}/$BIN/$PROCESS_$MASS", f"{args.variable}/$BIN/$PROCESS_$MASS_$SYSTEMATIC")
 
     # --- Systematics (ported 1:1 from MorphingSMRun2Legacy_tauES.cpp) ---
     lumi_unc = 1.023 if args.era == "2017" else 1.025
@@ -185,7 +186,7 @@ def build_datacard(args, logger):
     filter_zero_yield_processes(cb)
 
     logger.info("Loading shape systematics (missing ones dropped with a warning)...")
-    _load_taues_systematic_shapes(cb, ch, ROOT, args.input_file, args.channel, logger)
+    _load_taues_systematic_shapes(cb, ch, ROOT, args.input_file, args.channel, args.variable, logger)
     filter_zero_yield_systs(cb)
 
     ch.SetStandardBinNames(cb, "$ANALYSIS_$CHANNEL_$BINID_$ERA")

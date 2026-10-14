@@ -5,10 +5,9 @@ channel/era/variable (e.g. a new production against a reference/legacy one).
 
 Each side is a single ROOT file containing histograms named
 
-    {dataset}#{channel}{process_suffix}#{selection}#{variable}
+    <variable>/<channel>[_<category>][_ss|_ar]/<process>[_<systematic>]
 
-(see shapes/estimations/defaults.py:_name_string; also how
-plotting/plot_shapes_control.py looks histograms up).
+(see shapes/naming.py; also how plotting/plot_shapes_control.py looks histograms up).
 
 Agreement criterion: per-bin difference relative to the combined statistical
 uncertainty of both histograms,
@@ -40,6 +39,8 @@ from dataclasses import dataclass
 import ROOT
 
 from config.logging_setup_configs import setup_logging
+from config.processes import BACKGROUNDS
+from shapes import naming
 
 logger = setup_logging(logger=logging.getLogger(__name__))
 
@@ -57,9 +58,9 @@ def parse_arguments():
     )
     parser.add_argument(
         "--processes", default=None, type=str,
-        help="Comma-separated process key infixes (e.g. ZTT,TTL,data) to restrict the comparison to. Default: every process present in --legacy-file for this channel/selection.",
+        help="Comma-separated process names (e.g. ZTT,TTL,data_obs) to restrict the comparison to. Default: every process present in --legacy-file for this channel/selection.",
     )
-    parser.add_argument("--selection", default="Nominal", type=str, help="Selection/systematic string, e.g. Nominal or same_sign.")
+    parser.add_argument("--selection", default="Nominal", type=str, help="Nominal, a region (same_sign, anti_iso) or a systematic, e.g. CMS_scale_jUp (anti_iso_<syst> for the region).")
     parser.add_argument("--max-n-sigma", default=3.0, type=float, help="Per-bin agreement tolerance in combined statistical sigma.")
     parser.add_argument(
         "--max-rel-diff", default=None, type=float,
@@ -86,26 +87,22 @@ class HistComparison:
 
 def _list_keys(rootfile, channel, selection, variables=None, processes=None):
     """
-    Enumerate histogram keys of the form {dataset}#{channel}{proc_suffix}#{selection}#{variable}
-    matching the given channel/selection (and optionally variables/processes).
+    Enumerate histogram paths <variable>/<bin>/<histogram> of the given channel and selection
+    (and optionally variables/processes).
     """
+    region, shift = (None, None) if selection == "Nominal" else naming.split_region(selection)
+    known = [p.datacard for p in BACKGROUNDS.values()] + [naming.DATA, "jetFakes", "QCD", "ggH_htt125", "qqH_htt125", "VH_htt125", "ttH_htt125"]
     matched = {}
-    for key in rootfile.GetListOfKeys():
-        name = key.GetName()
-        parts = name.split("#")
-        if len(parts) != 4:
+    for variable, bin_, name in naming.iter_histograms(rootfile):
+        split = naming.split_histogram(name, known)
+        if not split or split[1] != shift or not bin_.startswith(channel):
             continue
-        dataset, sel_string, systematic, variable = parts
-        if systematic != selection:
+        category, bin_region = naming.split_bin(bin_, channel)
+        if bin_region != region or (variables is not None and variable not in variables):
             continue
-        if not sel_string.startswith(channel):
+        if processes is not None and split[0] not in processes:
             continue
-        proc_suffix = sel_string[len(channel):].lstrip("-")
-        if variables is not None and variable not in variables:
-            continue
-        if processes is not None and proc_suffix not in processes and dataset not in processes:
-            continue
-        matched[name] = (dataset, proc_suffix, variable)
+        matched[f"{variable}/{bin_}/{name}"] = (split[0], category, variable)
     return matched
 
 

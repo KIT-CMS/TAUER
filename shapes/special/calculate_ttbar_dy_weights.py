@@ -6,7 +6,7 @@ nbtag>=1, crossed with pzetamissvis > -25 ("DY-like") vs <= -25 ("TT/VV-like").
 
 Read-only w.r.t. ntuples: only opens already-produced shapes.root files (HTCondor-submitted
 via condor/submit_shapes.py --special-analysis TTbarDYWeight, then
-condor/submit_estimations.py --do-qcd for the QCDMC histograms this script also reads).
+condor/submit_estimations.py --do-qcd for the QCD histograms this script also reads).
 
 Per-region model (four regions: nbtag0_pzetahi, nbtag0_pzetalo, nbtagge1_pzetahi,
 nbtagge1_pzetalo):
@@ -44,7 +44,7 @@ import ROOT
 from common.sample_paths import build_shape_output_paths
 from config.logging_setup_configs import setup_logging
 from shapes.special.ttbar_dy_weight_categories import categories as _categories
-from shapes.estimations.defaults import _name_string
+from shapes import naming
 
 logger = setup_logging(logger=logging.getLogger(__name__))
 
@@ -59,34 +59,24 @@ DY_ROWS = [r for r in REGIONS if r.startswith("nbtag0")]  # stage 2: k_DY (k_TT 
 # nbtagge1_pzetahi is the most DY-contaminated "TT row").
 CLOSURE_REGIONS = ["nbtag0_pzetalo", "nbtagge1_pzetahi"]
 
-# (dataset, process) pairs to sum for each physics group, in the same
-# {dataset}/{process} vocabulary as shapes/estimations/defaults.py's
-# _dataset_map/_process_map (i.e. what shapes/produce_shapes.py's
-# add_processes() actually books under).
-_TT_PARTS = [("TT", "-TTT"), ("TT", "-TTL")]  # TTJ excluded, same as ttbar_em_weight
-_DY_PARTS = [("DY", "-ZTT"), ("DY", "-ZL"), ("DY", "-ZJ")]
-_W_PARTS = [("W", "-W")]
-_VV_PARTS = [("VV", "-VVT"), ("VV", "-VVL"), ("VV", "-VVJ")]
-_QCD_PARTS = [("QCDMC", "-QCDMC")]  # written by shapes/do_estimations.py --do-qcd
-_DATA = ("data", "")
+# Combine process names to sum for each physics group
+_TT_PARTS = ["TTT", "TTL"]  # TTJ excluded, same as ttbar_em_weight
+_DY_PARTS = ["ZTT", "ZL", "ZJ"]
+_W_PARTS = ["W"]
+_VV_PARTS = ["VVT", "VVL", "VVJ"]
+_QCD_PARTS = ["QCD"]  # written by shapes/do_estimations.py --do-qcd
+_DATA = naming.DATA
 
 
-def _get_hist(rootfile, dataset, process, category, variable=VARIABLE):
-    name = _name_string.format(
-        dataset=dataset, channel=CHANNEL, process=process,
-        selection="-" + category, systematic="Nominal", variable=variable,
-    )
-    hist = rootfile.Get(name)
-    if not hist:
-        raise KeyError(f"Missing histogram {name!r} in {rootfile.GetName()}")
-    return hist
+def _get_hist(rootfile, process, category, variable=VARIABLE):
+    return naming.get(rootfile, variable, CHANNEL, process, category=category)
 
 
 def _sum_yield(rootfile, parts, category):
-    """Sum Integral()+error over a list of (dataset, process) histograms."""
+    """Sum Integral()+error over a list of process histograms."""
     total, total_err2 = 0.0, 0.0
-    for dataset, process in parts:
-        hist = _get_hist(rootfile, dataset, process, category)
+    for process in parts:
+        hist = _get_hist(rootfile, process, category)
         err = np.array([0.0])
         val = hist.IntegralAndError(1, hist.GetNbinsX(), err)
         total += val
@@ -98,7 +88,7 @@ def collect_region_yields(rootfile):
     """Returns {region: {"data": (v, e), "TT": (v, e), "DY": (v, e), "fixed": (v, e)}}."""
     out = {}
     for region in REGIONS:
-        data = _get_hist(rootfile, *_DATA, region)
+        data = _get_hist(rootfile, _DATA, region)
         data_err = np.array([0.0])
         data_val = data.IntegralAndError(1, data.GetNbinsX(), data_err)
         tt = _sum_yield(rootfile, _TT_PARTS, region)
@@ -227,8 +217,8 @@ def plot_regions(rootfile, era, output_dir, log_y=False):
         edges, total_err2 = None, None
         for label, parts in _PLOT_GROUPS:
             y_sum, err2_sum = None, None
-            for dataset, process in parts:
-                e, y, yerr = _th1_to_numpy(_get_hist(rootfile, dataset, process, region))
+            for process in parts:
+                e, y, yerr = _th1_to_numpy(_get_hist(rootfile, process, region))
                 edges = e
                 y_sum = y if y_sum is None else y_sum + y
                 err2_sum = yerr**2 if err2_sum is None else err2_sum + yerr**2
@@ -237,7 +227,7 @@ def plot_regions(rootfile, era, output_dir, log_y=False):
             stack_colors.append(PROCESS_COLOURS.get(label, "#AAAAAA"))
             total_err2 = err2_sum if total_err2 is None else total_err2 + err2_sum
 
-        _, y_data, yerr_data = _th1_to_numpy(_get_hist(rootfile, *_DATA, region))
+        _, y_data, yerr_data = _th1_to_numpy(_get_hist(rootfile, _DATA, region))
 
         draw_stack_plot(
             edges=edges,

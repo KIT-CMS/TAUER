@@ -49,7 +49,7 @@ parser.add_argument("--categories", type=str, default="stxs_stage0_run3",
                     help="Categorization scheme: stxs_stage0_run3 (DNN, default), "
                          "stxs_stage0_run2, stxs_stage1p2_run2, stxs_stage1p2_run3, "
                          "stxs_stage1p2_run2_bkg_only, gof")
-parser.add_argument("--gof-category-name", type=str, default="gof")
+parser.add_argument("--gof-category-name", type=str, default=None, help="Bin name of the gof categorization (default: the channel)")
 parser.add_argument("--stxs-stage", type=str, default="stage0", choices=["stage0", "stage1p2"],
                     help="Signal split: per production mode or per recommended <PROCESS>_<STXS_BIN> (must match produce_shapes --stxs-stage)")
 
@@ -73,12 +73,10 @@ parser.add_argument("--rebinning-using-combine-mode", type=int, default=1)
 
 parser.add_argument("--custom-binning-file", type=str, default=None, help="Path to JSON file containing custom binning definitions")
 
-parser.add_argument("--input-dir", type=str, default=".",
-                    help="Directory containing the synced shape ROOT files")
-parser.add_argument("--ntupletag", type=str, default=None,
-                    help="Ntuple tag used in the shape filename: {era}-{channel}-{ntuple_tag}-{tag}.root")
-parser.add_argument("--tag", type=str, default=None,
-                    help="Shape tag used in the shape filename: {era}-{channel}-{ntuple_tag}-{tag}.root")
+parser.add_argument("--shapes", type=str, required=True,
+                    help="shapes.root of run.py SHAPES (<variable>/<channel>[_<category>]/<process>[_<systematic>]), "
+                         "with {era} and {channel} placeholders when several eras/channels are given")
+parser.add_argument("--variable", type=str, required=True, help="Discriminant (first directory of the shapes file)")
 parser.add_argument("--output-dir", type=str, default="output_cards", help="Directory the datacards are written to ({channel}/{era}/{bin}.txt below it)")
 
 parser.add_argument("--systematics", type=str2bool, default=True, help="Add shape systematics")
@@ -125,7 +123,7 @@ def main():
             categories = get_categories(
                 channel=channel,
                 categorization=args.categories,
-                gof_category_name=args.gof_category_name,
+                gof_category_name=args.gof_category_name or channel,
                 embedding=args.embedding,
                 jetfakes=args.jetfakes,
             )
@@ -139,41 +137,12 @@ def main():
 
         root_files = {}
         for channel in channels:
-            if args.categories == "stxs_stage0_run3":
-                # Run3 DNN categories are split one-category-per-file by
-                # convert_to_synced_shapes.py:
-                #   synced_shapes-{era}-{channel}-{ntuple_tag}-{tag}/{era}-{channel}-synced-{category}.root
-                sync_dir = os.path.join(
-                    args.input_dir,
-                    f"synced_shapes-{era}-{channel}-{args.ntupletag}-{args.tag}",
-                )
-                bin_files = {}
-                for _, bin_name in get_categories(
-                    channel=channel,
-                    categorization=args.categories,
-                    gof_category_name=args.gof_category_name,
-                    embedding=args.embedding,
-                    jetfakes=args.jetfakes,
-                ):
-                    category = bin_name[len(channel) + 1:]
-                    bin_files[bin_name] = os.path.join(sync_dir, f"{era}-{channel}-synced-{category}.root")
-                root_files[channel] = bin_files
-                logger.info(f"Extracting shapes for {channel} from {len(bin_files)} per-category files in {sync_dir}")
-                for bin_name, root_file in bin_files.items():
-                    cb.cp().channel([channel]).bin([bin_name]).backgrounds().ExtractShapes(
-                        root_file, "$BIN/$PROCESS", "$BIN/$PROCESS_$SYSTEMATIC")
-                    cb.cp().channel([channel]).bin([bin_name]).signals().ExtractShapes(
-                        root_file, signal_shape_pattern(cb), f"{signal_shape_pattern(cb)}_$SYSTEMATIC")
-            else:
-                if args.ntupletag is None or args.tag is None:
-                    raise ValueError("--ntupletag and --tag are required to locate the shape file {era}-{channel}-{ntuple_tag}-{tag}.root")
-                root_file = os.path.join(args.input_dir, f"{era}-{channel}-{args.ntupletag}-{args.tag}.root")
-                root_files[channel] = root_file
-                logger.info(f"Extracting shapes for {channel} from {root_file}")
-                cb.cp().channel([channel]).backgrounds().ExtractShapes(
-                    root_file, "$BIN/$PROCESS", "$BIN/$PROCESS_$SYSTEMATIC")
-                cb.cp().channel([channel]).signals().ExtractShapes(
-                    root_file, signal_shape_pattern(cb), f"{signal_shape_pattern(cb)}_$SYSTEMATIC")
+            root_file = root_files[channel] = args.shapes.format(era=era, channel=channel)
+            logger.info(f"Extracting shapes for {channel} from {root_file}")
+            cb.cp().channel([channel]).backgrounds().ExtractShapes(
+                root_file, f"{args.variable}/$BIN/$PROCESS", f"{args.variable}/$BIN/$PROCESS_$SYSTEMATIC")
+            pattern = signal_shape_pattern(cb, args.variable)
+            cb.cp().channel([channel]).signals().ExtractShapes(root_file, pattern, f"{pattern}_$SYSTEMATIC")
 
         fix_negative_bins(cb)
         filter_zero_yield_processes(cb)
@@ -196,7 +165,7 @@ def main():
         )
 
         for channel in channels:
-            load_systematic_shapes(cb, root_files[channel], channel)
+            load_systematic_shapes(cb, root_files[channel], channel, args.variable)
 
         filter_zero_yield_systs(cb)
 

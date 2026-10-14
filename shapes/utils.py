@@ -1,4 +1,5 @@
 from ntuple_processor import dataset_from_crownoutput, Unit
+from ntuple_processor.utils import Dataset
 from ntuple_processor.systematics import (
     get_quantities_from_expression,
     ReplaceCut,
@@ -7,6 +8,7 @@ from ntuple_processor.systematics import (
 )
 import os
 import re
+import shapes.naming as naming
 import tau_es.energy_scales as tau_es_energy_scales
 from copy import deepcopy
 from concurrent.futures import ProcessPoolExecutor
@@ -42,17 +44,32 @@ def add_process(
     if not isinstance(selections, list):
         selections = [selections]
     unitlist = []
-    if systematics is not None:
-        for systematic in systematics:
-            for category_selection, actions in categorization[channel]:
-                full_selection = selections + [category_selection]
-                unitlist.append(Unit(dataset, full_selection, actions, systematic))
-    else:
-        for category_selection, actions in categorization[channel]:
-            full_selection = selections + [category_selection]
-            unitlist.append(Unit(dataset, full_selection, actions))
+    for category_selection, actions in categorization[channel]:
+        path = f"{naming.bin_name(channel, category_selection.name)}/{_process_name(name, selections)}"
+        full_selection = selections + [category_selection]
+        if systematics is not None:
+            unitlist.extend(Unit(dataset, full_selection, actions, systematic, path=path) for systematic in systematics)
+        else:
+            unitlist.append(Unit(dataset, full_selection, actions, path=path))
 
     analysis_unit[name] = unitlist
+
+
+def _process_name(name, selections):
+    # the process selection is named after the Combine process, data has none
+    return naming.DATA if name == "data" else selections[-1].name
+
+
+def combine_datasets(datasets):
+    """One dataset over the ntuples of several (e.g. EW qqH from the qqH and VH samples), None if all are empty."""
+    datasets = [dataset for dataset in datasets if dataset and dataset.ntuples]
+    if len(datasets) <= 1:
+        return datasets[0] if datasets else None
+    quantities = {}
+    for dataset in datasets:
+        for shift, quants in (dataset.quantities_per_vars or {}).items():
+            quantities[shift] = sorted(set(quantities.get(shift, [])) | set(quants))
+    return Dataset("+".join(dataset.name for dataset in datasets), [n for dataset in datasets for n in dataset.ntuples], quantities)
 
 
 def add_control_process(
@@ -75,7 +92,7 @@ def add_control_process(
     control_binning = []
     for variable in variables:
         control_binning.append(binning[channel][variable])
-    analysis_unit[name] = [(Unit(dataset, selections, control_binning))]
+    analysis_unit[name] = [Unit(dataset, selections, control_binning, path=f"{channel}/{_process_name(name, selections)}")]
 
 
 def book_histograms(manager, processes, datasets, systematics=None, enable_check=False, register_raw=True):
@@ -356,7 +373,8 @@ def add_tauES_datasets(
                         logger.debug(
                             f"Replaced action {quant} with {act.variable} ( quant: {quant}, var: {shiftname})"
                         )
-                updated_unit.append(Unit(dataset, new_selections, new_actions))
+                shift_path = f"{naming.bin_name(channel, category_selection.name)}/EMB_{tau_es_energy_scales.procname_to_shift_string(processname)}"
+                updated_unit.append(Unit(dataset, new_selections, new_actions, path=shift_path))
             nominals[era]["units"][channel][processname] = updated_unit
 
 

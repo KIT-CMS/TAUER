@@ -118,30 +118,29 @@ def member_cut(name: str) -> str:
 
 
 _DATASET = {"ggH": "ggH", "VBF": "qqH", "WPLUSH": "VH", "WMINUSH": "VH", "ZH": "VH", "ttH": "ttH"}
-# produce_shapes process key of a recommended process
-_PROCESS_KEY = lambda process: {"GG2H": "ggh", "VBF": "qqh", "TTH": "tth"}.get(process, "vh_as_qqh" if process.endswith("2HQQ") else "vh")
+# produce_shapes process key of a recommended process, EW qqH = VBF + hadronic-V-associated production
+_PROCESS_KEY = lambda process: {"GG2H": "ggh", "VBF": "qqh", "TTH": "tth"}.get(process, "qqh" if process.endswith("2HQQ") else "vh")
 _HTXS = "HTXS_stage1_2_cat_pTjet30GeV"
 
 
 @lru_cache(maxsize=None)
 def signal_units(stage: str) -> dict:
-    """Booked signal units (stage0: per production mode, stage1p2: per `<PROCESS>_<STXS_BIN>`): key, dataset, selection, cut, members, group."""
+    """Booked signal units (stage0: per production mode, stage1p2: per `<PROCESS>_<STXS_BIN>`): key, datasets, selection, cut, members, group."""
     info = _name_info()
     if stage == "stage1p2":
-        return {name: {"key": _PROCESS_KEY(process), "dataset": _DATASET[fam], "selection": f"{name}__13p6TeV__htt", "cut": member_cut(name),
+        return {name: {"key": _PROCESS_KEY(process), "datasets": (_DATASET[fam],), "selection": f"{name}__13p6TeV__htt", "cut": member_cut(name),
                        "members": [name], "group": stage0_group(process)} for name, (fam, process, _) in info.items()}
     if stage != "stage0":
         raise ValueError(f"Unknown STXS stage {stage!r}")
     units = {}
-    for key, dataset, selection, cut, group, fams in (
-        ("ggh", "ggH", "ggH_htt125", f"(({_HTXS}>=100)&&({_HTXS}<=116))", "ggH", ("ggH",)),
-        ("qqh", "qqH", "qqH_htt125", f"(({_HTXS}>=200)&&({_HTXS}<=210))", "qqH", ("VBF",)),
-        ("vh_as_qqh", "VH", "qqH_htt125", f"(({_HTXS}>=200)&&({_HTXS}<=210))", "qqH", ("WPLUSH", "WMINUSH", "ZH")),
-        ("vh", "VH", "VH_htt125", f"(({_HTXS}>=300)&&({_HTXS}<=505))", "VH", ("WPLUSH", "WMINUSH", "ZH")),
-        ("tth", "ttH", "ttH_htt125", None, "ttH", ("ttH",)),
+    for key, datasets, selection, cut, group, fams in (
+        ("ggh", ("ggH",), "ggH_htt125", f"(({_HTXS}>=100)&&({_HTXS}<=116))", "ggH", ("ggH",)),
+        ("qqh", ("qqH", "VH"), "qqH_htt125", f"(({_HTXS}>=200)&&({_HTXS}<=210))", "qqH", ("VBF", "WPLUSH", "WMINUSH", "ZH")),
+        ("vh", ("VH",), "VH_htt125", f"(({_HTXS}>=300)&&({_HTXS}<=505))", "VH", ("WPLUSH", "WMINUSH", "ZH")),
+        ("tth", ("ttH",), "ttH_htt125", None, "ttH", ("ttH",)),
     ):
         members = [n for n, (fam, process, _) in info.items() if fam in fams and _PROCESS_KEY(process) == key]
-        units[key] = {"key": key, "dataset": dataset, "selection": selection, "cut": cut, "members": members, "group": group}
+        units[key] = {"key": key, "datasets": datasets, "selection": selection, "cut": cut, "members": members, "group": group}
     return units
 
 

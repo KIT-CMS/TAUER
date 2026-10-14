@@ -1,7 +1,7 @@
 """
 Canonical tauES shift-point convention -- single source of truth for
-shapes/produce_shapes.py, shapes/do_estimations.py, and
-shapes/convert_to_synced_shapes.py, which each used to keep their own
+shapes/produce_shapes.py and
+shapes/do_estimations.py, which each to keep their own
 independent (and, in one case, wrong-range) hardcoded copy.
 
 Real convention, confirmed by direct inspection of a real 2018

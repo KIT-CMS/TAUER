@@ -1,6 +1,6 @@
 import logging
 from functools import partial
-from .defaults import _name_string, _process_map, _dataset_map
+import shapes.naming as naming
 from config.logging_setup_configs import setup_logging
 
 logger = setup_logging(logger=logging.getLogger(__name__))
@@ -60,25 +60,17 @@ def replace_negative_entries_and_renormalize(histogram, tolerance):
 def qcd_estimation(
     rootfile,
     channel,
-    selection,
+    category,
     variable,
-    systematic="Nominal",
+    shift=None,
     is_embedding=True,
-    is_nlo=False,
     extrapolation_factor=1.2,
     sub_scale=1.0,
 ):
-    logger.debug("Parameters for qcd estimation")
-    logger.debug("channel: %s", channel)
-    logger.debug("selection: %s", selection)
-    logger.debug("variable: %s", variable)
-    logger.debug("systematic: %s", systematic)
-    logger.debug("is_embedding: %s", is_embedding)
-    logger.debug("extrapolation_factor: %s", extrapolation_factor)
-    logger.debug("sub_scale: %s", sub_scale)
-
-    # Found a bug with ZJ/ZJ_NLO in the previous solution. This fixes it.
-    LO_NLO_PROCESSES = {"ZTT": "ZTT", "W": "W", "ZL": "ZL", "ZJ": "ZJ"}
+    """QCD from the same-sign region: data minus the subtracted backgrounds, scaled to opposite sign. The subtrMC shifts
+    vary the subtraction of the nominal inputs."""
+    logger.debug(f"QCD estimation for {channel} {category} {variable} {shift}, embedding {is_embedding}, "
+                 f"extrapolation factor {extrapolation_factor}, subtraction scale {sub_scale}")
 
     procs_to_subtract = ["W"]  # all cases have at least this
     procs_to_subtract.extend(["EMB"] if is_embedding else ["ZTT", "TTT", "VVT"])  # EMB or MC
@@ -91,48 +83,17 @@ def qcd_estimation(
         elif channel in {"mm", "ee"} and not is_embedding:
             procs_to_subtract = ["ZL", "W", "VVL", "TTL"]  # caution: replaced! no EMB or EMB MC equivalent
 
-    if is_nlo:
-        for lo, nlo in LO_NLO_PROCESSES.items():
-            if lo in procs_to_subtract:
-                procs_to_subtract.remove(lo)
-                procs_to_subtract.append(nlo)
-
-    _common_name_string = partial(
-        _name_string.format,
-        channel=channel,
-        variable=variable,
-        systematic="same_sign" if "subtrMC" in systematic else systematic,
-        selection="-" + selection if selection != "" else "",
-    )
-
-    _string = _common_name_string(dataset="data", process="")
-    logger.debug(f"Trying to get object {_string}")
-    base_hist = rootfile.Get(_string).Clone()
+    input_shift = None if shift and "subtrMC" in shift else shift
+    _get = partial(naming.get, rootfile, variable, channel, category=category, region="ss", systematic=input_shift)
+    base_hist = _get(naming.DATA).Clone()
     for proc in procs_to_subtract:
-        _string = _common_name_string(dataset=_dataset_map[proc], process="-" + _process_map[proc])
-        logger.debug(f"Trying to get object {_string}")
-        base_hist.Add(rootfile.Get(_string), -sub_scale)
+        base_hist.Add(_get(proc), -sub_scale)
 
-    proc_name = "QCD" if is_embedding else "QCDMC"
-    if is_nlo:
-        proc_name = "_".join([proc_name, "NLO"])
-    if systematic in ["same_sign"]:
-        qcd_systematic = "Nominal"
-    else:
-        qcd_systematic = systematic.replace("same_sign_", "")
     logger.debug(f"Use extrapolation_factor factor with value {extrapolation_factor} to scale from ss to os region.")
     if base_hist.Integral() > 0.0:
         base_hist.Scale(extrapolation_factor)
     else:
         logger.warning(f"No data in same-sign region for histogram {base_hist.GetName()}. Setting extrapolation factor to 0.0")
         base_hist.Scale(0.0)
-    systematic_name = (
-        base_hist.GetName()
-        .replace("data", proc_name)
-        .replace(systematic if "subtrMC" not in systematic else "same_sign", qcd_systematic)
-        .replace(channel, "-".join([channel, proc_name]), 1)
-    )
-    base_hist.SetName(systematic_name)
-    base_hist.SetTitle(systematic_name)
     replace_negative_entries_and_renormalize(base_hist, tolerance=100.05)
-    return base_hist
+    return base_hist, naming.path(variable, channel, "QCD", category, systematic=shift)

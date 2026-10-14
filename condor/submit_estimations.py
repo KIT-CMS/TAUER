@@ -51,7 +51,6 @@ def build_jobs(args) -> list[JobSpec]:
                 f"--era {era}",
                 f"--input-file {input_file}",
                 estimation_flag,
-                "--do-qqh-procs",
             ]
             if args.do_emb_tt:
                 job_args.append("--do-emb-tt")

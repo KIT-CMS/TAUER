@@ -57,12 +57,9 @@ def ss_os_sibling(ff_path: Path) -> Path | None:
 
 _FF_ONLY_PER_PROCESS_PREFIX = "shapes_ff_only__"
 
-# shapes/estimations/qcd.py's qcd_estimation() proc_name values
-_QCD_ESTIMATION_DATASETS = frozenset({"QCD", "QCDMC", "QCD_NLO", "QCDMC_NLO"})
-
-
 def _strip_stale_qcd_estimation(ff_path: Path, log: logging.Logger) -> None:
     import ROOT
+    from shapes import naming
 
     f = ROOT.TFile(str(ff_path), "update")
     if f.IsZombie():
@@ -70,15 +67,15 @@ def _strip_stale_qcd_estimation(ff_path: Path, log: logging.Logger) -> None:
         return
     try:
         stale = [
-            key.GetName() for key in f.GetListOfKeys()
-            if key.GetName().split("#", 1)[0] in _QCD_ESTIMATION_DATASETS
+            (variable, bin_, name) for variable, bin_, name in naming.iter_histograms(f)
+            if (name == "QCD" or name.startswith("QCD_")) and naming.split_bin(bin_, bin_.split("_")[0])[1] is None
         ]
-        for name in stale:
-            f.Delete(f"{name};*")
+        for variable, bin_, name in stale:
+            f.GetDirectory(f"{variable}/{bin_}").Delete(f"{name};*")
         if stale:
             log.info(
-                "%s: removed %d stale QCD-estimation histogram(s) inherited from the ss-os "
-                "sibling (%s).", ff_path, len(stale), sorted(set(n.split('#', 1)[0] for n in stale)),
+                "%s: removed %d stale QCD-estimation histogram(s) inherited from the ss-os sibling.",
+                ff_path, len(stale),
             )
     finally:
         f.Close()
@@ -152,9 +149,18 @@ def missing_processes(shapes_path: Path) -> list[str]:
     if not shapes_path.exists():
         return sorted(expected)
 
-    from shapes.produce_shapes import PROCESS_DATASET_KEYS, SIGNAL_PROCESSES
+    from analyses.smhtt.common import stxs_tools
+    from config.processes import BACKGROUNDS
+    from shapes import naming
 
     import ROOT
+
+    names = {"data": {naming.DATA}, **{key: {p.datacard} for key, p in BACKGROUNDS.items()}}
+    for stage in ("stage0", "stage1p2"):
+        for info in stxs_tools.signal_units(stage).values():
+            names.setdefault(info["key"], set()).add(info["selection"])
+    known = set().union(*names.values())
+    signals = {name for key, procs in names.items() if key not in BACKGROUNDS and key != "data" for name in procs}
 
     is_ff = ss_os_sibling(shapes_path) is not None
     present_anti_iso: set[str] = set()
@@ -164,30 +170,17 @@ def missing_processes(shapes_path: Path) -> list[str]:
         f.Close()
         return sorted(expected)
     try:
-        for key in f.GetListOfKeys():
-            fields = key.GetName().split("#")
-            if len(fields) != 4:
-                continue
-            dataset, _selection, systematic, _variable = fields
-            if "anti_iso" in systematic:
-                present_anti_iso.add(dataset)
-            else:
-                present_other.add(dataset)
+        for _variable, bin_, name in naming.iter_histograms(f):
+            split = naming.split_histogram(name, known)
+            if split:
+                (present_anti_iso if naming.split_bin(bin_, bin_.split("_")[0])[1] == "ar" else present_other).add(split[0])
     finally:
         f.Close()
 
     if is_ff:
-        # Both halves required for a normal process: an ff run's merged file inherits every
-        # ss-os process's nominal content (present_other) and adds this process's own
-        # FF-weighted systematics (present_anti_iso) on top. SIGNAL_PROCESSES are the
-        # exception -- they never get an anti_iso half in an --ff-only production.
-        present_both = present_anti_iso & present_other
-        present = present_both | (present_other & {
-            PROCESS_DATASET_KEYS.get(name, name) for name in SIGNAL_PROCESSES
-        })
+        # An ff run's merged file inherits every ss-os process's nominal content (present_other)
+        # and adds this process's own FF-weighted systematics (present_anti_iso); signals have no _ar half.
+        present = (present_anti_iso & present_other) | (present_other & signals)
     else:
         present = present_other | present_anti_iso
-    return sorted(
-        name for name in expected
-        if PROCESS_DATASET_KEYS.get(name, name) not in present
-    )
+    return sorted(name for name in expected if not names.get(name, {name}) & present)

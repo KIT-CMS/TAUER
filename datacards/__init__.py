@@ -8,8 +8,6 @@ from pathlib import Path
 
 from config.analysis import ACTIVE_ANALYSIS
 
-DEFAULT_NTUPLE_TAG = "htt_260602_2024-25_v5"
-
 try:
     MASS = importlib.import_module(f"analyses.{ACTIVE_ANALYSIS}.datacards.combine_model").MASS
 except (ModuleNotFoundError, AttributeError):
