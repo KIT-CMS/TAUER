@@ -73,13 +73,14 @@ def add_systematics(
         if cb is not None:
             import CombineHarvester.CombineTools.ch as ch
 
-            if isinstance(value, (float, int)):
-                syst_map = ch.SystMap()(float(value))
-            elif isinstance(value, tuple):
-                syst_map = ch.SystMapAsymm()(*value)
+            scope = cb.cp().process(list(procs)).channel(list(chans))
+            if isinstance(value, tuple):
+                # SystMapAsymm is not in the python bindings: add symmetric, then set the (down, up) values
+                down, up = value
+                scope.AddSyst(cb, name, syst_type, ch.SystMap()(float(up)))
+                scope.cp().syst_name([name]).ForEachSyst(lambda s: (s.set_asymm(True), s.set_value_d(float(down)), s.set_value_u(float(up))))
             else:
-                syst_map = value
-            cb.cp().process(list(procs)).channel(list(chans)).AddSyst(cb, name, syst_type, syst_map)
+                scope.AddSyst(cb, name, syst_type, ch.SystMap()(float(value)) if isinstance(value, (float, int)) else value)
 
     for syst in systematics(era, jetfakes=jetfakes, qcd=qcd, ff_ml=ff_ml):
         add_syst(syst.name, syst.kind, processes.resolve(syst.processes), syst.channels, syst.value)
