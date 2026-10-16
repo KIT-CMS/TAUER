@@ -84,7 +84,8 @@ def get(tfile, *args, **kwargs):
 def write(tfile, hist, name):
     """Write `hist` at path `name` of `tfile`, overwriting an existing one."""
     directory, base = name.rsplit("/", 1)
-    tfile.mkdir(directory, "", True)
+    if not tfile.GetDirectory(directory):
+        tfile.mkdir(directory)
     tfile.cd(directory)
     hist.SetName(base)
     hist.SetTitle(base)
