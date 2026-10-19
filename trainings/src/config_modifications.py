@@ -7,11 +7,11 @@ import yaml
 from src.helper import Iterate, Keys, find_variable_expansions, modify_tau_iso_string
 
 try:
-    from config.logging_setup_configs import setup_logging
+    from CustomLogging import setup_logging
 except ModuleNotFoundError:
     import sys
     sys.path.extend([".", ".."])
-    from config.logging_setup_configs import setup_logging
+    from CustomLogging import setup_logging
 
 logger = setup_logging(logger=logging.getLogger(__name__))
 

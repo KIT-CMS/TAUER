@@ -22,6 +22,7 @@ dependencies:
   - correctionlib
   - ruamel.yaml
   - rich
+  - questionary>=2.1.1  # tauer TUI; 2.1.0 crashes with prompt_toolkit 3.0.52
   - wurlitzer
   # from trainings/uncertainty-aware-training -- merged in so the separate
   # `uncertainty-training` conda env is no longer needed

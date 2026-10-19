@@ -5,9 +5,9 @@ import json
 import logging
 import os
 
-from config.analysis import ACTIVE_ANALYSIS
-from config.logging_setup_configs import setup_logging
-from config.processes import datacard_backgrounds
+from common.analysis import ACTIVE_ANALYSIS
+from CustomLogging import setup_logging
+from common.analysis import datacard_backgrounds
 from datacards import MASS as _MASS
 from datacards.categories import get_categories
 from datacards.systematics import add_systematics

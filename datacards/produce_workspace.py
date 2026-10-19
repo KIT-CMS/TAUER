@@ -14,8 +14,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from common.cmsenv import get_fitdir, run_in_cmsenv
-from config.analysis import ACTIVE_ANALYSIS
+from utils.environment import get_fitdir, run_in_cmsenv
+from common.analysis import ACTIVE_ANALYSIS
 from datacards import MASS, gof_card_dir
 
 

@@ -15,7 +15,7 @@ import yaml
 from XRootD.client import File
 from tqdm import tqdm
 
-from config.logging_setup_configs import setup_logging
+from CustomLogging import setup_logging
 
 logger = setup_logging(logger=logging.getLogger(__name__))
 
@@ -298,7 +298,7 @@ def update_sample_database(roots) -> None:
             logger.info(f"{datasets_path}: updated xsec of {changed} signal samples")
 
 
-def signal_nicks(signals_yaml: str = str(REPO_ROOT / "analyses/smhtt/config/signals.yaml"), eras=None):
+def signal_nicks(signals_yaml: str = str(REPO_ROOT / "analyses/smhtt/common/signals.yaml"), eras=None):
     """(nick -> (family, dbs, sample json), wanted nicks) of the Run 3 signal samples of signals.yaml (restricted to `eras`) to scan."""
     wanted = {n for era_signals in yaml.safe_load(open(signals_yaml))["signals"].items() if not eras or era_signals[0] in eras
               for nicks in era_signals[1].values() for n in nicks}
@@ -351,7 +351,7 @@ def load_scan(scan_dir: str, dbs: str, n_files: int) -> dict:
 
 
 def calculate_stxs_nick_table(
-    signals_yaml: str = str(REPO_ROOT / "analyses/smhtt/config/signals.yaml"),
+    signals_yaml: str = str(REPO_ROOT / "analyses/smhtt/common/signals.yaml"),
     output_path: str = str(NICK_TABLE),
     eras=None,
     max_files: int = None,

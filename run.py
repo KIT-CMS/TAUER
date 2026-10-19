@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import getpass
 import os
 import shutil
 import subprocess
@@ -12,8 +11,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(REPO_ROOT))
-from common.conda_env import run_in_conda  # noqa: E402
-from config.analysis import ACTIVE_ANALYSIS, ff_config_era  # noqa: E402
+from utils.environment import pythonpath_with_tff, run_in_conda  # noqa: E402
+from common.analysis import ACTIVE_ANALYSIS, ff_config_era  # noqa: E402
 
 MODES = [
     "SHAPES",
@@ -141,7 +140,7 @@ def make_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--common-setup-config", dest="common_setup_config", default=None,
         help="TRAIN-DATASET only: trainings/create_training_dataset.py's --common-setup-config "
-             "(default when merging via --train-configs-dir: trainings/setup.yaml). Env: "
+             "(default when merging via --train-configs-dir: common/training_setup.yaml). Env: "
              "COMMON_SETUP_CONFIG.",
     )
     return parser
@@ -164,12 +163,6 @@ def env_or(value, env_name, default):
     if value is not None:
         return value
     return os.environ.get(env_name, default)
-
-
-def pythonpath_with_tff() -> str:
-    existing = os.environ.get("PYTHONPATH", "")
-    parts = [existing, str(REPO_ROOT), str(REPO_ROOT / "fake_factors")]
-    return ":".join(p for p in parts if p)
 
 
 def run_plain(cmd_args, cwd=None, env_overrides=None):
@@ -217,29 +210,14 @@ def friend_directory_args(ff_friends_dir="", additional_friend_dirs=()):
     return args
 
 
-def _output_run_dir(cfg, qcd_label):
-    # Only nest an explicit {tag} when it differs from ntupletag -- else the default
-    # tag=ntupletag would duplicate the path segment (output/{ntupletag}/{ntupletag}/...).
-    channels_label = cfg["channels"].replace(",", "-", 1)
-    parts = [cfg["output_dir"]]
-    if cfg["tag"] != cfg["ntupletag"]:
-        parts.append(cfg["tag"])
-    parts += [qcd_label, cfg["era"], channels_label]
-    return Path(*parts)
-
-
 def mode_shapes(cfg, extra):
-    from common.sample_paths import build_ul_sample_paths
+    from common.sample_paths import build_ul_sample_paths, output_run_dir
 
     paths = build_ul_sample_paths(cfg["ntupletag"], cfg["era"])
 
-    # Nested output/[{tag}/]{qcd-label}/{era}/{channels}/shapes.root -- see
+    # Nested output/[{tag}/]{qcd-label}/{era}/{channel}/shapes.root -- see
     # README's flag reference for why tag defaults to ntupletag.
     qcd_label = "ff" if cfg["ff_friends_dir"] else "ss-os"
-    run_dir = _output_run_dir(cfg, qcd_label)
-    run_dir.mkdir(parents=True, exist_ok=True)
-    outfile = run_dir / "shapes.root"
-
     extra_args = []
     if cfg["ff_friends_dir"]:
         extra_args += ["--ff-type", cfg["ff_type"]]
@@ -262,115 +240,121 @@ def mode_shapes(cfg, extra):
     if cfg["stxs_stage"]:
         extra_args += ["--stxs-stage", cfg["stxs_stage"]]
 
-    def _produce(output_file, ff_only=False):
-        cmd = [
-            "python",
-            "shapes/produce_shapes.py",
-            "--era", cfg["era"],
-            "--channels", cfg["channels"],
-            # Scopes ntuple_processor's validation_database/ cache by ntupletag --
-            # without this, switching --ntupletag reuses another tag's stale file
-            # list and raises "File ... not found in validation results." (booking.py:361).
-            "--validation-tag", cfg["ntupletag"],
-            "--validation-db-root", cfg["validation_dir"],
-            *directory_args,
-            *friend_args,
-            *extra_args_selection_friend,
-            "--output-file", str(output_file),
-            "--nprocs", str(cfg["nprocs"]),
-            "--nthreads", str(cfg["nthreads"]),
-            "--xrootd",
-            *extra_args,
-            *(["--ff-only"] if ff_only else []),
-            *extra,
-        ]
-        return run_conda(cmd, env_overrides={"PYTHONPATH": pythonpath_with_tff()})
+    for channel in cfg["channels"].split(","):
+        run_dir = output_run_dir(cfg, qcd_label, channel)
+        run_dir.mkdir(parents=True, exist_ok=True)
+        outfile = run_dir / "shapes.root"
 
-    if qcd_label == "ff":
-        # Reuses an existing ss-os run for the same tag/era/channels instead of
-        # redoing it, via common/shapes_merge.py's merge_ff_reuse_if_needed() --
-        # the same function condor/submit_shapes.py's ff jobs call.
-        ss_os_file = _output_run_dir(cfg, "ss-os") / "shapes.root"
-        if ss_os_file.exists():
-            print(f"[SHAPES] Reusing existing ss-os shapes at {ss_os_file} -- booking only the "
-                  f"FF-weighted systematics (--ff-only) and merging onto a copy of it, instead of "
-                  f"redoing the full (expensive) shape production.")
-            ff_only_file = run_dir / "shapes_ff_only.root"
-            result = _produce(ff_only_file, ff_only=True)
-            if result.returncode != 0:
-                return result.returncode
-            from common.shapes_merge import merge_ff_reuse_if_needed
+        def _produce(output_file, ff_only=False):
+            cmd = [
+                "python",
+                "shapes/produce_shapes.py",
+                "--era", cfg["era"],
+                "--channels", channel,
+                # Scopes ntuple_processor's validation_database/ cache by ntupletag --
+                # without this, switching --ntupletag reuses another tag's stale file
+                # list and raises "File ... not found in validation results." (booking.py:361).
+                "--validation-tag", cfg["ntupletag"],
+                "--validation-db-root", cfg["validation_dir"],
+                *directory_args,
+                *friend_args,
+                *extra_args_selection_friend,
+                "--output-file", str(output_file),
+                "--nprocs", str(cfg["nprocs"]),
+                "--nthreads", str(cfg["nthreads"]),
+                "--xrootd",
+                *extra_args,
+                *(["--ff-only"] if ff_only else []),
+                *extra,
+            ]
+            return run_conda(cmd, env_overrides={"PYTHONPATH": pythonpath_with_tff()})
 
-            def _run_hadd_conda(argv):
-                # run.py isn't conda-activated itself -- route hadd through run_conda()
-                # like every other subprocess here, not shapes_merge's plain-subprocess default.
-                return run_conda(argv, env_overrides={"PYTHONPATH": pythonpath_with_tff()}).returncode
+        if qcd_label == "ff":
+            # Reuses an existing ss-os run for the same tag/era/channels instead of
+            # redoing it, via common/shapes_merge.py's merge_ff_reuse_if_needed() --
+            # the same function condor/submit_shapes.py's ff jobs call.
+            ss_os_file = output_run_dir(cfg, "ss-os", channel) / "shapes.root"
+            if ss_os_file.exists():
+                print(f"[SHAPES] Reusing existing ss-os shapes at {ss_os_file} -- booking only the "
+                      f"FF-weighted systematics (--ff-only) and merging onto a copy of it, instead of "
+                      f"redoing the full (expensive) shape production.")
+                ff_only_file = run_dir / "shapes_ff_only.root"
+                result = _produce(ff_only_file, ff_only=True)
+                if result.returncode != 0:
+                    return result.returncode
+                from common.shapes_merge import merge_ff_reuse_if_needed
 
-            try:
-                merge_ff_reuse_if_needed(outfile, run_hadd=_run_hadd_conda)
-            except RuntimeError as exc:
-                print(f"[SHAPES] {exc}", file=sys.stderr)
-                return 1
+                def _run_hadd_conda(argv):
+                    # run.py isn't conda-activated itself -- route hadd through run_conda()
+                    # like every other subprocess here, not shapes_merge's plain-subprocess default.
+                    return run_conda(argv, env_overrides={"PYTHONPATH": pythonpath_with_tff()}).returncode
+
+                try:
+                    merge_ff_reuse_if_needed(outfile, run_hadd=_run_hadd_conda)
+                except RuntimeError as exc:
+                    print(f"[SHAPES] {exc}", file=sys.stderr)
+                    return 1
+            else:
+                print(f"[SHAPES] No existing ss-os shapes found at {ss_os_file}; producing full shapes "
+                      f"(including FF systematics) from scratch.")
+                result = _produce(outfile, ff_only=False)
+                if result.returncode != 0:
+                    return result.returncode
         else:
-            print(f"[SHAPES] No existing ss-os shapes found at {ss_os_file}; producing full shapes "
-                  f"(including FF systematics) from scratch.")
+            print(f"[SHAPES] Producing shapes: era={cfg['era']} channel={channel}")
             result = _produce(outfile, ff_only=False)
             if result.returncode != 0:
                 return result.returncode
-    else:
-        print(f"[SHAPES] Producing shapes: era={cfg['era']} channels={cfg['channels']}")
-        result = _produce(outfile, ff_only=False)
+
+        print(f"[SHAPES] Running post-processing estimations on {outfile}")
+        # --do-ff needs FF friend trees; without them, fall back to --do-qcd's ss->os
+        # extrapolation (shapes/estimations/qcd.py:qcd_estimation) -- both read the same
+        # `_ss` histograms produce_shapes.py always books, so no production-side change.
+        estimation_args = ["--do-ff"] if cfg["ff_friends_dir"] else ["--do-qcd"]
+        cmd = [
+            "python",
+            "shapes/do_estimations.py",
+            "--era", cfg["era"],
+            "--input-file", str(outfile),
+            *estimation_args,
+            *extra,
+        ]
+        result = run_conda(cmd, env_overrides={"PYTHONPATH": pythonpath_with_tff()})
         if result.returncode != 0:
             return result.returncode
-
-    print(f"[SHAPES] Running post-processing estimations on {outfile}")
-    # --do-ff needs FF friend trees; without them, fall back to --do-qcd's ss->os
-    # extrapolation (shapes/estimations/qcd.py:qcd_estimation) -- both read the same
-    # `_ss` histograms produce_shapes.py always books, so no production-side change.
-    estimation_args = ["--do-ff"] if cfg["ff_friends_dir"] else ["--do-qcd"]
-    cmd = [
-        "python",
-        "shapes/do_estimations.py",
-        "--era", cfg["era"],
-        "--input-file", str(outfile),
-        *estimation_args,
-        *extra,
-    ]
-    return run_conda(cmd, env_overrides={"PYTHONPATH": pythonpath_with_tff()}).returncode
+    return 0
 
 
 def mode_plot(cfg, extra):
-    # Same nested layout mode_shapes writes to (output/[{tag}/]{qcd-label}/{era}/{channels}/shapes.root).
+    from common.sample_paths import output_run_dir, plot_output_dir
+
     qcd_label = "ff" if cfg["ff_friends_dir"] else "ss-os"
-    outfile = _output_run_dir(cfg, qcd_label) / "shapes.root"
-    # plot_shapes_control.py itself builds <plot_dir>/<channel>/<ext>/..., so channel isn't
-    # baked in here. /web only works run locally on a node where it's mounted (not condor).
-    _plot_dir_parts = [
-        f"/web/{cfg['user'] or getpass.getuser()}/public_html/CMS_HTT", qcd_label, cfg["era"], cfg["ntupletag"] or "notag",
-    ]
-    if cfg["tag"] != cfg["ntupletag"]:
-        _plot_dir_parts.append(cfg["tag"])
-    plot_dir = os.path.join(*_plot_dir_parts) + "/"
+    # /web only works run locally on a node where it's mounted (not condor).
+    plot_dir = plot_output_dir(cfg, qcd_label)
     variables = os.environ.get("VARIABLES", "m_vis,pt_1,pt_2,eta_1,eta_2,mt_1")
 
-    print(f"[PLOT] Plotting shapes from {outfile}")
-    cmd = [
-        "python",
-        "plotting/plot_shapes_control.py",
-        "--input-file", str(outfile),
-        "--output-dir", plot_dir,
-        "--era", cfg["era"],
-        "--channels", cfg["channels"],
-        "--variables", variables,
-        # An ff-labeled shapes.root has no QCD -- without --fake-factor,
-        # plot_shapes_control.py's QCD-seeking default silently drops that background.
-        *(["--fake-factor"] if cfg["ff_friends_dir"] else []),
-        *extra,
-    ]
-    returncode = run_conda(cmd, env_overrides={"PYTHONPATH": pythonpath_with_tff()}).returncode
-    if returncode == 0:
+    for channel in cfg["channels"].split(","):
+        # Same nested layout mode_shapes writes to (output/[{tag}/]{qcd-label}/{era}/{channel}/shapes.root).
+        outfile = output_run_dir(cfg, qcd_label, channel) / "shapes.root"
+        print(f"[PLOT] Plotting shapes from {outfile}")
+        cmd = [
+            "python",
+            "plotting/plot_shapes_control.py",
+            "--input-file", str(outfile),
+            "--output-dir", plot_dir,
+            "--era", cfg["era"],
+            "--channels", channel,
+            "--variables", variables,
+            # An ff-labeled shapes.root has no QCD -- without --fake-factor,
+            # plot_shapes_control.py's QCD-seeking default silently drops that background.
+            *(["--fake-factor"] if cfg["ff_friends_dir"] else []),
+            *extra,
+        ]
+        returncode = run_conda(cmd, env_overrides={"PYTHONPATH": pythonpath_with_tff()}).returncode
+        if returncode != 0:
+            return returncode
         _copy_index_php_into(Path(plot_dir))
-    return returncode
+    return 0
 
 
 def _copy_index_php_into(plot_dir: Path):
@@ -391,26 +375,30 @@ def mode_train_shapes(cfg, extra):
     paths = build_ul_sample_paths(cfg["ntupletag"], cfg["era"])
     output_dir = Path(cfg["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
-    outfile = output_dir / f"{cfg['era']}-{cfg['channels'].replace(',', '-', 1)}-training-shapes.root"
 
-    print(f"[TRAIN-SHAPES] Producing training shapes: era={cfg['era']} channels={cfg['channels']}")
-    cmd = [
-        "python",
-        "shapes/produce_shapes.py",
-        "--era", cfg["era"],
-        "--channels", cfg["channels"],
-        "--validation-tag", cfg["ntupletag"],
-        "--directory", paths.ntuples,
-        *friend_directory_args(additional_friend_dirs=cfg["additional_friends"]),
-        *(["--selection-friend", cfg["selection_friend"]] if cfg["selection_friend"] else []),
-        "--output-file", str(outfile),
-        "--nprocs", str(cfg["nprocs"]),
-        "--nthreads", str(cfg["nthreads"]),
-        "--xrootd",
-        "--skip-systematics",
-        *extra,
-    ]
-    return run_conda(cmd, env_overrides={"PYTHONPATH": pythonpath_with_tff()}).returncode
+    for channel in cfg["channels"].split(","):
+        outfile = output_dir / f"{cfg['era']}-{channel}-training-shapes.root"
+        print(f"[TRAIN-SHAPES] Producing training shapes: era={cfg['era']} channel={channel}")
+        cmd = [
+            "python",
+            "shapes/produce_shapes.py",
+            "--era", cfg["era"],
+            "--channels", channel,
+            "--validation-tag", cfg["ntupletag"],
+            "--directory", paths.ntuples,
+            *friend_directory_args(additional_friend_dirs=cfg["additional_friends"]),
+            *(["--selection-friend", cfg["selection_friend"]] if cfg["selection_friend"] else []),
+            "--output-file", str(outfile),
+            "--nprocs", str(cfg["nprocs"]),
+            "--nthreads", str(cfg["nthreads"]),
+            "--xrootd",
+            "--skip-systematics",
+            *extra,
+        ]
+        result = run_conda(cmd, env_overrides={"PYTHONPATH": pythonpath_with_tff()})
+        if result.returncode != 0:
+            return result.returncode
+    return 0
 
 
 def mode_configs(cfg, extra):
@@ -547,7 +535,7 @@ def mode_ff_corr(cfg, extra):
 
 def _patched_tff_config(
     era: str, channel: str, config_kind: str, ntupletag: str | None, selection_friend: str | None,
-    user: str | None = None, tag: str | None = None, correction_tag: str | None = None,
+    user: str | None = None, tag: str | None = None, correction_tag: str | None = None, extra_friends=(),
 ) -> str:
     """FF-MEASURE's config patcher (distinct from _patched_ff_config above, which only
     covers FF/FF-CORR's --ff-input-dir case): copies fake_factors/configs/smhtt's
@@ -575,8 +563,8 @@ def _patched_tff_config(
         common_cfg["ntuple_path"] = build_ul_sample_paths(ntupletag, era, user=user).kingmaker_basedir_xrootd
         common_cfg["output_path"] = common_cfg["file_path"] = build_shape_output_paths(ntupletag, user=user).fake_factors
         common_cfg["workdir_name"] = tag or ntupletag
-    if selection_friend:
-        common_cfg["friends"] = [selection_friend]
+    if selection_friend or extra_friends:
+        common_cfg["friends"] = [*filter(None, [selection_friend]), *extra_friends]
     with open(tmp_dir / "common_settings.yaml", "w") as f:
         yaml.safe_dump(common_cfg, f)
 
@@ -620,7 +608,7 @@ def mode_ff_measure(cfg, extra):
         for channel in channels:
             config_file = _patched_tff_config(
                 cfg["era"], channel, "preselection", cfg["ntupletag"], cfg["selection_friend"], user=cfg["user"],
-                tag=cfg["tag"],
+                tag=cfg["tag"], extra_friends=cfg["additional_friend_tags"],
             )
             result = run_plain([
                 "python", "fake_factors/preselection.py",
@@ -693,7 +681,7 @@ def mode_ff_measure(cfg, extra):
 
 def _btag_tagged_config(
     config_file: Path, ntupletag: str | None, selection_friend: str | None, tmp_root: Path,
-    user: str | None = None, tag: str | None = None,
+    user: str | None = None, tag: str | None = None, extra_friends=(),
 ) -> Path:
     """Copy `config_file` (+ its common_settings.yaml) into a temp dir with the
     ntupletag-derived path overrides and/or the selection-friend/tag override
@@ -701,7 +689,7 @@ def _btag_tagged_config(
     win over common_settings.yaml."""
     import yaml
 
-    from common.sample_paths import XROOTD_REDIRECTOR, crown_ntuple_base
+    from common.sample_paths import XROOTD_REDIRECTOR, build_shape_output_paths, crown_ntuple_base
 
     src_dir = config_file.parent
     dst_dir = tmp_root / src_dir.name
@@ -715,15 +703,14 @@ def _btag_tagged_config(
     cfg = yaml.safe_load(config_file.read_text()) or {}
     merged = {**base, **cfg}
     if ntupletag:
-        out_base = merged["output_path"].rstrip("/")
         cfg["ntuple_path"] = f"{XROOTD_REDIRECTOR}{crown_ntuple_base(ntupletag, user=user)}/CROWNRun"
-        cfg["output_path"] = f"{out_base}/{ntupletag}/"
+        cfg["output_path"] = f"{build_shape_output_paths(ntupletag, user=user).btag_efficiencies}/"
         cfg["file_path"] = cfg["output_path"]
         cfg["ntupletag"] = ntupletag
         print(f"[BTAG] ntupletag={ntupletag}: ntuple_path={cfg['ntuple_path']} output_path={cfg['output_path']}")
-    if selection_friend:
-        cfg["friends"] = [selection_friend]
-        print(f"[BTAG] selection-friend={selection_friend}: friends={cfg['friends']}")
+    if selection_friend or extra_friends:
+        cfg["friends"] = [*filter(None, [selection_friend]), *extra_friends]
+        print(f"[BTAG] friends={cfg['friends']}")
     if tag and tag != ntupletag:
         cfg["tag"] = tag
         print(f"[BTAG] tag={tag}")
@@ -745,7 +732,7 @@ def mode_btag(cfg, extra):
     tmp_root = Path(tempfile.mkdtemp(prefix="btag_eff_cfg_"))
 
     def _resolved(path: Path) -> Path:
-        return _btag_tagged_config(path, cfg["ntupletag"], cfg["selection_friend"], tmp_root, cfg["user"], cfg["tag"])
+        return _btag_tagged_config(path, cfg["ntupletag"], cfg["selection_friend"], tmp_root, cfg["user"], cfg["tag"], cfg["additional_friend_tags"])
 
     if "gen-configs" in steps:
         result = run_plain([
@@ -833,7 +820,7 @@ def mode_train_dataset(cfg, extra):
         print(f"[TRAIN-DATASET] Merging {len(matched)} per-(era,channel) config(s) from {configs_dir}:")
         for p in matched:
             print(f"[TRAIN-DATASET]   {p.name}")
-        merge_setup_config = common_setup_config or "trainings/setup.yaml"
+        merge_setup_config = common_setup_config or "common/training_setup.yaml"
         merged_config = configs_path / f"merged__{'-'.join(channels)}__config.yaml"
         adjust_cmd = [
             "python", "trainings/adjust_config.py",
@@ -942,6 +929,8 @@ def main(argv=None) -> int:
         "common_setup_config": env_or(args.common_setup_config, "COMMON_SETUP_CONFIG", ""),
     }
 
+    # bare tags for the TauFakeFactors preselection configs, which resolve friend tags next to the ntuples themselves
+    cfg["additional_friend_tags"] = [tag.strip() for tag in cfg["additional_friends"].split(",") if tag.strip()]
     needs_ntupletag = mode in ("SHAPES", "TRAIN-SHAPES", "CONFIGS")
     steps = [x.strip() for x in cfg["steps"].split(",") if x.strip()] if cfg["steps"] else None
     if mode == "FF-MEASURE":

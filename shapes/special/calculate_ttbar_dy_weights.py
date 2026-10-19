@@ -42,7 +42,7 @@ import numpy as np
 import ROOT
 
 from common.sample_paths import build_shape_output_paths
-from config.logging_setup_configs import setup_logging
+from CustomLogging import setup_logging
 from shapes.special.ttbar_dy_weight_categories import categories as _categories
 from shapes import naming
 

@@ -38,8 +38,8 @@ from dataclasses import dataclass
 
 import ROOT
 
-from config.logging_setup_configs import setup_logging
-from config.processes import BACKGROUNDS
+from CustomLogging import setup_logging
+from common.analysis import BACKGROUNDS
 from shapes import naming
 
 logger = setup_logging(logger=logging.getLogger(__name__))

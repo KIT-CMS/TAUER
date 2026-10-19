@@ -9,7 +9,10 @@
   - [1. `tauer` conda env — everything except CMSSW/Combine](#1-tauer-conda-env--everything-except-cmsswcombine)
   - [2. CMSSW / `cmsenv` — Combine, datacards, GoF/Impacts, tauES fit](#2-cmssw--cmsenv--combine-datacards-gofimpacts-taues-fit)
   - [Submodules](#submodules)
-- [Pipeline: entry points, in the order they're meant to run](#pipeline-entry-points-in-the-order-theyre-meant-to-run)
+- [`tauer` workflow UI](#tauer-workflow-ui)
+  - [The interactive session](#the-interactive-session)
+  - [Commands](#commands)
+- [Pipeline](#pipeline)
   - [1. SHAPES — shape production](#1-shapes--shape-production)
   - [2. PLOT — control plots](#2-plot--control-plots)
   - [3. TRAIN-SHAPES — shapes for DNN training input](#3-train-shapes--shapes-for-dnn-training-input)
@@ -30,7 +33,7 @@
 
 This framework interfaces with the ntuple producer [CROWN](https://github.com/KIT-CMS/CROWN)
 to extend the full analysis chain: background estimations, histogram creation, systematics 
-booking, neural network trainign for signal classification, plotting, and 
+booking, neural network training for signal classification, plotting, and 
 [CMS Combine](https://cms-analysis.github.io/HiggsAnalysis-CombinedLimit/v11.1.0/) 
 datacard creation. On top of this, b-jets efficiencies calculation and tau energy scale correction
 derivations are included.
@@ -88,10 +91,8 @@ export FITDIR=/path/to/combine/workdir
 
 Needed for anything related to datacards and fits.
 
-**`utils/setup_root.sh`** is the third, similar bash shim (sources a CVMFS LCG ROOT view,
-`LCG_102` or `LCG_106` depending on hostname) — used only lazily, via
-`common/lcg_env.py`, to read `config.analysis.get_output_features()` under an
-interpreter that has `pyyaml`. You should not normally need to source it yourself.
+Both environments are set up by `utils/environment.py` when `run.py`, the condor jobs or the datacard scripts need them;
+`utils/setup_tauer.sh` does the same for running a script by hand.
 
 ### Submodules
 
@@ -104,14 +105,83 @@ Initializes `fake_factors/`, `ntuple_processor/`, `sample_database/`, and `Custo
 
 ---
 
-## Pipeline: entry points, in the order they're meant to run
+## `tauer` workflow UI
 
-All modes below run through the single entry point **`run.py`**. Run `python3 run.py --help` 
+`tauer` is a terminal UI and a workflow manager on top of `run.py` and the `condor/submit_*.py` scripts. It asks what you want to run, checks which outputs already exist, includes the missing steps those need and submits or prints them.
+
+```bash
+conda activate tauer
+bash utils/install_tauer_command.sh      # once: links $CONDA_PREFIX/bin/tauer
+tauer                                    # interactive session
+```
+
+On first use it asks where `KingMaker/CROWN/analysis_configurations/<CROWN analysis>` is: the payloads are copied into its `payloads/`, the KingMaker
+commands run next to it (saved in `~/.config/tauer/settings.json`, change it with `tauer setup`). The XRootD checks of the CROWN outputs need a valid grid proxy.
+
+### The interactive session
+
+1. **Analysis** (`analyses/<name>`), then the **steps**, grouped as b-tag, FF, NN, shapes to fits, TauES and CROWN.
+2. **Eras** and **channels**. With only CROWN steps there is no era
+   question: the eras come from the sample list, and the check covers the eras of the production.
+3. **Ntuple tag** and **friend tags**, chosen from the tags on the ntuple path or typed. The FF friend is optional (skip it for the ss-os QCD method);
+   additional friends are attached to every step that reads ntuples.
+4. The **options** of the selected steps (STXS stage, run tag, process groups, sample list, ...), then one line of **extra options** that is added
+   as-is to the commands of the selected steps; it is checked against the condor submitters and asked again if they reject it.
+5. The **status tree**: every selected step and the upstream steps it still waits for, per era/channel unit:
+
+   | state | meaning |
+   |---|---|
+   | `done` | outputs exist (and, for CROWN friends, one friend file per ntuple file) |
+   | `missing` / `partial` | not produced / only some outputs |
+   | `waiting` / `blocked` | cannot start yet: a step it needs is not done (`waiting`: that step is selected too, `blocked`: it will be added by tauer) |
+   | `stale` | done, but an input is newer than the output |
+   | `other-options` | done with different options (tag, friends, STXS stage, extra options) than the current ones |
+   | `queued` / `running` / `held` / `failed` | condor jobs submitted by tauer |
+
+6. Then, in pipeline order:
+   - **condor steps** (FF, shapes, estimations, b-tag, NN configs, NN training, TauES) are submitted through their `condor/submit_*.py`, one confirmation
+     per step; if you decline, tauer prints the commands to run the same jobs locally; a dry run (`condor_submit -dry-run`) writes nothing;
+   - **local steps** (plots, datacards, workspace, GoF, impacts, NN dataset, FF config generation) are not run: tauer prints the exact commands to copy and run yourself;
+   - **CROWN steps** (ntuples, selection / FF friends) print the `law run ProduceNtuples ...` command to run in KingMaker;
+   - **payload handoffs** (the FF and b-tag results and the trained NN model to CROWN's `payloads/`) list the files and copy them after a confirmation.
+7. If jobs were submitted, the session ends in `tauer watch`; Ctrl+C stops watching, the jobs keep running.
+
+The answers are remembered in `~/.config/tauer/last_inputs.json` and used as defaults of the next session. Every condor submission made by tauer
+keeps its usual directory, `condor/run/<ntupletag>/[<tag>/]<stage>/<timestamp>/`, where tauer also writes a `tauer.json` with the submitted units
+and job ids; `tauer status` and `tauer watch` find the jobs through these files.
+
+### Commands
+
+**`tauer status [<id>]`** shows the status tree of every tauer session with submitted jobs, or only of the given one. For failed jobs it shows the
+error and asks whether to resubmit them, for held jobs whether to release or remove them, and it offers to submit the steps whose inputs are now done.
+Every action asks for a confirmation; a rejected submission prints the commands to run those jobs locally instead.
+
+**`tauer watch [<id>] [--interval MIN]`** redraws the status of the jobs still in the queue every `MIN` minutes (5 by default) until none is left.
+It never submits anything.
+
+**`tauer setup`** changes the location of the CROWN analysis configuration asked on first use.
+
+## Pipeline
+
+All modes below run through the single entry point **`run.py`** (the [`tauer` guided workflow](#tauer-guided-workflow) drives the same commands). Run `python3 run.py --help` 
 for the authoritative, always-up-to-date flag list; what follows is a practical walkthrough in pipeline order. The full flag table and the repository
 layout are at the end, under [Additional details](#additional-details). The figure below shows the graph of how the different elements of CROWN and TAUER are intertwined and the usual workflow of analyses.
 
 ```bash
 python3 run.py <MODE> [options]
+```
+
+The ROOT outputs of a production (shapes and preselected ntuples) are collected below
+`/ceph/$USER/TAUER_shapes/<ntupletag>/` (the fake-factor and b-tag results, json files and plots, are in `fake_factors/workdir/` and
+`btag_efficiencies/workdir/`):
+
+```
+/ceph/$USER/TAUER_shapes/<ntupletag>/
+├── output/[<tag>/]<ss-os|ff>/<era>/<channel>/   shapes (SHAPES, estimations)
+├── validation/                                 ntuple_processor validation database
+├── fake_factors/preselection/<ff-era>/<channel>/   FF preselected ntuples
+├── btag_efficiencies/preselection/<era>/<channel>/ b-tag preselected ntuples
+└── training/{configs,datasets}/                 NN training configs and feather folds
 ```
 
 ![TAUER pipeline: CROWN inputs, the steps of each workflow and the results that return to CROWN](docs/pipeline.svg)
@@ -136,8 +206,10 @@ Runs `shapes/produce_shapes.py` (booking/execution via the `ntuple_processor` su
 then `shapes/do_estimations.py` for fake-factor/QCD/embedding post-processing, writing
 
 ```
-/ceph/$USER/TAUER_shapes/<ntupletag>/output/<tag>/<ss-os|ff>/<era>/<channels>/shapes.root
+/ceph/$USER/TAUER_shapes/<ntupletag>/output/[<tag>/]<ss-os|ff>/<era>/<channel>/shapes.root
 ```
+
+The `<tag>/` level only appears when `--tag` differs from `--ntupletag`.
 
 Pass `--selection-friend <tag>` (`SELECTION_FRIEND_DIR` env var) to attach CROWN's
 selection-mask friend trees and switch preselection over to
@@ -167,9 +239,10 @@ python3 run.py PLOT --ntupletag <ntupletag> --era <era> --channels <channels>
 ```
 
 Runs `plotting/plot_shapes_control.py` (mplhep/CMS-style) against the shapes ROOT file
-`SHAPES` produced, writing PNG/PDF control plots.
+`SHAPES` produced, writing PNG/PDF control plots to
+`/web/$USER/public_html/CMS_HTT/<ss-os|ff>/<era>/<ntupletag>/[<tag>/]<channel>/`.
 
-Writing straight to `/web/$USER/public_html/...` (this local PLOT mode's default) only works
+Writing straight to `/web` (this local PLOT mode's default) only works
 when run on a node where `/web` is actually mounted (a portal/login node). It does **not** work
 from `condor/submit_plotting.py` jobs -- Condor execute-node containers only bind-mount `/work`,
 `/ceph`, `/cvmfs`, not `/web`.
@@ -203,7 +276,7 @@ The fake factors are measured from its own submodule. `run.py FF-MEASURE` chains
 `GEN-TFF-CONFIGS → TauFakeFactors' own preselection.py → FF →
 FF-CORR`.
 
-Run `GEN-TFF-CONFIGS` first after any `config/backgrounds.yaml` edit — it's the
+Run `GEN-TFF-CONFIGS` first after any `common/datasets.yaml` edit — it's the
 build step that regenerates the FF `preselection_{ch}.yaml` (samples, `presel_mask`) from central
 config.
 
@@ -212,8 +285,12 @@ default): `fake_factors/configs/smhtt/{2022,2023,2024,2025}/common_settings.yaml
 intentionally carry no `ntuple_path`/`output_path`/`file_path`/`workdir_name` any more —
 those are always resolved from `--ntupletag` (plus `--selection-friend` for the CROWN
 selection-mask friend tree), via a generated tmp config, so switching ntupletag can never
-silently mix output from two different productions. All FF-MEASURE output (the preselected
-ntuples, the `ff` and `ff-corr` results) goes to `/ceph/$USER/TAUER_shapes/<ntupletag>/fake_factors/`, next to the shapes:
+silently mix output from two different productions. `<ff-era>` below is the TauFakeFactors config
+year (`2022`, `2023`, `2024`, `2025`, see `common.analysis.ff_config_era`), `<tag>` defaults to `<ntupletag>`:
+
+- preselected ntuples: `/ceph/$USER/TAUER_shapes/<ntupletag>/fake_factors/preselection/<ff-era>/<channel>/`
+- `ff` results: `fake_factors/workdir/<tag>/<ff-era>/fake_factors/` (`fake_factors_<channel>.json[.gz]`, plots in `<channel>/`)
+- `ff-corr` results: `fake_factors/workdir/<tag>/<ff-era>/corrections/[<correction_tag>/]`
 
 ```bash
 python3 run.py FF-MEASURE --era <era> --channels <channels> --steps presel,ff,ff-corr \
@@ -221,7 +298,7 @@ python3 run.py FF-MEASURE --era <era> --channels <channels> --steps presel,ff,ff
 ```
 
 2022/2023 share one combined TauFakeFactors config per year (`configs/smhtt/2022/`,
-`configs/smhtt/2023/` — see `config.analysis.ff_config_era`), covering both era halves'
+`configs/smhtt/2023/` — see `common.analysis.ff_config_era`), covering both era halves'
 samples via per-sample `era_overrides`; one run with either half's `--era` value already
 processes both halves together, so don't run this once per half.
 
@@ -236,7 +313,7 @@ The ntuples are always stage-0: the split is a cut on the HTXS stage-1.2 bin and
   fraction rescaling to the recommended values from `sample_database/aux_data/stxs_nick_table.json`, built by
   `python -m analyses.smhtt.common.stxs_tools`. The recommendations are read from `$STXS_RECOMMENDATIONS_DIR`.
 - Building the nick table: the per-bin fractions f_MC come from the unfiltered samples (pooled over eras, ggH NNLOPS-weighted) and are
-  applied to the filtered nicks of `analyses/smhtt/config/signals.yaml`. `signal_nicks` adds the unfiltered nicks of the signal families on its own (skipping
+  applied to the filtered nicks of `analyses/smhtt/common/signals.yaml`. `signal_nicks` adds the unfiltered nicks of the signal families on its own (skipping
   2025, a copy of 2024, and the non-ReNano 2024 nick where a ReNano one exists); they are scanned but never booked as signals. Eras sharing a dbs
   (2025/2026 and 2024) reuse the same scan.
   ```bash
@@ -297,7 +374,7 @@ RooMorphing parameter) → `tau_es/run_taues_fit.py workspace` → `tau_es/run_t
 ### 8. B-tag efficiency measurement
 
 ```bash
-conda activate fake_factors
+conda activate tauer
 python3 run.py BTAG --era <era> --channels <channels> --ntupletag <btag-ntupletag> --selection-friend <selection-tag> --steps presel,calc
 ```
 
@@ -306,7 +383,13 @@ python3 run.py BTAG --era <era> --channels <channels> --ntupletag <btag-ntupleta
 `btag_efficiencies/calculate_efficiency.py`. Add `gen-configs` to rebuild the
 preselection YAML from central config first (needed after a CROWN selection change).
 The ntuple path (including your username) and the output/workdir paths are derived from
-`--ntupletag`; `--tag` adds an extra workdir level, as for FF-MEASURE and shapes.
+`--ntupletag`: the preselected ntuples go to `/ceph/$USER/TAUER_shapes/<ntupletag>/btag_efficiencies/preselection/<era>/<channel>/`,
+the efficiencies (json and plots) to `btag_efficiencies/workdir/<ntupletag>/<era>/[<tag>/]<channel>/btag_efficiency.json[.gz]`
+(`--tag` adds the extra level only when it differs from `--ntupletag`).
+
+The measurement reads the jet vectors `jet_pt_vec`, `jet_eta_vec`, `jet_hadronflavour_vec`, `jet_btag_value_vec` (column names in
+`btag_efficiencies/configs/{era}/btag_efficiency.yaml`), which CROWN only writes for MC with `measure_btag_efficiency = True` in
+`analysis_configurations/tau/config.py`: the b-tag ntuples are a separate production with that flag on.
 
 ### 9. NN training
 
@@ -324,11 +407,16 @@ python3 condor/submit_train_configs.py --ntupletag <ntupletag> --eras <eras> --c
 python3 run.py TRAIN-DATASET --channels <channels> --ntupletag <ntupletag>
   ```
 
-3. NN training loop.
+3. NN training loop, locally or as one condor job with the same law command and output layout (`--request-gpus N` adds `request_gpus`, the job
+   uses the GPUs condor assigns).
 ```bash
 python3 run.py TRAIN --channels <channels> --ntupletag <ntupletag> \
   --train-task RunAllCENNTConfusionMatrixWorkflow --cuda-device 0,1 --workers 2
+python3 condor/submit_nn_train.py --channels <channels> --ntupletag <ntupletag> --request-gpus 2 [--dry-run]
 ```
+
+The training covers et/mt/tt only (the channels of the DNN categorization, `analyses/<analysis>/shapes/selection/category_selection.py`), and the
+configs must be collected with the FF friend attached (`--ff-friend`).
 
 `TRAIN-DATASET` still accepts the original, lower-level interface --
 `--train-config`/`TRAIN_CONFIG=<path>` to a single, already-built
@@ -343,7 +431,7 @@ present there merged in.
 
 Every batch-shaped stage has a direct HTCondor submitter under `condor/` — plain Python
 (`condor/common.py`'s `JobSpec`/`SubmissionPlan`/`submit()`), shelling out to `condor_submit`
-directly. All scripts default `--eras`/`--channels` to `config.analysis.RUN3_ERAS`/`get_channels()`, 
+directly. All scripts default `--eras`/`--channels` to `common.analysis.RUN3_ERAS`/`get_channels()`, 
 and support `--dry-run` (validates real classads via `condor_submit -dry-run` without queuing).
 
 ```bash
@@ -363,6 +451,8 @@ python3 condor/submit_training.py --master-config <merged-config-from-adjust_con
                                                           # use this one instead when the merged
                                                           # config is large enough to want the
                                                           # per-(era,channel) split parallelized
+python3 condor/submit_nn_train.py --ntupletag <ntupletag> --channels <channels> --request-gpus 1 --dry-run
+                                                          # run.py TRAIN (law) as one condor job, GPUs via --request-gpus
 python3 condor/submit_btag_efficiency.py --ntupletag <btag-ntupletag> --selection-friend <selection-tag> \
   --steps presel --eras <eras> --channels <channels> --dry-run   # --steps calc: one job per era
 python3 condor/submit_taues_fit.py --era <era> --input-file <taues-shapes.root> \
@@ -380,7 +470,7 @@ splitting the work, so only the first of each pair is queued).
 `submit_shapes.py --no-era-merge 2025` runs the job with `TAUER_NO_DATA_ERA_MERGE=2025` set
 in its environment, un-merging that one analysis era's extra `DATA_ERA_MERGE` eras (e.g.
 2025 without 2026's data folded in) for a one-off check — see
-`config.analysis.get_data_eras()`.
+`common.analysis.get_data_eras()`.
 
 ### Splitting a job by process group
 
@@ -442,7 +532,7 @@ request the datasets on `T1_DE_KIT_Disk`. Use the same `--files-per-job` for `--
 Run3 (all 6 eras, all 4 channels where data exists) is the primary, fully validated
 production target. Run2/tauES/embedding support is real but narrower.
 
-- **Run2 in the code:** the Run2 branches exist (2018 samples and lumi in `config/backgrounds.yaml`, the Run2 systematic
+- **Run2 in the code:** the Run2 branches exist (2018 samples in `common/datasets.yaml` and lumi in `common/analysis.py`, the Run2 systematic
   names, the embedded weight chain, CROWN's Run2 weight chain), but the entry points are Run3-only:
   `common/sample_paths.py` rejects any non-Run3 era, so `run.py`, the condor submitters, `FF-MEASURE` and `BTAG` cannot
   build their ntuple paths for 2018. The fake-factor and btag configs of the Run2 eras still carry the removed
@@ -486,21 +576,23 @@ TAUER/
 ├── environment.yml                # `tauer` conda env
 ├── docs/                          # logo and the graphs shown in this README (pipeline.svg, selection_friend.svg)
 │
-├── config/                        # Generic framework config
-│   ├── analysis.py                #   getters
+├── common/                        # Shared analysis code and its configuration
+│   ├── analysis.py                #   eras, per-era luminosity, samples, background processes (datacard name, dataset key, groups), masks
+│   ├── datasets.yaml              #   data (per channel) and simulated background samples per era (read by analysis.py)
+│   ├── variables.yaml             #   variable list for control plots, NN training and FF preselection
+│   ├── training_setup.yaml        #   NN training dataset setup (label map, selections, skipped processes)
 │   ├── systematics.py             #   single source of the systematics, used by shapes and datacards
-│   ├── processes.py               #   single source of the background processes (datacard name, dataset key, groups)
-│   ├── backgrounds.yaml           #   shared background sample lists, per-era luminosity
-│   ├── variables.yaml             #   variable list for control plots/DNN/FF
-│   ├── logging_setup_configs.py
-│   └── shapes/                    #   generic binning mechanism (NOT selection logic)
-│       └── control_binning.py, categorization.py
+│   ├── binning.py                 #   control-plot binning and categorization helpers (NOT selection logic)
+│   ├── booking.py                 #   ntuple_processor booking glue (config formatter, file paths, helper dicts)
+│   ├── sample_paths.py            #   CROWN ntuple/friend-tree paths, shapes output directory
+│   └── shapes_merge.py            #   merging of split shapes jobs, expected_processes.json
 │
 ├── analyses/                      # Pluggable per-analysis code, selected via TAUER_ANALYSIS; same layout as the top level
 │   └── smhtt/                     # SM STXS H->tautau
-│       ├── config/
+│       ├── common/
 │       │   ├── signals.yaml                   #   signal sample names per era
-│       │   └── shapes/control_binning.py      #   extra binning for the control-plot variables
+│       │   ├── binning.py                     #   extra binning for the control-plot variables
+│       │   └── stxs_tools.py                  #   STXS Run 3 recommendations loader, signal units, per-nick normalization table
 │       ├── shapes/
 │       │   ├── selection/
 │       │   │   ├── process_selection.py       #   signal Selections generated per stage-0/stage-1.2 unit
@@ -511,8 +603,7 @@ TAUER/
 │       │   ├── systematics.py                 #   datacard signal names per STXS stage, signal uncertainties
 │       │   └── combine_model.py               #   Combine physics model and POI mapping
 │       ├── plotting/plot_stxs.py              #   per-STXS-bin signal-strength plots
-│       ├── trainings/training_labels.py       #   NN training labels per STXS bin
-│       └── common/stxs_tools.py               #   STXS Run 3 recommendations loader, signal units, per-nick normalization table
+│       └── trainings/training_labels.py       #   NN training labels per STXS bin
 │
 ├── shapes/                         # Shape production
 │   ├── produce_shapes.py           #   reads raw CROWN ntuples directly and attaches CROWN's shapes_preparation friends
@@ -553,25 +644,23 @@ TAUER/
 ├── condor/                           # Direct HTCondor submission of each step
 │   ├── common.py                     #   JobSpec/SubmissionPlan/wrapper-script/submit() machinery
 │   ├── submit_shapes.py, submit_plotting.py, submit_train_configs.py, submit_training.py
-│   ├── submit_btag_efficiency.py, submit_taues_fit.py
+│   ├── submit_btag_efficiency.py, submit_taues_fit.py, submit_ff.py, submit_estimations.py
+│   ├── submit_stxs_table.py, submit_dcache_check.py, submit_nn_train.py
 │   └── run/                          #   generated per-invocation wrapper/submit/log files
-│
-├── common/                           # Generic utilities
-│   ├── cmsenv.py                     #   run_in_cmsenv()/get_fitdir()
-│   ├── conda_env.py                  #   run_in_conda() -- activates `tauer`, for run.py
-│   ├── lcg_env.py                    #   get_output_features() under the CVMFS LCG view
-│   ├── sample_paths.py               #   CROWN ntuple/friend-tree path construction
-│   ├── helper_collection.py          #   ObjBuildingDict/NestedDefaultDict/STXS helpers
-│   └── ntuple_processor_config_helper.py  # booking-graph glue for ntuple_processor
 │
 ├── trainings/                        # DNN training pipeline
 │   ├── create_training_dataset.py    #   ROOT shapes -> per-event feather folds
-│   ├── adjust_config.py, plot_losses.py, setup.yaml, src/
+│   ├── adjust_config.py, plot_losses.py, src/
 │   └── uncertainty-aware-training/   #   submodule: the actual NN training-loop task graph
 │
-├── utils/
-│   ├── setup_cmssw.sh                # sources `cmsenv`
-│   └── setup_root.sh                 # sources the CVMFS LCG ROOT view
+├── workflow/                         # `tauer` guided workflow (cli.py, steps.py, status.py, tracker.py, tauer entry script)
+│
+├── utils/                            # Environment setup
+│   ├── environment.py                #   tauer conda env, CMSSW and LCG environments: run_in_conda(), run_in_cmsenv(),
+│   │                                 #   get_fitdir(), the condor job environment and the conda re-exec of the condor scripts
+│   ├── setup_tauer.sh                #   sources the `tauer` env and PYTHONPATH, for running scripts by hand
+│   ├── setup_cmssw.sh                #   sources `cmsenv`
+│   └── install_tauer_command.sh      #   links the `tauer` command into the active conda env
 │
 ├── fake_factors/                     # submodule: Fake-factor measurement code
 │   └── generate_configs.py           #   generates preselection configs
@@ -593,11 +682,11 @@ arguments pass straight through to the underlying python script (e.g. `shapes/pr
 | `--ntupletag` | `NTUPLETAG` | *(required for SHAPES/TRAIN-SHAPES/CONFIGS, and FF-MEASURE unless `--steps` is gen-configs-only)* | CROWN ntuple production tag. |
 | `--tag` | `TAG` | `--ntupletag` | Run-tag, distinct from ntupletag. Left at the default, an ss-os run and a later `--ff-friend` run share one output tree. Set explicitly only for a second, independent run that should *not* build on the earlier one — nests output under `output/{tag}/{ss-os,ff}/{era}/{channel}/shapes.root`. Also the FF-MEASURE workdir name, the BTAG workdir nesting and the TRAIN law version. |
 | `--era` | `ERA` | `2022postEE` | |
-| `--channels` | `CHANNELS` | `et,mt,tt` | |
+| `--channels` | `CHANNELS` | `et,mt,tt` | Comma-separated; every channel is run independently and has its own output directory. |
 | `--stxs-stage` | `STXS_STAGE` | `stage0` | Signal granularity (`stage0` per production mode, `stage1p2` per STXS bin), see below. Same flag for shapes and datacards. |
 | `--selection-friend` | `SELECTION_FRIEND_DIR` | **required** for SHAPES/TRAIN-SHAPES/CONFIGS | CROWN shapes_preparation FRIEND tree version tag. Attaches the friend to every channel: `SR_mask`/`SR_mask_ss`/`presel_mask` drive the plain OS/SS/preselection cuts, `gen_category_{T,J,L}` drives the DY/TT/VV T/J/L split, and its single fused `weight` branch drives `MC_base_process_selection` for et/mt/tt/em. |
 | `--ff-friend` | `FF_FRIENDS_DIR` | unset | CROWN fake-factor FRIEND tree version tag. Attached to et/mt/tt only (em has no fake factors); enables FF mode (`SHAPES --ff-type fake_factor`, `do_estimations --do-ff`). Unset falls back to the ss-os same-sign QCD extrapolation. |
-| `--additional-friends` | `ADDITIONAL_FRIENDS_DIR` | unset | Comma-separated CROWN FRIEND tree version tags (or full paths), same resolution rule as above. |
+| `--additional-friends` | `ADDITIONAL_FRIENDS_DIR` | unset | Comma-separated CROWN FRIEND tree version tags (or full paths), same resolution rule as above, e.g. the FastMTT friend. FF-MEASURE and BTAG add the (bare) tags to the preselection's `friends`. |
 | `--ff-config` | `FF_CONFIG` | unset | Override config path for FF mode. |
 | `--ff-corr-config` | `FF_CORR_CONFIG` | unset | Override config path for FF-CORR mode. |
 | `--ff-input-dir` | `FF_INPUT_DIR` | unset | For FF/FF-CORR: point at any preselection-shaped directory instead of TauFakeFactors' own `preselection.py` output. |

@@ -9,8 +9,8 @@ import matplotlib.ticker as mticker
 import mplhep as hep
 import ROOT
 
-from config.analysis import get_data_eras, get_era_luminosity, get_luminosity
-from config.logging_setup_configs import setup_logging
+from common.analysis import get_data_eras, get_era_luminosity, get_luminosity
+from CustomLogging import setup_logging
 from plotting.plot_shapes_control import (
     CHANNEL_LABELS,
     PROCESS_COLOURS,

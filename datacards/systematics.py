@@ -4,10 +4,10 @@ import importlib
 import logging
 from typing import TYPE_CHECKING, List, Optional, Tuple
 
-from config.analysis import ACTIVE_ANALYSIS
-from config.logging_setup_configs import setup_logging
-from config.systematics import systematics
-from config.processes import BACKGROUNDS, expand
+from common.analysis import ACTIVE_ANALYSIS
+from CustomLogging import setup_logging
+from common.systematics import systematics
+from common.analysis import BACKGROUNDS, expand
 
 _analysis_systematics = importlib.import_module(f"analyses.{ACTIVE_ANALYSIS}.datacards.systematics")
 
@@ -41,7 +41,7 @@ class Processes:
         self.jetFakes = ["jetFakes"]
 
     def resolve(self, keys) -> list:
-        """Datacard names of the shape keys/groups of config/processes.py and of the special keys."""
+        """Datacard names of the shape keys/groups of common/analysis.py and of the special keys."""
         special = {"signal": self.signals, "jetFakes": self.jetFakes, "qcd": self.qcd, "data": []}
         return [name for key in expand(keys) for name in special.get(key, [BACKGROUNDS[key].datacard] if key in BACKGROUNDS else [])]
 
@@ -58,7 +58,7 @@ def add_systematics(
     shape_systematics: bool = True,
     record: Optional[List[Tuple[str, str, Tuple[str, ...], Tuple[str, ...]]]] = None,
 ) -> None:
-    """Add the systematics of config/systematics.py plus the analysis signal and embedding ones. With cb=None only
+    """Add the systematics of common/systematics.py plus the analysis signal and embedding ones. With cb=None only
     `record` is filled with (name, type, processes, channels)."""
     logger.debug(f"calling add_systematics {locals()}")
     channels, processes = Channels(), Processes(run2=int(era[:4]) < 2022, stxs_stage=stxs_stage)

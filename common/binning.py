@@ -1,10 +1,11 @@
 import importlib
 
 from ntuple_processor import Histogram
+from ntuple_processor.utils import Selection
 import numpy as np
 from typing import Any, Dict, Union
-from common.helper_collection import ObjBuildingDict
-from config.analysis import ACTIVE_ANALYSIS
+from common.booking import ObjBuildingDict
+from common.analysis import ACTIVE_ANALYSIS
 
 
 class HistogramBuildingDict(ObjBuildingDict):
@@ -106,9 +107,17 @@ common_binning = HistogramBuildingDict(
 )
 
 try:
-    _analysis_binning = importlib.import_module(f"analyses.{ACTIVE_ANALYSIS}.config.shapes.control_binning")
+    _analysis_binning = importlib.import_module(f"analyses.{ACTIVE_ANALYSIS}.common.binning")
     common_binning.update(getattr(_analysis_binning, "EXTRA_BINNING", {}))
 except ModuleNotFoundError:
     pass
 
 control_binning = {ch: common_binning for ch in ["et", "mt", "tt", "em", "ee", "mm"]}
+
+
+def build_categorization(regions):
+    """{channel: {region: (cut, [Histogram, ...])}} -> {channel: [(Selection, [Histogram, ...]), ...]} as booked by produce_shapes."""
+    return {
+        channel: [(Selection(name=region, cuts=[(cut, "category_selection")]), histograms) for region, (cut, histograms) in channel_regions.items()]
+        for channel, channel_regions in regions.items()
+    }

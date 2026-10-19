@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from common.cmsenv import REPO_ROOT, get_fitdir, pythonpath_with_tff, run_in_cmsenv
+from utils.environment import REPO_ROOT, get_fitdir, pythonpath_with_tff, run_in_cmsenv
 from datacards import gof_card_dir
 
 

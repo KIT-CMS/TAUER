@@ -7,8 +7,8 @@ named sub-categories rather than a joint 2D histogram, since ntuple_processor's
 Histogram only ever books a 1D Histo1D.
 
 Each region books the same variable list used by produce_shapes.py's
---no-dnn-categorization control plots (config/variables.yaml's output_features,
-filtered to what config/shapes/control_binning.py has binning for) -- so the
+--no-dnn-categorization control plots (common/variables.yaml's output_features,
+filtered to what common/binning.py has binning for) -- so the
 resulting shapes are the normal control-plot variable set, just additionally
 split by njets, and read by the same downstream plotting as any other shape
 (jetFakes/FF, embedding etc. come along automatically via produce_shapes.py's
@@ -18,13 +18,13 @@ import os
 
 import yaml
 
-from config.shapes.categorization import build_categorization
-from config.shapes.control_binning import control_binning
+from common.binning import build_categorization
+from common.binning import control_binning
 
 _channels = list(control_binning.keys())
 
 _yaml_path = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "..", "..", "config", "variables.yaml"
+    os.path.dirname(os.path.abspath(__file__)), "..", "..", "common", "variables.yaml"
 )
 with open(_yaml_path) as _f:
     _output_features = yaml.safe_load(_f).get("output_features", [])
@@ -41,7 +41,7 @@ def _variables_for(channel):
     variables = [v for v in _output_features if v in available]
     if not variables:
         raise ValueError(
-            f"No variables from config/variables.yaml are available in control_binning "
+            f"No variables from common/variables.yaml are available in control_binning "
             f"for channel {channel!r}. Available: {available}. From YAML: {_output_features}"
         )
     return variables

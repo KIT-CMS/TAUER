@@ -10,14 +10,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from condor.common import JobSpec, SubmissionPlan, csv, submit
 from common.sample_paths import build_shape_output_paths
-from config.analysis import RUN3_ERAS, get_channels
+from common.analysis import RUN3_ERAS, get_channels
 
 
-def parse_args():
+def parse_args(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--ntupletag", required=True, help="CROWN ntuple production tag, e.g. htt_260602_2024-25_v5.")
-    p.add_argument("--eras", type=csv, default=list(RUN3_ERAS), help="Comma-separated eras (default: all Run3 eras from config.analysis).")
-    p.add_argument("--channels", type=csv, default=get_channels(), help="Comma-separated channels (default: all channels from config.analysis).")
+    p.add_argument("--eras", type=csv, default=list(RUN3_ERAS), help="Comma-separated eras (default: all Run3 eras from common.analysis).")
+    p.add_argument("--channels", type=csv, default=get_channels(), help="Comma-separated channels (default: all channels from common.analysis).")
     p.add_argument("--user", default=getpass.getuser(), help="Grid storage username for --ntupletag-derived path defaults (default: current user).")
     p.add_argument("--input-dir", default=None, help="Default: build_shape_output_paths(--ntupletag).output (same default condor/submit_shapes.py uses for --output-dir).")
     p.add_argument("--ff-friend", default=None,
@@ -32,7 +32,7 @@ def parse_args():
     p.add_argument("--request-memory-mb", type=int, default=2000)
     p.add_argument("--request-disk-kb", type=int, default=1_000_000)
     p.add_argument("--dry-run", action="store_true", help="Validate classads via `condor_submit -dry-run`, do not queue jobs.")
-    return p.parse_args()
+    return p.parse_args(argv)
 
 
 def build_jobs(args) -> list[JobSpec]:
@@ -60,10 +60,9 @@ def build_jobs(args) -> list[JobSpec]:
     return jobs
 
 
-def main():
-    args = parse_args()
+def build_plan(args) -> SubmissionPlan:
     jobs = build_jobs(args)
-    plan = SubmissionPlan(
+    return SubmissionPlan(
         stage=f"estimation-{'ff' if args.ff_friend else 'ss-os'}",
         tag=args.tag,
         entry_point="shapes/do_estimations.py",
@@ -73,7 +72,11 @@ def main():
         request_memory_mb=args.request_memory_mb,
         request_disk_kb=args.request_disk_kb,
     )
-    return submit(plan, dry_run=args.dry_run)
+
+
+def main():
+    args = parse_args()
+    return submit(build_plan(args), dry_run=args.dry_run)
 
 
 if __name__ == "__main__":

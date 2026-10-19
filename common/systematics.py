@@ -3,12 +3,12 @@ Single source of the systematic uncertainties: shapes/produce_shapes.py books th
 and datacards/systematics.py adds them to the datacards. The STXS signal uncertainties come from
 analyses/<analysis>/datacards/systematics.py, the embedding ones are kept separately (Run 2 only).
 
-`processes` are background shape keys or groups of config/processes.py, or "signal" (all signal units/processes),
+`processes` are background shape keys or groups of common/analysis.py, or "signal" (all signal units/processes),
 "jetFakes" (the fake factor estimate, i.e. the shift is also booked in the anti-isolated region) or "qcd".
 """
 from typing import NamedTuple, Tuple, Union
 
-from config.analysis import ff_component_names
+from common.analysis import ff_component_names
 
 ERA_TAG = {
     "2016preVFP": "2016preVFP", "2016postVFP": "2016postVFP", "2017": "2017", "2018": "2018",

@@ -1,7 +1,7 @@
 import logging
 
-from config.analysis import AR_MASK_BRANCH, SR_MASK_SS_BRANCH
-from config.logging_setup_configs import setup_logging
+from common.analysis import AR_MASK_BRANCH, SR_MASK_SS_BRANCH
+from CustomLogging import setup_logging
 from ntuple_processor.utils import Cut, Weight
 from ntuple_processor.systematics import (
     ReplaceCut,
@@ -33,12 +33,12 @@ anti_iso = ReplaceCutAndAddWeight("anti_iso", "SR_mask", _anti_iso(), Weight(FF_
 
 
 def shape_systematics(syst):
-    """Up/Down systematics of a config.systematics.Systematic in the signal region."""
+    """Up/Down systematics of a common.systematics.Systematic in the signal region."""
     return [ReplaceVariable(f"{syst.name}{d}", f"{syst.name}{d}") for d in SHIFT_DIRECTIONS]
 
 
 def anti_iso_systematics(syst):
-    """Up/Down systematics of a config.systematics.Systematic in the anti-isolated region, named anti_iso_<shift> as
+    """Up/Down systematics of a common.systematics.Systematic in the anti-isolated region, named anti_iso_<shift> as
     shapes/do_estimations.py expects: a shift of the fake factor weight, or a CROWN shift that also moves the anti-iso
     mask and the fake factor weight of the shifted friend trees."""
     if syst.source == "ff":

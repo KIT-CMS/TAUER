@@ -2,23 +2,24 @@ import logging
 import os
 from functools import lru_cache
 from pathlib import Path
+from typing import NamedTuple
 
 import yaml
 
-from config.logging_setup_configs import setup_logging
+from CustomLogging import setup_logging
 
 logger = setup_logging(logger=logging.getLogger(__name__))
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-_CFG_DIR = Path(__file__).resolve().parent          # config/
+_CFG_DIR = Path(__file__).resolve().parent          # common/
 
-_BACKGROUNDS_YAML = _CFG_DIR / "backgrounds.yaml"
+_DATASETS_YAML = _CFG_DIR / "datasets.yaml"
 _VARIABLES_YAML = _CFG_DIR / "variables.yaml"
 
 # The active pluggable analysis. Everything else in this module (backgrounds, cuts,
 # weights, era/channel/mask machinery) is generic across tau analyses.
 ACTIVE_ANALYSIS = os.environ.get("TAUER_ANALYSIS", "smhtt")
-_ANALYSIS_SIGNALS_YAML = _CFG_DIR.parent / "analyses" / ACTIVE_ANALYSIS / "config" / "signals.yaml"
+_ANALYSIS_SIGNALS_YAML = _CFG_DIR.parent / "analyses" / ACTIVE_ANALYSIS / "common" / "signals.yaml"
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 RUN3_ERAS = (
@@ -98,8 +99,8 @@ _TFF_TO_DATASET: dict[str, str] = {
 # ── YAML loaders (cached) ─────────────────────────────────────────────────────
 
 @lru_cache(maxsize=1)
-def _load_backgrounds() -> dict:
-    return yaml.safe_load(_BACKGROUNDS_YAML.read_text())
+def _load_datasets() -> dict:
+    return yaml.safe_load(_DATASETS_YAML.read_text())
 
 
 @lru_cache(maxsize=1)
@@ -141,7 +142,7 @@ def _signal_samples() -> dict[str, dict[str, list[str]]]:
 
 
 # Module-level alias; consumed directly by shapes/preselect.py
-# (`from config.analysis import SIGNAL_SAMPLES as signal_files`).
+# (`from common.analysis import SIGNAL_SAMPLES as signal_files`).
 SIGNAL_SAMPLES: dict[str, dict[str, list[str]]] = {}
 
 def _lazy_init_signals():
@@ -158,16 +159,16 @@ def get_signal_process_keys() -> set[str]:
 # ── Background sample access ──────────────────────────────────────────────────
 
 def get_background_samples(era: str, channel: str) -> dict[str, list[str]]:
-    bg = _load_backgrounds()["backgrounds"].get(era, {})
+    datasets = _load_datasets()
     result: dict[str, list[str]] = {}
-    for tff_proc, info in bg.items():
+    for tff_proc, info in {**datasets["backgrounds"].get(era, {}), **datasets["data"].get(era, {})}.items():
         ds_key = _TFF_TO_DATASET.get(tff_proc)
         if ds_key is None:
             logger.debug(f"Skipping unknown TFF process '{tff_proc}'")
             continue
         if tff_proc in ("data", "EMB"):
             # Both are channel-dependent sample lists (per-run-period data,
-            # per-final-state embedding), keyed the same way in backgrounds.yaml.
+            # per-final-state embedding), keyed the same way in datasets.yaml.
             ch_samples = info.get("by_channel", {}).get(channel, [])
             result.setdefault(ds_key, []).extend(ch_samples)
         else:
@@ -232,11 +233,26 @@ def get_data_eras(era: str) -> list[str]:
 
 # ── Luminosity ───────────────────────────────────────────────────────────────
 
+# Integrated luminosity per data-taking era, in fb^-1.
+LUMINOSITY = {
+    "2016preVFP": 19.5,
+    "2016postVFP": 16.8,
+    "2017": 41.5,
+    "2018": 59.83,
+    "2022preEE": 8.086069205,
+    "2022postEE": 26.674924045,
+    "2023preBPix": 17.964217998,
+    "2023postBPix": 9.676737966,
+    "2024": 109.816515335,
+    "2025": 109.898115287,
+    "2026": 25.148977841,  # merged into the 2025 analysis era (DATA_ERA_MERGE): 2025+2026 = 135.047093128
+}
+
+
 def get_era_luminosity(era: str) -> float:
-    lumi = _load_backgrounds()["luminosity"].get(era)
-    if lumi is None:
-        raise ValueError(f"Given era {era!r} not defined in config/backgrounds.yaml:luminosity.")
-    return float(lumi)
+    if era not in LUMINOSITY:
+        raise ValueError(f"Given era {era!r} not defined in common.analysis.LUMINOSITY.")
+    return LUMINOSITY[era]
 
 
 def get_luminosity(era: str) -> float:
@@ -262,3 +278,71 @@ def build_files_dict(channels: list[str], era: str) -> dict:
             f"{sum(len(v) for v in result[era][channel].values())} sample entries"
         )
     return result
+
+
+# ── Background processes ─────────────────────────────────────────────────────
+
+# Single source of the background processes: the datacard name (also the process part of the booked histogram
+# name), the ntuple_processor dataset key (the keys of get_background_samples) and the groups the systematics of
+# common/systematics.py are assigned to.
+class Process(NamedTuple):
+    datacard: str  # datacard/histogram process name, e.g. ZTT
+    dataset: str  # ntuple_processor dataset key, e.g. DY
+
+
+BACKGROUNDS = {
+    "ztt": Process("ZTT", "DY"),
+    "zl": Process("ZL", "DY"),
+    "zj": Process("ZJ", "DY"),
+    "ttt": Process("TTT", "TT"),
+    "ttl": Process("TTL", "TT"),
+    "ttj": Process("TTJ", "TT"),
+    "vvt": Process("VVT", "VV"),
+    "vvl": Process("VVL", "VV"),
+    "vvj": Process("VVJ", "VV"),
+    "w": Process("W", "W"),
+    "emb": Process("EMB", "EMB"),
+}
+
+# stage0 signal keys -> dataset keys (the STXS units of analyses/<analysis>/common/stxs_tools.py belong to these)
+SIGNAL_DATASETS = {"ggh": ("ggH",), "qqh": ("qqH", "VH"), "tth": ("ttH",), "vh": ("VH",)}
+
+# process groups of the simulated backgrounds, by sample and by origin of the hadronic tau (T/L/J)
+GROUPS = {
+    "z": ("ztt", "zl", "zj"),
+    "ttbar": ("ttt", "ttl", "ttj"),
+    "vv": ("vvt", "vvl", "vvj"),
+    "w": ("w",),
+    "real_tau": ("ztt", "ttt", "vvt"),
+    "lep_fake": ("zl", "ttl", "vvl"),
+    "jet_fake": ("zj", "ttj", "vvj", "w"),
+}
+GROUPS["mc_bkg"] = GROUPS["z"] + GROUPS["ttbar"] + GROUPS["vv"] + GROUPS["w"]
+# simulated processes subtracted from data in the anti-isolated region of the fake factor method
+GROUPS["ff_subtraction"] = GROUPS["real_tau"] + GROUPS["lep_fake"]
+
+
+def expand(keys) -> list:
+    """Background shape keys of a mix of shape keys and groups; other keys (signal, jetFakes, qcd, data) are kept."""
+    out = []
+    for key in keys:
+        for item in GROUPS.get(key, (key,)):
+            if item not in out:
+                out.append(item)
+    return out
+
+
+def datacard_backgrounds(channel: str, embedding: bool = False, jetfakes: bool = True) -> list:
+    """Datacard background processes: the simulated ones, the jet fakes folded into jetFakes with the fake factors,
+    the genuine taus replaced by EMB with embedding."""
+    keys = list(GROUPS["mc_bkg"])
+    if embedding:
+        keys = [k for k in keys if k not in GROUPS["real_tau"]] + ["emb"]
+        if channel == "em":
+            keys = [k for k in keys if k not in GROUPS["jet_fake"] or k == "w"]
+    names = [BACKGROUNDS[k].datacard for k in keys]
+    if jetfakes:
+        names = [n for n in names if n not in {BACKGROUNDS[k].datacard for k in GROUPS["jet_fake"]}] + ["jetFakes"]
+    elif embedding:
+        names.append("QCD")
+    return names

@@ -6,7 +6,7 @@ produce_workspace.py, run_gof.py, run_impacts.py). CombineHarvester/Combine stay
 import importlib
 from pathlib import Path
 
-from config.analysis import ACTIVE_ANALYSIS
+from common.analysis import ACTIVE_ANALYSIS
 
 try:
     MASS = importlib.import_module(f"analyses.{ACTIVE_ANALYSIS}.datacards.combine_model").MASS

@@ -3,47 +3,26 @@ from __future__ import annotations
 import datetime
 import getpass
 import os
+import re
 import shlex
 import subprocess
+import sys
+import tempfile
 from dataclasses import dataclass, field
 from functools import cached_property
+from typing import Callable
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+from utils.environment import DEFAULT_CONDA_ENV, REPO_ROOT, ensure_tauer_env, env_block as _env_block
 
-DEFAULT_CONDA_ENV = "tauer"
-DEFAULT_CONDA_BASE = f"/work/{getpass.getuser()}/MiniForge"
 DEFAULT_ACCOUNTING_GROUP = "cms.higgs"
-
-_BOOTSTRAP_SENTINEL = "TAUER_CONDOR_ENV_BOOTSTRAPPED"
 
 
 def csv(value: str) -> list[str]:
     return [v.strip() for v in value.split(",") if v.strip()]
 
 
-def _ensure_tauer_env() -> None:
-    import importlib.util
-
-    if importlib.util.find_spec("CustomLogging") is not None:
-        return
-    if os.environ.get(_BOOTSTRAP_SENTINEL):
-        return
-
-    import sys
-
-    env = dict(os.environ)
-    env[_BOOTSTRAP_SENTINEL] = "1"
-    env["PYTHONPATH"] = f"{REPO_ROOT}:{REPO_ROOT / 'fake_factors'}:{env.get('PYTHONPATH', '')}"
-    inner = " ".join(shlex.quote(a) for a in ["python3", *sys.argv])
-    script = (
-        f"source {shlex.quote(DEFAULT_CONDA_BASE)}/etc/profile.d/conda.sh && "
-        f"conda activate {shlex.quote(DEFAULT_CONDA_ENV)} && exec {inner}"
-    )
-    os.execvpe("bash", ["bash", "-c", script], env)
-
-
-_ensure_tauer_env()
+ensure_tauer_env()
 
 
 def default_proxy_path() -> str:
@@ -75,18 +54,23 @@ class SubmissionPlan:
     request_memory_mb: int = 4000
     request_disk_kb: int = 4_000_000
     extra_classads: dict = field(default_factory=dict)
+    cluster: int | None = None  # set by submit() from condor_submit's output
+    setups: list[Callable] = field(default_factory=list)  # filesystem writes the jobs rely on, run only by a real submit
+    run_root: Path | None = None  # redirects run_dir (a dry run uses a temporary directory)
 
     @cached_property
     def timestamp(self) -> str:
         return f"{datetime.datetime.now():%Y%m%d-%H%M%S}"
 
     @property
+    def run_parts(self) -> tuple:
+        # <ntupletag>/[<tag>/]<stage>/<timestamp>
+        return (self.ntupletag or "notag", *([self.tag] if self.tag else []), self.stage, self.timestamp)
+
+    @property
     def run_dir(self) -> Path:
         # condor/run/<ntupletag>/[<tag>/]<stage>/<timestamp>/
-        parts = [self.ntupletag or "notag"]
-        if self.tag:
-            parts.append(self.tag)
-        return Path(REPO_ROOT, "condor", "run", *parts, self.stage, self.timestamp)
+        return Path(self.run_root or REPO_ROOT / "condor" / "run", *self.run_parts)
 
     @property
     def log_dir(self) -> Path:
@@ -101,29 +85,20 @@ class SubmissionPlan:
         return self.run_dir / "err"
 
 
+def env_block(plan: SubmissionPlan) -> str:
+    return _env_block(plan.env_mode, plan.conda_env)
+
+
 def write_wrapper_script(plan: SubmissionPlan) -> Path:
     wrapper = plan.run_dir / "wrapper.sh"
     wrapper.parent.mkdir(parents=True, exist_ok=True)
 
-    if plan.env_mode == "cmssw":
-        # tau_es/make_taues_datacard.py + run_taues_fit.py need CombineHarvester/Combine's
-        # Python bindings and combine/combineTool.py/text2workspace.py, i.e. cmsenv.
-        env_block = f"""source {REPO_ROOT}/utils/setup_cmssw.sh
-export PYTHONPATH="{REPO_ROOT}:${{PYTHONPATH:-}}\""""
-    elif plan.env_mode == "lcg":
-        # CROWN's LCG view: its ROOT/xrootd client authenticates to the GridKA dCache, the conda xrootd 6 one does not.
-        env_block = f"""source /cvmfs/sft.cern.ch/lcg/views/LCG_110/x86_64-el9-gcc16-opt/setup.sh
-export LD_PRELOAD=/cvmfs/sft.cern.ch/lcg/releases/gcc/16.1.0-43042/x86_64-el9/lib64/libstdc++.so.6
-export PYTHONPATH="{REPO_ROOT}:${{PYTHONPATH:-}}\""""
-    else:
-        env_block = f"""source {DEFAULT_CONDA_BASE}/etc/profile.d/conda.sh
-conda activate {plan.conda_env}
-export PYTHONPATH="{REPO_ROOT}:{REPO_ROOT}/fake_factors:${{PYTHONPATH:-}}\""""
-
     content = f"""#!/bin/bash
 set -eo pipefail
+ulimit -c 0
+export USER={getpass.getuser()}
 cd {REPO_ROOT}
-{env_block}
+{env_block(plan)}
 echo "[wrapper] host=$(hostname) stage={plan.stage} entry_point={plan.entry_point}"
 echo "[wrapper] args: $@"
 exec nice -n 19 python3 {plan.entry_point} "$@"
@@ -155,7 +130,7 @@ def build_submit_text(plan: SubmissionPlan, wrapper: Path) -> str:
         "request_memory": str(plan.request_memory_mb),
         "request_disk": str(plan.request_disk_kb),
         # Mirrors run_dir so condor_q groups each submission separately.
-        "JobBatchName": "-".join(["tauer", *plan.run_dir.relative_to(REPO_ROOT / "condor" / "run").parts]),
+        "JobBatchName": "-".join(["tauer", *plan.run_parts]),
         "log": str(log_dir / "$(job_name).log"),
         "output": str(out_dir / "$(job_name).out"),
         "error": str(err_dir / "$(job_name).err"),
@@ -185,27 +160,45 @@ def write_submit_file(plan: SubmissionPlan, wrapper: Path) -> Path:
 
 def submit(plan: SubmissionPlan, dry_run: bool = False) -> int:
     """Write the wrapper + submit file, then either
-    `condor_submit -dry-run` (validate classads only, no jobs queued) or a
-    real `condor_submit`. Returns the subprocess return code."""
+    `condor_submit -dry-run` (validate classads only, no jobs queued, nothing written outside a
+    temporary directory) or a real `condor_submit`. Returns the subprocess return code; the
+    cluster id lands in plan.cluster."""
     if not plan.jobs:
         print(f"[condor] stage={plan.stage} tag={plan.tag or '-'}: no jobs to submit, skipping.")
         return 0
 
+    if dry_run:
+        with tempfile.TemporaryDirectory(prefix="tauer_dry_run_") as tmp:
+            plan.run_root = Path(tmp)
+            try:
+                return _submit(plan, dry_run=True)
+            finally:
+                plan.run_root = None
+    for setup in plan.setups:
+        setup()
+    return _submit(plan, dry_run=False)
+
+
+def _submit(plan: SubmissionPlan, dry_run: bool) -> int:
     wrapper = write_wrapper_script(plan)
     submit_file = write_submit_file(plan, wrapper)
     print(f"[condor] stage={plan.stage} tag={plan.tag or '-'} jobs={len(plan.jobs)}")
     for job in plan.jobs:
         print(f"[condor]   - {job.name}: {plan.entry_point} {job.arguments}")
-    print(f"[condor] submit file: {submit_file}")
-    print(f"[condor] wrapper:     {wrapper}")
+    if dry_run:
+        print("[condor] dry run: submit file, wrapper and classads live in a temporary directory that is removed afterwards")
+    else:
+        print(f"[condor] submit file: {submit_file}")
+        print(f"[condor] wrapper:     {wrapper}")
 
     if dry_run:
-        dry_run_out = plan.run_dir / "dry_run_classads.txt"
-        cmd = ["condor_submit", "-dry-run", str(dry_run_out), str(submit_file)]
+        cmd = ["condor_submit", "-dry-run", str(plan.run_dir / "dry_run_classads.txt"), str(submit_file)]
     else:
         cmd = ["condor_submit", str(submit_file)]
     print(f"[condor] running: {' '.join(shlex.quote(c) for c in cmd)}")
-    result = subprocess.run(cmd, cwd=plan.run_dir)
-    if dry_run and result.returncode == 0:
-        print(f"[condor] dry-run classads written to: {dry_run_out}")
+    result = subprocess.run(cmd, cwd=plan.run_dir, capture_output=True, text=True)
+    print(result.stdout, end="")
+    print(result.stderr, end="", file=sys.stderr)
+    if match := re.search(r"submitted to cluster (\d+)", result.stdout):
+        plan.cluster = int(match.group(1))
     return result.returncode

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import getpass
+import os
 import re
 from dataclasses import dataclass
+from pathlib import Path
 
 XROOTD_REDIRECTOR = "root://cmsdcache-kit-disk.gridka.de/"
 _NTUPLE_BASE_TEMPLATE = "/store/user/{user}/CROWN/ntuples/{ntupletag}"
@@ -63,6 +65,7 @@ class ShapeOutputPaths:
     validation: str
     training: str
     fake_factors: str
+    btag_efficiencies: str
 
 
 def build_shape_output_paths(ntupletag: str, user: str | None = None) -> ShapeOutputPaths:
@@ -74,7 +77,26 @@ def build_shape_output_paths(ntupletag: str, user: str | None = None) -> ShapeOu
         validation=f"{base}/validation",
         training=f"{base}/training",
         fake_factors=f"{base}/fake_factors",
+        btag_efficiencies=f"{base}/btag_efficiencies",
     )
+
+
+def output_run_dir(cfg, qcd_label, channel):
+    # Only nest an explicit {tag} when it differs from ntupletag -- else the default
+    # tag=ntupletag would duplicate the path segment (output/{ntupletag}/{ntupletag}/...).
+    parts = [cfg["output_dir"]]
+    if cfg["tag"] != cfg["ntupletag"]:
+        parts.append(cfg["tag"])
+    parts += [qcd_label, cfg["era"], channel]
+    return Path(*parts)
+
+
+def plot_output_dir(cfg, qcd_label):
+    # plot_shapes_control.py appends <channel>/ under this itself.
+    parts = [f"/web/{cfg['user'] or getpass.getuser()}/public_html/CMS_HTT", qcd_label, cfg["era"], cfg["ntupletag"] or "notag"]
+    if cfg["tag"] != cfg["ntupletag"]:
+        parts.append(cfg["tag"])
+    return os.path.join(*parts) + "/"
 
 
 def build_selection_friend_dir(ntupletag: str, selection_tag: str, user: str | None = None) -> str:

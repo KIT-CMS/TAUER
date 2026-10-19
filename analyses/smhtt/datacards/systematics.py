@@ -1,5 +1,5 @@
 from analyses.smhtt.common import stxs_tools
-from config.systematics import ERA_TAG
+from common.systematics import ERA_TAG
 
 
 def datacard_signal(name: str, stage: str) -> str:

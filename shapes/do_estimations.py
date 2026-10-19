@@ -10,9 +10,9 @@ from shapes.estimations.fakefactors import fake_factor_estimation
 from shapes.estimations.qcd import qcd_estimation
 from shapes.estimations.ttbar_emb import emb_ttbar_contamination_estimation
 from common.shapes_merge import merge_if_needed, merge_ff_reuse_if_needed
-from config.logging_setup_configs import setup_logging, LogContext
-from config.processes import BACKGROUNDS
-from config.systematics import ERA_TAG
+from CustomLogging import setup_logging, LogContext
+from common.analysis import BACKGROUNDS
+from common.systematics import ERA_TAG
 import tau_es.energy_scales as tau_es_energy_scales
 
 

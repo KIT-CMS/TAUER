@@ -12,7 +12,7 @@ from condor.common import JobSpec, SubmissionPlan, csv, submit
 DEFAULT_CATEGORIES = ["DM0", "DM1", "DM10_11", "Inclusive"]
 
 
-def parse_args():
+def parse_args(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--era", default="2018", help="Run2 era with tauES/embedding support (2018 today).")
     p.add_argument("--channels", dest="channel", default="mt")
@@ -29,7 +29,7 @@ def parse_args():
     p.add_argument("--request-memory-mb", type=int, default=2000)
     p.add_argument("--request-disk-kb", type=int, default=2_000_000)
     p.add_argument("--dry-run", action="store_true")
-    return p.parse_args()
+    return p.parse_args(argv)
 
 
 def build_jobs(args) -> list:
@@ -55,10 +55,9 @@ def build_jobs(args) -> list:
     return jobs
 
 
-def main():
-    args = parse_args()
+def build_plan(args) -> SubmissionPlan:
     jobs = build_jobs(args)
-    plan = SubmissionPlan(
+    return SubmissionPlan(
         stage="taues_fit",
         tag=args.tag,
         entry_point="tau_es/run_taues_category.py",
@@ -68,7 +67,11 @@ def main():
         request_memory_mb=args.request_memory_mb,
         request_disk_kb=args.request_disk_kb,
     )
-    return submit(plan, dry_run=args.dry_run)
+
+
+def main():
+    args = parse_args()
+    return submit(build_plan(args), dry_run=args.dry_run)
 
 
 if __name__ == "__main__":

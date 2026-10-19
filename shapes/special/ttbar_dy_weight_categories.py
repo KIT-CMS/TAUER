@@ -21,7 +21,7 @@ correlated visible+missing momenta (real ditau recoil) give pzetamissvis
 values well above the ttbar/WW-like population, which skews negative from
 uncorrelated W-decay neutrinos. Threshold at -25 GeV, the standard cut used
 throughout the CMS HTT emu/ee/mumu control regions this branch is named for
-(config/shapes/control_binning.py already books pzetamissvis over
+(common/binning.py already books pzetamissvis over
 [-150, 150) for control plots).
 
 nbtag still does the heavy lifting it always did (nbtag>=1 is ~90% pure TT
@@ -34,8 +34,8 @@ same reason as before: ntuple_processor's Histogram only ever books a 1D
 Histo1D (see ntuple_processor/run.py's __histo1d_from_histo), no Histo2D
 support anywhere in this framework.
 """
-from config.shapes.categorization import build_categorization
-from config.shapes.control_binning import control_binning
+from common.binning import build_categorization
+from common.binning import control_binning
 
 _pzeta_threshold = -25.0
 _dy_like_cut = f"(pzetamissvis > {_pzeta_threshold})"

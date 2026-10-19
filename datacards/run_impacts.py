@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from common.cmsenv import get_fitdir, run_in_cmsenv
+from utils.environment import get_fitdir, run_in_cmsenv
 from datacards import MASS, gof_card_dir
 
 

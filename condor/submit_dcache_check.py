@@ -75,8 +75,10 @@ def main():
     if args.merge:
         return merge(args, files, dbs)
     scan_dir = Path(args.scan_dir)
-    scan_dir.mkdir(parents=True, exist_ok=True)
-    json.dump(files, open(scan_dir / "files.json", "w"))
+    def write_files():
+        scan_dir.mkdir(parents=True, exist_ok=True)
+        json.dump(files, open(scan_dir / "files.json", "w"))
+
     nfiles = len(flatten_files(files))
     jobs = [
         JobSpec(name=f"dcache_{start}", arguments=f"--files {scan_dir / 'files.json'} --start {start} --stop {min(start + args.files_per_job, nfiles)} --output-dir {scan_dir}")
@@ -92,6 +94,7 @@ def main():
         request_memory_mb=args.request_memory_mb,
         request_disk_kb=args.request_disk_kb,
         env_mode="lcg",
+        setups=[write_files],
     )
     return submit(plan, dry_run=args.dry_run)
 

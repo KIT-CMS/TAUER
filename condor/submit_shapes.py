@@ -11,14 +11,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from condor.common import JobSpec, SubmissionPlan, csv, submit
 from common.sample_paths import build_friend_dir, build_shape_output_paths, crown_ntuple_base
 from common.shapes_merge import write_expected_processes
-from config.analysis import RUN3_ERAS, get_channels
+from common.analysis import RUN3_ERAS, get_channels
 
 
-def parse_args():
+def parse_args(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--ntupletag", required=True, help="CROWN ntuple production tag, e.g. htt_260602_2024-25_v5.")
-    p.add_argument("--eras", type=csv, default=list(RUN3_ERAS), help="Comma-separated eras (default: all Run3 eras from config.analysis).")
-    p.add_argument("--channels", type=csv, default=get_channels(), help="Comma-separated channels (default: all channels from config.analysis).")
+    p.add_argument("--eras", type=csv, default=list(RUN3_ERAS), help="Comma-separated eras (default: all Run3 eras from common.analysis).")
+    p.add_argument("--channels", type=csv, default=get_channels(), help="Comma-separated channels (default: all channels from common.analysis).")
     p.add_argument("--user", default=getpass.getuser(), help="Grid storage username (default: current user).")
     p.add_argument("--output-dir", default=None, help="Default: build_shape_output_paths(--ntupletag).output.")
     p.add_argument("--validation-db-root", default=None,
@@ -57,17 +57,18 @@ def parse_args():
                     help="Comma-separated analysis eras to run WITHOUT their usual "
                          "DATA_ERA_MERGE extra eras (e.g. '2025' to plot 2025 without "
                          "2026's data folded in). Sets TAUER_NO_DATA_ERA_MERGE in "
-                         "the job environment; see config.analysis.get_data_eras().")
+                         "the job environment; see common.analysis.get_data_eras().")
     p.add_argument("--request-cpus", type=int, default=4,
                     help="Also passed through as produce_shapes.py's --nprocs (real worker "
                          "processes, not --nthreads). See README's flag reference.")
     p.add_argument("--request-memory-mb", type=int, default=4000)
     p.add_argument("--request-disk-kb", type=int, default=8_000_000)
     p.add_argument("--dry-run", action="store_true", help="Validate classads via `condor_submit -dry-run`, do not queue jobs.")
-    return p.parse_args()
+    return p.parse_args(argv)
 
 
-def build_jobs(args) -> list[JobSpec]:
+def build_jobs(args, setups: list) -> list[JobSpec]:
+    """setups collects the directory/manifest writes the jobs need; only a real submit runs them."""
     jobs: list[JobSpec] = []
     base_store = crown_ntuple_base(args.ntupletag, user=args.user)
     ntuples_dir = args.local_directory if args.no_xrootd else f"{base_store}/CROWNRun/"
@@ -135,14 +136,14 @@ def build_jobs(args) -> list[JobSpec]:
                 common.append(f"--ff-type {args.ff_type}")
 
             # Nested output/[<tag>/]<qcd-label>/<era>/<channel>/shapes.root -- matches
-            # run.py's _output_run_dir(). Created here since TFile(..., "RECREATE")
+            # common.sample_paths.output_run_dir(). Created by a real submit since TFile(..., "RECREATE")
             # doesn't create missing parent directories itself.
             run_dir_parts = [output_dir]
             if run_tag != args.ntupletag:
                 run_dir_parts.append(run_tag)
             run_dir_parts += [qcd_label, era, channel]
             run_dir = Path(*run_dir_parts)
-            run_dir.mkdir(parents=True, exist_ok=True)
+            setups.append(lambda run_dir=run_dir: run_dir.mkdir(parents=True, exist_ok=True))
 
             # Same ss-os reuse as run.py's mode_shapes: if a plain ss-os run for this exact
             # (ntupletag, tag, era, channel) already exists, book only the FF-weighted
@@ -176,7 +177,7 @@ def build_jobs(args) -> list[JobSpec]:
                         output_file = run_dir / f"shapes__{group_label}.root"
                     job_args.append(f"--output-file {output_file}")
                     jobs.append(JobSpec(name=f"{era}_{channel}_{group_label}", arguments=" ".join(job_args)))
-                write_expected_processes(run_dir, [process for group in args.process_selection for process in group])
+                setups.append(lambda run_dir=run_dir: write_expected_processes(run_dir, [process for group in args.process_selection for process in group]))
             else:
                 output_file = run_dir / "shapes.root"
                 job_args = list(common)
@@ -188,15 +189,15 @@ def build_jobs(args) -> list[JobSpec]:
     return jobs
 
 
-def main():
-    args = parse_args()
-    jobs = build_jobs(args)
+def build_plan(args) -> SubmissionPlan:
+    setups: list = []
+    jobs = build_jobs(args, setups)
     extra_classads = {}
     if args.no_era_merge:
         extra_classads["environment"] = '"TAUER_NO_DATA_ERA_MERGE={}"'.format(
             ",".join(args.no_era_merge)
         )
-    plan = SubmissionPlan(
+    return SubmissionPlan(
         stage="shapes",
         tag=args.tag,
         entry_point="shapes/produce_shapes.py",
@@ -206,8 +207,13 @@ def main():
         request_memory_mb=args.request_memory_mb,
         request_disk_kb=args.request_disk_kb,
         extra_classads=extra_classads,
+        setups=setups,
     )
-    return submit(plan, dry_run=args.dry_run)
+
+
+def main():
+    args = parse_args()
+    return submit(build_plan(args), dry_run=args.dry_run)
 
 
 if __name__ == "__main__":

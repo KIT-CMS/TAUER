@@ -8,7 +8,7 @@ Run3 and 2018 alike).
 import numpy as np
 from ntuple_processor import Histogram
 
-from config.shapes.categorization import build_categorization
+from common.binning import build_categorization
 
 discriminator_variable = "m_vis"
 discriminator_binning = np.arange(35, 85, 2.5)

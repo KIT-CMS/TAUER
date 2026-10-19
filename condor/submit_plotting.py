@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from condor.common import REPO_ROOT, JobSpec, SubmissionPlan, csv, submit
 from common.sample_paths import build_shape_output_paths
-from config.analysis import RUN3_ERAS, get_channels
+from common.analysis import RUN3_ERAS, get_channels
 
 
 
@@ -18,7 +18,7 @@ def chunk(items: list[str], size: int) -> list[list[str]]:
     return [items[i:i + size] for i in range(0, len(items), size)]
 
 
-def parse_args():
+def parse_args(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--ntupletag", default=None,
                     help="CROWN ntuple production tag -- derives --input-dir when not given "
@@ -33,7 +33,7 @@ def parse_args():
                          "which condor execute nodes can't write to.")
     p.add_argument("--eras", type=csv, default=list(RUN3_ERAS))
     p.add_argument("--channels", type=csv, default=get_channels())
-    p.add_argument("--variables", type=csv, default=None, help="Comma-separated variable list (default: all in config/variables.yaml, handled by plot_shapes_control.py itself).")
+    p.add_argument("--variables", type=csv, default=None, help="Comma-separated variable list (default: all in common/variables.yaml, handled by plot_shapes_control.py itself).")
     p.add_argument("--split-variables", type=int, default=None, metavar="N", help="If set, split --variables into chunks of N and submit one extra job per chunk instead of one job per (era, channel).")
     p.add_argument("--log-y", action="store_true")
     p.add_argument("--blinded", action="store_true")
@@ -44,7 +44,7 @@ def parse_args():
     p.add_argument("--request-memory-mb", type=int, default=2000)
     p.add_argument("--request-disk-kb", type=int, default=2_000_000)
     p.add_argument("--dry-run", action="store_true")
-    return p.parse_args()
+    return p.parse_args(argv)
 
 
 def build_jobs(args) -> list:
@@ -96,10 +96,9 @@ def build_jobs(args) -> list:
     return jobs
 
 
-def main():
-    args = parse_args()
+def build_plan(args) -> SubmissionPlan:
     jobs = build_jobs(args)
-    plan = SubmissionPlan(
+    return SubmissionPlan(
         stage="plotting",
         tag=args.tag,
         entry_point="plotting/plot_shapes_control.py",
@@ -109,7 +108,11 @@ def main():
         request_memory_mb=args.request_memory_mb,
         request_disk_kb=args.request_disk_kb,
     )
-    return submit(plan, dry_run=args.dry_run)
+
+
+def main():
+    args = parse_args()
+    return submit(build_plan(args), dry_run=args.dry_run)
 
 
 if __name__ == "__main__":

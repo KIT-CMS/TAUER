@@ -150,7 +150,7 @@ def missing_processes(shapes_path: Path) -> list[str]:
         return sorted(expected)
 
     from analyses.smhtt.common import stxs_tools
-    from config.processes import BACKGROUNDS
+    from common.analysis import BACKGROUNDS
     from shapes import naming
 
     import ROOT

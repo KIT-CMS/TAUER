@@ -2,8 +2,8 @@ import importlib
 import logging
 from itertools import count
 
-from config.analysis import ACTIVE_ANALYSIS
-from config.logging_setup_configs import setup_logging
+from common.analysis import ACTIVE_ANALYSIS
+from CustomLogging import setup_logging
 
 logger = setup_logging(logger=logging.getLogger(__name__))
 

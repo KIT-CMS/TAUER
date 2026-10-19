@@ -34,8 +34,8 @@ import argparse
 import logging
 import os
 
-from common.cmsenv import run_in_cmsenv
-from config.logging_setup_configs import setup_logging
+from utils.environment import run_in_cmsenv
+from CustomLogging import setup_logging
 
 logger = setup_logging(logger=logging.getLogger(__name__))
 

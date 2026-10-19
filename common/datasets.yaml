@@ -1,18 +1,305 @@
-# Integrated luminosity per era, in fb^-1.
-luminosity:
-  2016preVFP: 19.5
-  2016postVFP: 16.8
-  '2017': 41.5
-  '2018': 59.83
-  2022preEE: 8.086069205
-  2022postEE: 26.674924045
-  2023preBPix: 17.964217998
-  2023postBPix: 9.676737966
-  '2024': 109.816515335
-  '2025': 109.898115287
-  # merged into the '2025' analysis era (config/analysis.py DATA_ERA_MERGE): 2025+2026 = 135.047093128
-  '2026': 25.148977841
-
+# Samples per era: `data` holds the recorded data, listed per channel; `backgrounds` the simulated background samples
+# and the embedded samples (per channel). The signal samples are in analyses/<analysis>/common/signals.yaml.
+data:
+  '2018':
+    data:
+      by_channel:
+        mt:
+        - SingleMuon_Run2018A-UL2018
+        - SingleMuon_Run2018B-UL2018
+        - SingleMuon_Run2018C-UL2018
+        - SingleMuon_Run2018D-UL2018
+      tau_gen_modes:
+      - all
+  2022preEE:
+    data:
+      by_channel:
+        et:
+        - EGamma_Run2022C-22Sep2023-v1
+        - EGamma_Run2022D-22Sep2023-v1
+        mt:
+        - Muon_Run2022C-22Sep2023-v1
+        - Muon_Run2022D-22Sep2023-v1
+        tt:
+        - Tau_Run2022C-22Sep2023-v1
+        - Tau_Run2022D-22Sep2023-v1
+        em:
+        - Muon_Run2022C-22Sep2023-v1
+        - Muon_Run2022D-22Sep2023-v1
+      tau_gen_modes:
+      - all
+  2022postEE:
+    data:
+      by_channel:
+        et:
+        - EGamma_Run2022E-22Sep2023-v1
+        - EGamma_Run2022F-22Sep2023-v1
+        - EGamma_Run2022G-22Sep2023-v2
+        mt:
+        - Muon_Run2022E-22Sep2023-v1
+        - Muon_Run2022F-22Sep2023-v2
+        - Muon_Run2022G-22Sep2023-v1
+        tt:
+        - Tau_Run2022E-22Sep2023-v1
+        - Tau_Run2022F-22Sep2023-v1
+        - Tau_Run2022G-22Sep2023-v1
+        em:
+        - Muon_Run2022E-22Sep2023-v1
+        - Muon_Run2022F-22Sep2023-v2
+        - Muon_Run2022G-22Sep2023-v1
+      tau_gen_modes:
+      - all
+  2023preBPix:
+    data:
+      by_channel:
+        et:
+        - EGamma0_Run2023C-22Sep2023_v1-v1
+        - EGamma0_Run2023C-22Sep2023_v2-v1
+        - EGamma0_Run2023C-22Sep2023_v3-v1
+        - EGamma0_Run2023C-22Sep2023_v4-v1
+        - EGamma1_Run2023C-22Sep2023_v1-v1
+        - EGamma1_Run2023C-22Sep2023_v2-v1
+        - EGamma1_Run2023C-22Sep2023_v3-v1
+        - EGamma1_Run2023C-22Sep2023_v4-v1
+        mt:
+        - Muon0_Run2023C-22Sep2023_v1-v1
+        - Muon0_Run2023C-22Sep2023_v2-v1
+        - Muon0_Run2023C-22Sep2023_v3-v1
+        - Muon0_Run2023C-22Sep2023_v4-v1
+        - Muon1_Run2023C-22Sep2023_v1-v1
+        - Muon1_Run2023C-22Sep2023_v2-v1
+        - Muon1_Run2023C-22Sep2023_v3-v1
+        - Muon1_Run2023C-22Sep2023_v4-v2
+        tt:
+        - Tau_Run2023C-22Sep2023_v1-v2
+        - Tau_Run2023C-22Sep2023_v2-v1
+        - Tau_Run2023C-22Sep2023_v3-v1
+        - Tau_Run2023C-22Sep2023_v4-v1
+        em:
+        - Muon0_Run2023C-22Sep2023_v1-v1
+        - Muon0_Run2023C-22Sep2023_v2-v1
+        - Muon0_Run2023C-22Sep2023_v3-v1
+        - Muon0_Run2023C-22Sep2023_v4-v1
+        - Muon1_Run2023C-22Sep2023_v1-v1
+        - Muon1_Run2023C-22Sep2023_v2-v1
+        - Muon1_Run2023C-22Sep2023_v3-v1
+        - Muon1_Run2023C-22Sep2023_v4-v2
+      tau_gen_modes:
+      - all
+  2023postBPix:
+    data:
+      by_channel:
+        et:
+        - EGamma0_Run2023D-22Sep2023_v1-v1
+        - EGamma0_Run2023D-22Sep2023_v2-v1
+        - EGamma1_Run2023D-22Sep2023_v1-v1
+        - EGamma1_Run2023D-22Sep2023_v2-v1
+        mt:
+        - Muon0_Run2023D-22Sep2023_v1-v1
+        - Muon0_Run2023D-22Sep2023_v2-v1
+        - Muon1_Run2023D-22Sep2023_v1-v1
+        - Muon1_Run2023D-22Sep2023_v2-v1
+        tt:
+        - Tau_Run2023D-22Sep2023_v1-v1
+        - Tau_Run2023D-22Sep2023_v2-v1
+        em:
+        - Muon0_Run2023D-22Sep2023_v1-v1
+        - Muon0_Run2023D-22Sep2023_v2-v1
+        - Muon1_Run2023D-22Sep2023_v1-v1
+        - Muon1_Run2023D-22Sep2023_v2-v1
+      tau_gen_modes:
+      - all
+  '2024':
+    data:
+      by_channel:
+        et:
+        - EGamma0_Run2024C-MINIv6NANOv15-v1
+        - EGamma0_Run2024D-MINIv6NANOv15-v1
+        - EGamma0_Run2024E-MINIv6NANOv15-v1
+        - EGamma0_Run2024F-MINIv6NANOv15-v1
+        - EGamma0_Run2024G-MINIv6NANOv15-v2
+        - EGamma0_Run2024H-MINIv6NANOv15-v2
+        - EGamma0_Run2024I-MINIv6NANOv15-v1
+        - EGamma0_Run2024I-MINIv6NANOv15_v2-v1
+        - EGamma1_Run2024C-MINIv6NANOv15-v1
+        - EGamma1_Run2024D-MINIv6NANOv15-v1
+        - EGamma1_Run2024E-MINIv6NANOv15-v1
+        - EGamma1_Run2024F-MINIv6NANOv15-v1
+        - EGamma1_Run2024G-MINIv6NANOv15-v2
+        - EGamma1_Run2024H-MINIv6NANOv15-v1
+        - EGamma1_Run2024I-MINIv6NANOv15-v1
+        - EGamma1_Run2024I-MINIv6NANOv15_v2-v1
+        mt:
+        - Muon0_Run2024C-MINIv6NANOv15-v1
+        - Muon0_Run2024D-MINIv6NANOv15-v1
+        - Muon0_Run2024E-MINIv6NANOv15-v1
+        - Muon0_Run2024F-MINIv6NANOv15-v1
+        - Muon0_Run2024G-MINIv6NANOv15-v1
+        - Muon0_Run2024H-MINIv6NANOv15-v1
+        - Muon0_Run2024I-MINIv6NANOv15-v1
+        - Muon0_Run2024I-MINIv6NANOv15_v2-v1
+        - Muon1_Run2024C-MINIv6NANOv15-v1
+        - Muon1_Run2024D-MINIv6NANOv15-v1
+        - Muon1_Run2024E-MINIv6NANOv15-v1
+        - Muon1_Run2024F-MINIv6NANOv15-v1
+        - Muon1_Run2024G-MINIv6NANOv15-v2
+        - Muon1_Run2024H-MINIv6NANOv15-v2
+        - Muon1_Run2024I-MINIv6NANOv15-v1
+        - Muon1_Run2024I-MINIv6NANOv15_v2-v1
+        tt:
+        - Tau_Run2024C-MINIv6NANOv15-v1
+        - Tau_Run2024D-MINIv6NANOv15-v1
+        - Tau_Run2024E-MINIv6NANOv15-v1
+        - Tau_Run2024F-MINIv6NANOv15-v1
+        - Tau_Run2024G-MINIv6NANOv15-v1
+        - Tau_Run2024H-MINIv6NANOv15-v1
+        - Tau_Run2024I-MINIv6NANOv15-v1
+        - Tau_Run2024I-MINIv6NANOv15_v2-v1
+        em:
+        - Muon0_Run2024C-MINIv6NANOv15-v1
+        - Muon0_Run2024D-MINIv6NANOv15-v1
+        - Muon0_Run2024E-MINIv6NANOv15-v1
+        - Muon0_Run2024F-MINIv6NANOv15-v1
+        - Muon0_Run2024G-MINIv6NANOv15-v1
+        - Muon0_Run2024H-MINIv6NANOv15-v1
+        - Muon0_Run2024I-MINIv6NANOv15-v1
+        - Muon0_Run2024I-MINIv6NANOv15_v2-v1
+        - Muon1_Run2024C-MINIv6NANOv15-v1
+        - Muon1_Run2024D-MINIv6NANOv15-v1
+        - Muon1_Run2024E-MINIv6NANOv15-v1
+        - Muon1_Run2024F-MINIv6NANOv15-v1
+        - Muon1_Run2024G-MINIv6NANOv15-v2
+        - Muon1_Run2024H-MINIv6NANOv15-v2
+        - Muon1_Run2024I-MINIv6NANOv15-v1
+        - Muon1_Run2024I-MINIv6NANOv15_v2-v1
+      tau_gen_modes:
+      - all
+  '2025':
+    data:
+      by_channel:
+        et:
+        - EGamma0_Run2025C-PromptReco-v1
+        - EGamma0_Run2025C-PromptReco-v2
+        - EGamma0_Run2025D-PromptReco-v1
+        - EGamma0_Run2025E-PromptReco-v1
+        - EGamma0_Run2025F-PromptReco-v1
+        - EGamma0_Run2025F-PromptReco-v2
+        - EGamma0_Run2025G-PromptReco-v1
+        - EGamma1_Run2025C-PromptReco-v1
+        - EGamma1_Run2025C-PromptReco-v2
+        - EGamma1_Run2025D-PromptReco-v1
+        - EGamma1_Run2025E-PromptReco-v1
+        - EGamma1_Run2025F-PromptReco-v1
+        - EGamma1_Run2025F-PromptReco-v2
+        - EGamma1_Run2025G-PromptReco-v1
+        - EGamma2_Run2025C-PromptReco-v1
+        - EGamma2_Run2025C-PromptReco-v2
+        - EGamma2_Run2025D-PromptReco-v1
+        - EGamma2_Run2025E-PromptReco-v1
+        - EGamma2_Run2025F-PromptReco-v1
+        - EGamma2_Run2025F-PromptReco-v2
+        - EGamma2_Run2025G-PromptReco-v1
+        - EGamma3_Run2025C-PromptReco-v1
+        - EGamma3_Run2025C-PromptReco-v2
+        - EGamma3_Run2025D-PromptReco-v1
+        - EGamma3_Run2025E-PromptReco-v1
+        - EGamma3_Run2025F-PromptReco-v1
+        - EGamma3_Run2025F-PromptReco-v2
+        - EGamma3_Run2025G-PromptReco-v1
+        mt:
+        - Muon0_Run2025C-PromptReco-v1
+        - Muon0_Run2025C-PromptReco-v2
+        - Muon0_Run2025D-PromptReco-v1
+        - Muon0_Run2025E-PromptReco-v1
+        - Muon0_Run2025F-PromptReco-v1
+        - Muon0_Run2025F-PromptReco-v2
+        - Muon0_Run2025G-PromptReco-v1
+        - Muon1_Run2025C-PromptReco-v1
+        - Muon1_Run2025C-PromptReco-v2
+        - Muon1_Run2025D-PromptReco-v1
+        - Muon1_Run2025E-PromptReco-v1
+        - Muon1_Run2025F-PromptReco-v1
+        - Muon1_Run2025F-PromptReco-v2
+        - Muon1_Run2025G-PromptReco-v1
+        tt:
+        - Tau_Run2025C-PromptReco-v1
+        - Tau_Run2025C-PromptReco-v2
+        - Tau_Run2025D-PromptReco-v1
+        - Tau_Run2025E-PromptReco-v1
+        - Tau_Run2025F-PromptReco-v1
+        - Tau_Run2025F-PromptReco-v2
+        - Tau_Run2025G-PromptReco-v1
+        em:
+        - Muon0_Run2025C-PromptReco-v1
+        - Muon0_Run2025C-PromptReco-v2
+        - Muon0_Run2025D-PromptReco-v1
+        - Muon0_Run2025E-PromptReco-v1
+        - Muon0_Run2025F-PromptReco-v1
+        - Muon0_Run2025F-PromptReco-v2
+        - Muon0_Run2025G-PromptReco-v1
+        - Muon1_Run2025C-PromptReco-v1
+        - Muon1_Run2025C-PromptReco-v2
+        - Muon1_Run2025D-PromptReco-v1
+        - Muon1_Run2025E-PromptReco-v1
+        - Muon1_Run2025F-PromptReco-v1
+        - Muon1_Run2025F-PromptReco-v2
+        - Muon1_Run2025G-PromptReco-v1
+      tau_gen_modes:
+      - all
+  '2026':
+    data:
+      by_channel:
+        et:
+        - EGamma0_Run2026B-PromptReco-v1
+        - EGamma0_Run2026C-PromptReco-v1
+        - EGamma0_Run2026D-PromptReco-v1
+        - EGamma1_Run2026B-PromptReco-v1
+        - EGamma1_Run2026C-PromptReco-v1
+        - EGamma1_Run2026D-PromptReco-v1
+        - EGamma2_Run2026B-PromptReco-v1
+        - EGamma2_Run2026C-PromptReco-v1
+        - EGamma2_Run2026D-PromptReco-v1
+        - EGamma3_Run2026B-PromptReco-v1
+        - EGamma3_Run2026C-PromptReco-v1
+        - EGamma3_Run2026D-PromptReco-v1
+        - EGamma4_Run2026B-PromptReco-v1
+        - EGamma4_Run2026C-PromptReco-v1
+        - EGamma4_Run2026D-PromptReco-v1
+        - EGamma5_Run2026B-PromptReco-v1
+        - EGamma5_Run2026C-PromptReco-v1
+        - EGamma5_Run2026D-PromptReco-v1
+        mt:
+        - Muon0_Run2026B-PromptReco-v1
+        - Muon0_Run2026C-PromptReco-v1
+        - Muon0_Run2026D-PromptReco-v1
+        - Muon1_Run2026B-PromptReco-v1
+        - Muon1_Run2026C-PromptReco-v1
+        - Muon1_Run2026D-PromptReco-v1
+        - Muon2_Run2026B-PromptReco-v1
+        - Muon2_Run2026C-PromptReco-v1
+        - Muon2_Run2026D-PromptReco-v1
+        - Muon3_Run2026B-PromptReco-v1
+        - Muon3_Run2026C-PromptReco-v1
+        - Muon3_Run2026D-PromptReco-v1
+        tt:
+        - Tau_Run2026B-PromptReco-v1
+        - Tau_Run2026C-PromptReco-v1
+        - Tau_Run2026D-PromptReco-v1
+        em:
+        - Muon0_Run2026B-PromptReco-v1
+        - Muon0_Run2026C-PromptReco-v1
+        - Muon0_Run2026D-PromptReco-v1
+        - Muon1_Run2026B-PromptReco-v1
+        - Muon1_Run2026C-PromptReco-v1
+        - Muon1_Run2026D-PromptReco-v1
+        - Muon2_Run2026B-PromptReco-v1
+        - Muon2_Run2026C-PromptReco-v1
+        - Muon2_Run2026D-PromptReco-v1
+        - Muon3_Run2026B-PromptReco-v1
+        - Muon3_Run2026C-PromptReco-v1
+        - Muon3_Run2026D-PromptReco-v1
+      tau_gen_modes:
+      - all
 backgrounds:
   '2018':
     DYjets:
@@ -40,15 +327,6 @@ backgrounds:
     Wjets:
       samples:
       - WJetsToLNu_TuneCP5_13TeV-madgraphMLM-pythia8_RunIISummer20UL18NanoAODv15-150X
-      tau_gen_modes:
-      - all
-    data:
-      by_channel:
-        mt:
-        - SingleMuon_Run2018A-UL2018
-        - SingleMuon_Run2018B-UL2018
-        - SingleMuon_Run2018C-UL2018
-        - SingleMuon_Run2018D-UL2018
       tau_gen_modes:
       - all
     diboson:
@@ -117,22 +395,6 @@ backgrounds:
       - WtoLNu-2Jets_2J_TuneCP5_13p6TeV_amcatnloFXFX-pythia8_Run3Summer22NanoAODv12-130X_mcRun3_2022_realistic_v5-v2
       tau_gen_modes:
       - all
-    data:
-      by_channel:
-        et:
-        - EGamma_Run2022C-22Sep2023-v1
-        - EGamma_Run2022D-22Sep2023-v1
-        mt:
-        - Muon_Run2022C-22Sep2023-v1
-        - Muon_Run2022D-22Sep2023-v1
-        tt:
-        - Tau_Run2022C-22Sep2023-v1
-        - Tau_Run2022D-22Sep2023-v1
-        em:
-        - Muon_Run2022C-22Sep2023-v1
-        - Muon_Run2022D-22Sep2023-v1
-      tau_gen_modes:
-      - all
     diboson:
       samples:
       - WWto2L2Nu_TuneCP5_13p6TeV_powheg-pythia8_Run3Summer22NanoAODv12-130X_mcRun3_2022_realistic_v5-v2
@@ -193,26 +455,6 @@ backgrounds:
       - WtoLNu-2Jets_0J_TuneCP5_13p6TeV_amcatnloFXFX-pythia8_Run3Summer22EENanoAODv12-130X_mcRun3_2022_realistic_postEE_v6-v3
       - WtoLNu-2Jets_1J_TuneCP5_13p6TeV_amcatnloFXFX-pythia8_Run3Summer22EENanoAODv12-130X_mcRun3_2022_realistic_postEE_v6-v2
       - WtoLNu-2Jets_2J_TuneCP5_13p6TeV_amcatnloFXFX-pythia8_Run3Summer22EENanoAODv12-130X_mcRun3_2022_realistic_postEE_v6-v2
-      tau_gen_modes:
-      - all
-    data:
-      by_channel:
-        et:
-        - EGamma_Run2022E-22Sep2023-v1
-        - EGamma_Run2022F-22Sep2023-v1
-        - EGamma_Run2022G-22Sep2023-v2
-        mt:
-        - Muon_Run2022E-22Sep2023-v1
-        - Muon_Run2022F-22Sep2023-v2
-        - Muon_Run2022G-22Sep2023-v1
-        tt:
-        - Tau_Run2022E-22Sep2023-v1
-        - Tau_Run2022F-22Sep2023-v1
-        - Tau_Run2022G-22Sep2023-v1
-        em:
-        - Muon_Run2022E-22Sep2023-v1
-        - Muon_Run2022F-22Sep2023-v2
-        - Muon_Run2022G-22Sep2023-v1
       tau_gen_modes:
       - all
     diboson:
@@ -277,42 +519,6 @@ backgrounds:
       - WtoLNu-2Jets_2J_TuneCP5_13p6TeV_amcatnloFXFX-pythia8_Run3Summer23NanoAODv12-130X_mcRun3_2023_realistic_v14-v2
       tau_gen_modes:
       - all
-    data:
-      by_channel:
-        et:
-        - EGamma0_Run2023C-22Sep2023_v1-v1
-        - EGamma0_Run2023C-22Sep2023_v2-v1
-        - EGamma0_Run2023C-22Sep2023_v3-v1
-        - EGamma0_Run2023C-22Sep2023_v4-v1
-        - EGamma1_Run2023C-22Sep2023_v1-v1
-        - EGamma1_Run2023C-22Sep2023_v2-v1
-        - EGamma1_Run2023C-22Sep2023_v3-v1
-        - EGamma1_Run2023C-22Sep2023_v4-v1
-        mt:
-        - Muon0_Run2023C-22Sep2023_v1-v1
-        - Muon0_Run2023C-22Sep2023_v2-v1
-        - Muon0_Run2023C-22Sep2023_v3-v1
-        - Muon0_Run2023C-22Sep2023_v4-v1
-        - Muon1_Run2023C-22Sep2023_v1-v1
-        - Muon1_Run2023C-22Sep2023_v2-v1
-        - Muon1_Run2023C-22Sep2023_v3-v1
-        - Muon1_Run2023C-22Sep2023_v4-v2
-        tt:
-        - Tau_Run2023C-22Sep2023_v1-v2
-        - Tau_Run2023C-22Sep2023_v2-v1
-        - Tau_Run2023C-22Sep2023_v3-v1
-        - Tau_Run2023C-22Sep2023_v4-v1
-        em:
-        - Muon0_Run2023C-22Sep2023_v1-v1
-        - Muon0_Run2023C-22Sep2023_v2-v1
-        - Muon0_Run2023C-22Sep2023_v3-v1
-        - Muon0_Run2023C-22Sep2023_v4-v1
-        - Muon1_Run2023C-22Sep2023_v1-v1
-        - Muon1_Run2023C-22Sep2023_v2-v1
-        - Muon1_Run2023C-22Sep2023_v3-v1
-        - Muon1_Run2023C-22Sep2023_v4-v2
-      tau_gen_modes:
-      - all
     diboson:
       samples:
       - WWto2L2Nu_TuneCP5_13p6TeV_powheg-pythia8_Run3Summer23NanoAODv12-130X_mcRun3_2023_realistic_v14-v4
@@ -373,28 +579,6 @@ backgrounds:
       - WtoLNu-2Jets_0J_TuneCP5_13p6TeV_amcatnloFXFX-pythia8_Run3Summer23BPixNanoAODv12-130X_mcRun3_2023_realistic_postBPix_v2-v3
       - WtoLNu-2Jets_1J_TuneCP5_13p6TeV_amcatnloFXFX-pythia8_Run3Summer23BPixNanoAODv12-130X_mcRun3_2023_realistic_postBPix_v2-v2
       - WtoLNu-2Jets_2J_TuneCP5_13p6TeV_amcatnloFXFX-pythia8_Run3Summer23BPixNanoAODv12-130X_mcRun3_2023_realistic_postBPix_v2-v2
-      tau_gen_modes:
-      - all
-    data:
-      by_channel:
-        et:
-        - EGamma0_Run2023D-22Sep2023_v1-v1
-        - EGamma0_Run2023D-22Sep2023_v2-v1
-        - EGamma1_Run2023D-22Sep2023_v1-v1
-        - EGamma1_Run2023D-22Sep2023_v2-v1
-        mt:
-        - Muon0_Run2023D-22Sep2023_v1-v1
-        - Muon0_Run2023D-22Sep2023_v2-v1
-        - Muon1_Run2023D-22Sep2023_v1-v1
-        - Muon1_Run2023D-22Sep2023_v2-v1
-        tt:
-        - Tau_Run2023D-22Sep2023_v1-v1
-        - Tau_Run2023D-22Sep2023_v2-v1
-        em:
-        - Muon0_Run2023D-22Sep2023_v1-v1
-        - Muon0_Run2023D-22Sep2023_v2-v1
-        - Muon1_Run2023D-22Sep2023_v1-v1
-        - Muon1_Run2023D-22Sep2023_v2-v1
       tau_gen_modes:
       - all
     diboson:
@@ -498,70 +682,6 @@ backgrounds:
       # - WtoLNu-4Jets_Bin-4J_TuneCP5_13p6TeV_madgraphMLM-pythia8_RunIII2024Summer24NanoAODv15-150X
       tau_gen_modes:
       - all
-    data:
-      by_channel:
-        et:
-        - EGamma0_Run2024C-MINIv6NANOv15-v1
-        - EGamma0_Run2024D-MINIv6NANOv15-v1
-        - EGamma0_Run2024E-MINIv6NANOv15-v1
-        - EGamma0_Run2024F-MINIv6NANOv15-v1
-        - EGamma0_Run2024G-MINIv6NANOv15-v2
-        - EGamma0_Run2024H-MINIv6NANOv15-v2
-        - EGamma0_Run2024I-MINIv6NANOv15-v1
-        - EGamma0_Run2024I-MINIv6NANOv15_v2-v1
-        - EGamma1_Run2024C-MINIv6NANOv15-v1
-        - EGamma1_Run2024D-MINIv6NANOv15-v1
-        - EGamma1_Run2024E-MINIv6NANOv15-v1
-        - EGamma1_Run2024F-MINIv6NANOv15-v1
-        - EGamma1_Run2024G-MINIv6NANOv15-v2
-        - EGamma1_Run2024H-MINIv6NANOv15-v1
-        - EGamma1_Run2024I-MINIv6NANOv15-v1
-        - EGamma1_Run2024I-MINIv6NANOv15_v2-v1
-        mt:
-        - Muon0_Run2024C-MINIv6NANOv15-v1
-        - Muon0_Run2024D-MINIv6NANOv15-v1
-        - Muon0_Run2024E-MINIv6NANOv15-v1
-        - Muon0_Run2024F-MINIv6NANOv15-v1
-        - Muon0_Run2024G-MINIv6NANOv15-v1
-        - Muon0_Run2024H-MINIv6NANOv15-v1
-        - Muon0_Run2024I-MINIv6NANOv15-v1
-        - Muon0_Run2024I-MINIv6NANOv15_v2-v1
-        - Muon1_Run2024C-MINIv6NANOv15-v1
-        - Muon1_Run2024D-MINIv6NANOv15-v1
-        - Muon1_Run2024E-MINIv6NANOv15-v1
-        - Muon1_Run2024F-MINIv6NANOv15-v1
-        - Muon1_Run2024G-MINIv6NANOv15-v2
-        - Muon1_Run2024H-MINIv6NANOv15-v2
-        - Muon1_Run2024I-MINIv6NANOv15-v1
-        - Muon1_Run2024I-MINIv6NANOv15_v2-v1
-        tt:
-        - Tau_Run2024C-MINIv6NANOv15-v1
-        - Tau_Run2024D-MINIv6NANOv15-v1
-        - Tau_Run2024E-MINIv6NANOv15-v1
-        - Tau_Run2024F-MINIv6NANOv15-v1
-        - Tau_Run2024G-MINIv6NANOv15-v1
-        - Tau_Run2024H-MINIv6NANOv15-v1
-        - Tau_Run2024I-MINIv6NANOv15-v1
-        - Tau_Run2024I-MINIv6NANOv15_v2-v1
-        em:
-        - Muon0_Run2024C-MINIv6NANOv15-v1
-        - Muon0_Run2024D-MINIv6NANOv15-v1
-        - Muon0_Run2024E-MINIv6NANOv15-v1
-        - Muon0_Run2024F-MINIv6NANOv15-v1
-        - Muon0_Run2024G-MINIv6NANOv15-v1
-        - Muon0_Run2024H-MINIv6NANOv15-v1
-        - Muon0_Run2024I-MINIv6NANOv15-v1
-        - Muon0_Run2024I-MINIv6NANOv15_v2-v1
-        - Muon1_Run2024C-MINIv6NANOv15-v1
-        - Muon1_Run2024D-MINIv6NANOv15-v1
-        - Muon1_Run2024E-MINIv6NANOv15-v1
-        - Muon1_Run2024F-MINIv6NANOv15-v1
-        - Muon1_Run2024G-MINIv6NANOv15-v2
-        - Muon1_Run2024H-MINIv6NANOv15-v2
-        - Muon1_Run2024I-MINIv6NANOv15-v1
-        - Muon1_Run2024I-MINIv6NANOv15_v2-v1
-      tau_gen_modes:
-      - all
     diboson:
       samples:
       - WWto2L2Nu_TuneCP5_13p6TeV_powheg-pythia8_RunIII2024Summer24NanoAODv15-150X_mcRun3_2024_realistic_v2-v2
@@ -629,77 +749,6 @@ backgrounds:
       - WtoTauNu-2Jets_TuneCP5_13p6TeV_amcatnloFXFX-pythia8_RunIII2025Summer24NanoAODv15-150X_mcRun3_2024_realistic_v2-v3
       tau_gen_modes:
       - all
-    data:
-      by_channel:
-        et:
-        - EGamma0_Run2025C-PromptReco-v1
-        - EGamma0_Run2025C-PromptReco-v2
-        - EGamma0_Run2025D-PromptReco-v1
-        - EGamma0_Run2025E-PromptReco-v1
-        - EGamma0_Run2025F-PromptReco-v1
-        - EGamma0_Run2025F-PromptReco-v2
-        - EGamma0_Run2025G-PromptReco-v1
-        - EGamma1_Run2025C-PromptReco-v1
-        - EGamma1_Run2025C-PromptReco-v2
-        - EGamma1_Run2025D-PromptReco-v1
-        - EGamma1_Run2025E-PromptReco-v1
-        - EGamma1_Run2025F-PromptReco-v1
-        - EGamma1_Run2025F-PromptReco-v2
-        - EGamma1_Run2025G-PromptReco-v1
-        - EGamma2_Run2025C-PromptReco-v1
-        - EGamma2_Run2025C-PromptReco-v2
-        - EGamma2_Run2025D-PromptReco-v1
-        - EGamma2_Run2025E-PromptReco-v1
-        - EGamma2_Run2025F-PromptReco-v1
-        - EGamma2_Run2025F-PromptReco-v2
-        - EGamma2_Run2025G-PromptReco-v1
-        - EGamma3_Run2025C-PromptReco-v1
-        - EGamma3_Run2025C-PromptReco-v2
-        - EGamma3_Run2025D-PromptReco-v1
-        - EGamma3_Run2025E-PromptReco-v1
-        - EGamma3_Run2025F-PromptReco-v1
-        - EGamma3_Run2025F-PromptReco-v2
-        - EGamma3_Run2025G-PromptReco-v1
-        mt:
-        - Muon0_Run2025C-PromptReco-v1
-        - Muon0_Run2025C-PromptReco-v2
-        - Muon0_Run2025D-PromptReco-v1
-        - Muon0_Run2025E-PromptReco-v1
-        - Muon0_Run2025F-PromptReco-v1
-        - Muon0_Run2025F-PromptReco-v2
-        - Muon0_Run2025G-PromptReco-v1
-        - Muon1_Run2025C-PromptReco-v1
-        - Muon1_Run2025C-PromptReco-v2
-        - Muon1_Run2025D-PromptReco-v1
-        - Muon1_Run2025E-PromptReco-v1
-        - Muon1_Run2025F-PromptReco-v1
-        - Muon1_Run2025F-PromptReco-v2
-        - Muon1_Run2025G-PromptReco-v1
-        tt:
-        - Tau_Run2025C-PromptReco-v1
-        - Tau_Run2025C-PromptReco-v2
-        - Tau_Run2025D-PromptReco-v1
-        - Tau_Run2025E-PromptReco-v1
-        - Tau_Run2025F-PromptReco-v1
-        - Tau_Run2025F-PromptReco-v2
-        - Tau_Run2025G-PromptReco-v1
-        em:
-        - Muon0_Run2025C-PromptReco-v1
-        - Muon0_Run2025C-PromptReco-v2
-        - Muon0_Run2025D-PromptReco-v1
-        - Muon0_Run2025E-PromptReco-v1
-        - Muon0_Run2025F-PromptReco-v1
-        - Muon0_Run2025F-PromptReco-v2
-        - Muon0_Run2025G-PromptReco-v1
-        - Muon1_Run2025C-PromptReco-v1
-        - Muon1_Run2025C-PromptReco-v2
-        - Muon1_Run2025D-PromptReco-v1
-        - Muon1_Run2025E-PromptReco-v1
-        - Muon1_Run2025F-PromptReco-v1
-        - Muon1_Run2025F-PromptReco-v2
-        - Muon1_Run2025G-PromptReco-v1
-      tau_gen_modes:
-      - all
     diboson:
       samples:
       - WWto2L2Nu_TuneCP5_13p6TeV_powheg-pythia8_RunIII2025Summer24NanoAODv15-150X_mcRun3_2024_realistic_v2-v2
@@ -765,59 +814,6 @@ backgrounds:
       - WtoENu-2Jets_TuneCP5_13p6TeV_amcatnloFXFX-pythia8_RunIII2025Summer24NanoAODv15-150X_mcRun3_2024_realistic_v2-v3
       - WtoMuNu-2Jets_TuneCP5_13p6TeV_amcatnloFXFX-pythia8_RunIII2025Summer24NanoAODv15-150X_mcRun3_2024_realistic_v2-v3
       - WtoTauNu-2Jets_TuneCP5_13p6TeV_amcatnloFXFX-pythia8_RunIII2025Summer24NanoAODv15-150X_mcRun3_2024_realistic_v2-v3
-      tau_gen_modes:
-      - all
-    data:
-      by_channel:
-        et:
-        - EGamma0_Run2026B-PromptReco-v1
-        - EGamma0_Run2026C-PromptReco-v1
-        - EGamma0_Run2026D-PromptReco-v1
-        - EGamma1_Run2026B-PromptReco-v1
-        - EGamma1_Run2026C-PromptReco-v1
-        - EGamma1_Run2026D-PromptReco-v1
-        - EGamma2_Run2026B-PromptReco-v1
-        - EGamma2_Run2026C-PromptReco-v1
-        - EGamma2_Run2026D-PromptReco-v1
-        - EGamma3_Run2026B-PromptReco-v1
-        - EGamma3_Run2026C-PromptReco-v1
-        - EGamma3_Run2026D-PromptReco-v1
-        - EGamma4_Run2026B-PromptReco-v1
-        - EGamma4_Run2026C-PromptReco-v1
-        - EGamma4_Run2026D-PromptReco-v1
-        - EGamma5_Run2026B-PromptReco-v1
-        - EGamma5_Run2026C-PromptReco-v1
-        - EGamma5_Run2026D-PromptReco-v1
-        mt:
-        - Muon0_Run2026B-PromptReco-v1
-        - Muon0_Run2026C-PromptReco-v1
-        - Muon0_Run2026D-PromptReco-v1
-        - Muon1_Run2026B-PromptReco-v1
-        - Muon1_Run2026C-PromptReco-v1
-        - Muon1_Run2026D-PromptReco-v1
-        - Muon2_Run2026B-PromptReco-v1
-        - Muon2_Run2026C-PromptReco-v1
-        - Muon2_Run2026D-PromptReco-v1
-        - Muon3_Run2026B-PromptReco-v1
-        - Muon3_Run2026C-PromptReco-v1
-        - Muon3_Run2026D-PromptReco-v1
-        tt:
-        - Tau_Run2026B-PromptReco-v1
-        - Tau_Run2026C-PromptReco-v1
-        - Tau_Run2026D-PromptReco-v1
-        em:
-        - Muon0_Run2026B-PromptReco-v1
-        - Muon0_Run2026C-PromptReco-v1
-        - Muon0_Run2026D-PromptReco-v1
-        - Muon1_Run2026B-PromptReco-v1
-        - Muon1_Run2026C-PromptReco-v1
-        - Muon1_Run2026D-PromptReco-v1
-        - Muon2_Run2026B-PromptReco-v1
-        - Muon2_Run2026C-PromptReco-v1
-        - Muon2_Run2026D-PromptReco-v1
-        - Muon3_Run2026B-PromptReco-v1
-        - Muon3_Run2026C-PromptReco-v1
-        - Muon3_Run2026D-PromptReco-v1
       tau_gen_modes:
       - all
     diboson:

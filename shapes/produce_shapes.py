@@ -14,10 +14,10 @@ import shapes.selection.process_selection as selection
 import shapes.selection.systematics as selection_systematics
 import shapes.utils as shape_utils
 from analyses.smhtt.common import stxs_tools
-import common.ntuple_processor_config_helper as ntuple_processor_config_helper
-from common.helper_collection import PreserveROOTPathsAsStrings
-from config.logging_setup_configs import setup_logging
-from config.analysis import ACTIVE_ANALYSIS
+import common.booking as booking
+from common.booking import PreserveROOTPathsAsStrings
+from CustomLogging import setup_logging
+from common.analysis import ACTIVE_ANALYSIS
 
 analysis_selection = importlib.import_module(f"analyses.{ACTIVE_ANALYSIS}.shapes.selection.process_selection")
 analysis_selection_systematics = importlib.import_module(f"analyses.{ACTIVE_ANALYSIS}.shapes.selection.systematics")
@@ -27,11 +27,11 @@ from shapes.special.ttbar_dy_weight_categories import categorization as ttbar_dy
 from shapes.special.njets_control_categories import categorization as njets_control_categorization
 import tau_es.energy_scales as tau_es_energy_scales
 from shapes.selection.channel_selection import channel_selection
-from config.shapes.control_binning import control_binning as default_control_binning
+from common.binning import control_binning as default_control_binning
 from common.sample_paths import build_selection_friend_dir, parse_ntuple_directory
-from config.analysis import build_files_dict, get_mc_ntuple_era
-from config.systematics import systematics
-from config.processes import BACKGROUNDS, GROUPS, SIGNAL_DATASETS, expand
+from common.analysis import build_files_dict, get_mc_ntuple_era
+from common.systematics import systematics
+from common.analysis import BACKGROUNDS, GROUPS, SIGNAL_DATASETS, expand
 from ntuple_processor import GraphManager, RunManager, UnitManager
 
 
@@ -124,7 +124,7 @@ def parse_arguments():
     )
     parser.add_argument(
         "--no-dnn-categorization", action="store_true",
-        help="Produce shapes for variables in config/variables.yaml without DNN categorization (use when DNN friend trees are not available).",
+        help="Produce shapes for variables in common/variables.yaml without DNN categorization (use when DNN friend trees are not available).",
     )
     parser.add_argument(
         "--special-analysis", default=None,
@@ -140,15 +140,15 @@ def parse_arguments():
 
 
 def load_variables_from_config(channel):
-    _yaml_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "config", "variables.yaml")
+    _yaml_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "common", "variables.yaml")
     with open(_yaml_path) as _f:
         _cfg = yaml.safe_load(_f)
     _output_features = _cfg.get("output_features", [])
     _available = set(default_control_binning.get(channel, {}).keys())
     _filtered = [v for v in _output_features if v in _available]
     if not _filtered:
-        raise ValueError(f"No variables from config/variables.yaml are available in control_binning for channel {channel}. Available: {_available}. From YAML: {_output_features}")
-    logger.info(f"Loaded {len(_filtered)} variables from config/variables.yaml for channel {channel}")
+        raise ValueError(f"No variables from common/variables.yaml are available in control_binning for channel {channel}. Available: {_available}. From YAML: {_output_features}")
+    logger.info(f"Loaded {len(_filtered)} variables from common/variables.yaml for channel {channel}")
     return _filtered
 
 
@@ -259,9 +259,9 @@ def collect_config(graphs, era, channel, filename, processes):
     r_manager.nthreads = 1
     for _graph in graphs:
         logger.info(f"Creating config for graph {_graph.name}")
-        r_manager.config_formatter = ntuple_processor_config_helper.get_config_formatter(era=era, graph=_graph, processes=processes)
+        r_manager.config_formatter = booking.get_config_formatter(era=era, graph=_graph, processes=processes)
         r_manager.node_to_root(_graph)
-        ntuple_processor_config_helper.add_paths(graph=_graph, channel=channel, era=era, r_manager=r_manager)
+        booking.add_paths(graph=_graph, channel=channel, era=era, r_manager=r_manager)
     _path, _basename = os.path.split(filename)
     _path = os.path.join(_path, f"{era}__{channel}__{_basename}")
     with open(_path, "w") as config_file:
@@ -401,7 +401,7 @@ def main(args):
 
     # CROWN's era-tagged shift names are MC-only and baked in at the physical CROWN
     # production era -- for eras that borrow their MC from another era, mc_era differs
-    # from args.era (see config.analysis.MC_NTUPLE_ERA_OVERRIDE).
+    # from args.era (see common.analysis.MC_NTUPLE_ERA_OVERRIDE).
     mc_era = get_mc_ntuple_era(args.era)
 
     def _book(processes, vlist):

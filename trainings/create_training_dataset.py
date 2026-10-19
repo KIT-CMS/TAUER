@@ -18,23 +18,23 @@ from src.helper import Iterate, Keys, PipeDict, downcast_dataframe
 from tqdm import tqdm
 
 try:
-    from config.logging_setup_configs import setup_logging
+    from CustomLogging import setup_logging
 except ModuleNotFoundError:
     import sys
     sys.path.extend([".", ".."])
-    from config.logging_setup_configs import setup_logging
+    from CustomLogging import setup_logging
 
 logger = setup_logging(logger=logging.getLogger(__name__))
 
 try:
-    from config.analysis import get_training_variables as _get_training_vars
+    from common.analysis import get_training_variables as _get_training_vars
     _ANALYSIS_TRAINING_VARS: list[str] | None = _get_training_vars()
 except (ImportError, ModuleNotFoundError):
     _ANALYSIS_TRAINING_VARS = None
 
 try:
     import importlib
-    from config.analysis import ACTIVE_ANALYSIS
+    from common.analysis import ACTIVE_ANALYSIS
     _analysis_training_labels = importlib.import_module(f"analyses.{ACTIVE_ANALYSIS}.trainings.training_labels")
 except (ImportError, ModuleNotFoundError):
     _analysis_training_labels = None
@@ -154,13 +154,13 @@ def collect_filtered_plain_dataframes(
                         existing_flags.add(flag_name)
             logger.debug(f"Auto-generated {len(subprocess_flag_tuples)} flag definitions for {process}/{subprocess} (current_flag={current_flag})")
 
-    # Get variables: prefer process config, then config.analysis, then setup.yaml
+    # Get variables: prefer process config, then common.analysis, then setup.yaml
     variables_dict = config[channel][era][process].get(Keys.VARIABLES, {})
     if variables_dict:
         additional_columns = list(variables_dict.keys())
     elif _ANALYSIS_TRAINING_VARS:
         additional_columns = list(_ANALYSIS_TRAINING_VARS)
-        logger.debug(f"Using training_variables from config.analysis: {len(additional_columns)} variables")
+        logger.debug(f"Using training_variables from common.analysis: {len(additional_columns)} variables")
     elif common_setup_config and common_setup_config.recursive_get(["training_variables"]):
         additional_columns = common_setup_config.recursive_get(["training_variables"])
         logger.debug(f"Using training_variables from common_setup_config: {len(additional_columns)} variables")

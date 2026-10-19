@@ -23,7 +23,7 @@ import numpy as np
 import ROOT
 
 from datacards.systematics import add_systematics
-from config.logging_setup_configs import setup_logging
+from CustomLogging import setup_logging
 
 logger = setup_logging(logger=logging.getLogger(__name__))
 

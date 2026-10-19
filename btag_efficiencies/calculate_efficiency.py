@@ -37,7 +37,7 @@ if str(_REPO_ROOT) not in sys.path:
 import CustomLogging as logging_helper
 import helper.functions as func
 from helper.correctionlib_json import write_json
-from config.analysis import get_data_eras, get_luminosity, get_center_of_mass
+from common.analysis import get_data_eras, get_luminosity, get_center_of_mass
 
 hep.style.use(hep.style.CMS)
 plt.rcParams["axes.linewidth"] = 1.0 # set non bold axes lines

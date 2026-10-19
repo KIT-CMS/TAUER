@@ -11,7 +11,7 @@ from typing import Literal, Optional, Dict, List
 import ROOT
 
 import CombineHarvester.CombineTools.ch as ch
-from config.logging_setup_configs import setup_logging
+from CustomLogging import setup_logging
 
 
 logger = setup_logging(logger=logging.getLogger(__name__))

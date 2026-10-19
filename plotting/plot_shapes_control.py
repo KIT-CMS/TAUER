@@ -16,8 +16,8 @@ import numpy as np
 import ROOT
 import yaml
 
-from config.analysis import ACTIVE_ANALYSIS, RUN2_ERAS, RUN3_ERAS, get_center_of_mass, get_data_eras, get_luminosity
-from config.logging_setup_configs import setup_logging
+from common.analysis import ACTIVE_ANALYSIS, RUN2_ERAS, RUN3_ERAS, get_center_of_mass, get_data_eras, get_luminosity
+from CustomLogging import setup_logging
 from plotting.process_ordering import ControlShapeBkgProcesses
 from plotting.systematics_band import shape_systematic_uncertainty
 from shapes import naming
@@ -547,7 +547,7 @@ def main(args):
         raise RuntimeError(f"Cannot open {args.input_file}")
 
     # Load variables.yaml and get all variables except flags
-    with open(os.path.join(os.path.dirname(__file__), '../config/variables.yaml')) as f:
+    with open(os.path.join(os.path.dirname(__file__), '../common/variables.yaml')) as f:
         variables_yaml = yaml.safe_load(f)
     all_vars = set(variables_yaml.get('output_features', []))
     flag_vars = set(variables_yaml.get('flags', []))

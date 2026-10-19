@@ -8,11 +8,11 @@ from src.config_modifications import ConfigModification, remove_keys
 from src.helper import TRAINING_VARIABLES, Iterate, PipeDict
 
 try:
-    from config.logging_setup_configs import setup_logging
+    from CustomLogging import setup_logging
 except ModuleNotFoundError:
     import sys
     sys.path.extend([".", ".."])
-    from config.logging_setup_configs import setup_logging
+    from CustomLogging import setup_logging
 
 
 def parse_args():

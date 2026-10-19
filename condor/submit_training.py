@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from common.sample_paths import build_shape_output_paths
 from condor.common import JobSpec, SubmissionPlan, csv, submit
-from config.analysis import RUN3_ERAS, get_channels
+from common.analysis import RUN3_ERAS, get_channels
 
 
 def parse_args():
@@ -51,11 +51,11 @@ def slice_config(master: dict, channel: str, era: str) -> dict | None:
     return {channel: {era_key: channel_dict[era_key]}}
 
 
-def build_jobs(args, run_dir: Path) -> list:
+def build_jobs(args, run_dir: Path, setups: list) -> list:
     master = yaml.safe_load(Path(args.master_config).read_text())
     jobs = []
     slice_dir = run_dir / "configs"
-    slice_dir.mkdir(parents=True, exist_ok=True)
+    setups.append(lambda: slice_dir.mkdir(parents=True, exist_ok=True))
 
     for channel in args.channels:
         for era in args.eras:
@@ -63,7 +63,7 @@ def build_jobs(args, run_dir: Path) -> list:
             if sliced is None:
                 continue  # nothing for this (channel, era) in the master config
             slice_path = slice_dir / f"{channel}_{era}.yaml"
-            slice_path.write_text(yaml.safe_dump(sliced, default_flow_style=False))
+            setups.append(lambda slice_path=slice_path, sliced=sliced: slice_path.write_text(yaml.safe_dump(sliced, default_flow_style=False)))
 
             job_args = [
                 f"--config {slice_path}",
@@ -88,7 +88,7 @@ def main():
         request_memory_mb=args.request_memory_mb,
         request_disk_kb=args.request_disk_kb,
     )
-    plan.jobs = build_jobs(args, plan.run_dir)
+    plan.jobs = build_jobs(args, plan.run_dir, plan.setups)
     return submit(plan, dry_run=args.dry_run)
 
 

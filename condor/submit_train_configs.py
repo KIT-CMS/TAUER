@@ -10,14 +10,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from condor.common import JobSpec, SubmissionPlan, csv, submit
 from common.sample_paths import build_friend_dir, build_shape_output_paths, crown_ntuple_base
-from config.analysis import RUN3_ERAS, get_channels
+from common.analysis import RUN3_ERAS, get_channels
 
 
-def parse_args():
+def parse_args(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--ntupletag", required=True, help="CROWN ntuple production tag, e.g. htt_260602_2024-25_v5.")
-    p.add_argument("--eras", type=csv, default=list(RUN3_ERAS), help="Comma-separated eras (default: all Run3 eras from config.analysis).")
-    p.add_argument("--channels", type=csv, default=get_channels(), help="Comma-separated channels (default: all channels from config.analysis). "
+    p.add_argument("--eras", type=csv, default=list(RUN3_ERAS), help="Comma-separated eras (default: all Run3 eras from common.analysis).")
+    p.add_argument("--channels", type=csv, default=get_channels(), help="Comma-separated channels (default: all channels from common.analysis). "
                                                                           "One job per (era, channel) -- produce_shapes.py's --collect-config-only "
                                                                           "only supports a single channel per invocation.")
     p.add_argument("--user", default=getpass.getuser(), help="Grid storage username (default: current user).")
@@ -42,10 +42,10 @@ def parse_args():
     p.add_argument("--request-memory-mb", type=int, default=4000)
     p.add_argument("--request-disk-kb", type=int, default=4_000_000)
     p.add_argument("--dry-run", action="store_true", help="Validate classads via `condor_submit -dry-run`, do not queue jobs.")
-    return p.parse_args()
+    return p.parse_args(argv)
 
 
-def build_jobs(args) -> list[JobSpec]:
+def build_jobs(args, setups: list) -> list[JobSpec]:
     jobs: list[JobSpec] = []
     base_store = crown_ntuple_base(args.ntupletag, user=args.user)
     ntuples_dir = f"{base_store}/CROWNRun/"
@@ -57,7 +57,7 @@ def build_jobs(args) -> list[JobSpec]:
     additional_friend_dirs = [resolve_friend(tag) for tag in (args.additional_friends or [])]
 
     output_dir = Path(args.output_dir or f"{build_shape_output_paths(args.ntupletag, user=args.user).training}/configs")
-    output_dir.mkdir(parents=True, exist_ok=True)
+    setups.append(lambda: output_dir.mkdir(parents=True, exist_ok=True))
 
     for era in args.eras:
         for channel in args.channels:
@@ -94,19 +94,24 @@ def build_jobs(args) -> list[JobSpec]:
     return jobs
 
 
-def main():
-    args = parse_args()
-    plan = SubmissionPlan(
+def build_plan(args) -> SubmissionPlan:
+    setups: list = []
+    return SubmissionPlan(
         stage="train-configs",
         tag=args.tag,
         entry_point="shapes/produce_shapes.py",
-        jobs=build_jobs(args),
+        jobs=build_jobs(args, setups),
         ntupletag=args.ntupletag,
         request_cpus=args.request_cpus,
         request_memory_mb=args.request_memory_mb,
         request_disk_kb=args.request_disk_kb,
+        setups=setups,
     )
-    return submit(plan, dry_run=args.dry_run)
+
+
+def main():
+    args = parse_args()
+    return submit(build_plan(args), dry_run=args.dry_run)
 
 
 if __name__ == "__main__":

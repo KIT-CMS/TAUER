@@ -14,8 +14,8 @@ from copy import deepcopy
 from concurrent.futures import ProcessPoolExecutor
 import logging
 
-from config.analysis import get_signal_process_keys
-from config.logging_setup_configs import setup_logging
+from common.analysis import get_signal_process_keys
+from CustomLogging import setup_logging
 
 logger = setup_logging(logger=logging.getLogger(__name__))
 
@@ -223,7 +223,7 @@ def get_nominal_datasets(
     flat_layout=False,
     xrootd=False,
 ):
-    from config.analysis import get_data_eras, get_mc_ntuple_era, get_samples
+    from common.analysis import get_data_eras, get_mc_ntuple_era, get_samples
 
     # MC may need to be read from a different physical CROWN-production era
     # directory than the analysis era 

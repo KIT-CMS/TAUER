@@ -2,8 +2,8 @@ from functools import partial
 import logging
 
 import shapes.naming as naming
-from config.logging_setup_configs import setup_logging
-from config.processes import BACKGROUNDS, GROUPS
+from CustomLogging import setup_logging
+from common.analysis import BACKGROUNDS, GROUPS
 
 logger = setup_logging(logger=logging.getLogger(__name__))
 

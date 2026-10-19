@@ -6,8 +6,8 @@ the systematics of shapes/selection/systematics.py.
 import logging
 
 from ntuple_processor.utils import Selection, WarnDict
-from config.logging_setup_configs import setup_logging
-from config.analysis import SR_MASK_BRANCH, SUPPORTED_ERAS
+from CustomLogging import setup_logging
+from common.analysis import SR_MASK_BRANCH, SUPPORTED_ERAS
 
 logger = setup_logging(logger=logging.getLogger(__name__))
 

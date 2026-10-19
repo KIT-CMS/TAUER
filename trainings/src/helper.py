@@ -8,16 +8,16 @@ import pandas as pd
 from tqdm import tqdm
 
 try:
-    from config.logging_setup_configs import setup_logging
+    from CustomLogging import setup_logging
 except ModuleNotFoundError:
     import sys
     sys.path.extend([".", "..", "../.."])
-    from config.logging_setup_configs import setup_logging
+    from CustomLogging import setup_logging
 
 
 logger = setup_logging(logger=logging.getLogger(__name__))
 
-# Training variable list: prefer config/variables.yaml (output_features + flags),
+# Training variable list: prefer common/variables.yaml (output_features + flags),
 # fall back to the hardcoded list if the config module is not on sys.path.
 _TRAINING_VARIABLES_FALLBACK = [
     "pt_1",
@@ -83,7 +83,7 @@ _TRAINING_VARIABLES_FALLBACK = [
 ]
 
 try:
-    from config.analysis import get_training_variables as _get_training_variables
+    from common.analysis import get_training_variables as _get_training_variables
     TRAINING_VARIABLES = _get_training_variables()
 except (ImportError, ModuleNotFoundError):
     TRAINING_VARIABLES = _TRAINING_VARIABLES_FALLBACK

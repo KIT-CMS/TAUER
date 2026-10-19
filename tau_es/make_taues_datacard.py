@@ -23,7 +23,7 @@ import glob
 import logging
 import os
 
-from config.logging_setup_configs import setup_logging
+from CustomLogging import setup_logging
 from datacards.tools import (
     fix_negative_bins,
     filter_zero_yield_processes,

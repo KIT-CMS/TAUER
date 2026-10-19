@@ -13,10 +13,10 @@ from src.helper import Iterate, Keys, get_class_weights, optional_process_pool, 
 from tqdm import tqdm
 
 try:
-    from config.logging_setup_configs import LogContext, setup_logging
+    from CustomLogging import LogContext, setup_logging
 except ModuleNotFoundError:
     sys.path.extend([".", ".."])
-    from config.logging_setup_configs import LogContext, setup_logging
+    from CustomLogging import LogContext, setup_logging
 
 
 logger = setup_logging(logger=logging.getLogger(__name__))

@@ -1,14 +1,14 @@
 ntuple_path: "root://cmsdcache-kit-disk.gridka.de//store/user/$USER/CROWN/ntuples/htt_260902_22-23_btag/CROWNRun"
-output_path: "/ceph/$USER/CMS_FF/btag/"
+output_path: "/ceph/$USER/TAUER_shapes/btag_efficiencies/"
 friends: ["selection"]
-file_path: "/ceph/$USER/CMS_FF/btag/"
+file_path: "/ceph/$USER/TAUER_shapes/btag_efficiencies/"
 
 
 era: "2022postEE"
 tree: "ntuple"
 nanoAOD_version: "nanoAOD_v12"
 sample_database: "/work/$USER/TAUER/sample_database"
-variables_yaml: "/work/$USER/TAUER/config/variables.yaml"
+variables_yaml: "/work/$USER/TAUER/common/variables.yaml"
 
 tau_vs_jet_wps:
   - "VVVLoose"

@@ -64,3 +64,6 @@ condor/run/
 
 # Run outputs of the b-tag efficiency and fake-factor measurements
 workdir/
+
+# Core dumps
+core.*

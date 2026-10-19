@@ -1,7 +1,7 @@
 import logging
 
-from config.analysis import RUN2_PRODUCTION_ERAS, TAU_VS_JET_WP
-from config.logging_setup_configs import setup_logging
+from common.analysis import RUN2_PRODUCTION_ERAS, TAU_VS_JET_WP
+from CustomLogging import setup_logging
 from ntuple_processor.utils import Selection
 
 logger = setup_logging(logger=logging.getLogger(__name__))

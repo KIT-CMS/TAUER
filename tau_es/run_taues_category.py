@@ -16,7 +16,7 @@ import argparse
 import logging
 import os
 
-from config.logging_setup_configs import setup_logging
+from CustomLogging import setup_logging
 import tau_es.make_taues_datacard as make_taues_datacard
 import tau_es.run_taues_fit as run_taues_fit
 
