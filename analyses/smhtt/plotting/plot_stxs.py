@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import argparse
+import json
 import logging
 import os
 from pathlib import Path
@@ -10,6 +11,7 @@ import mplhep as hep
 import ROOT
 
 from common.analysis import get_data_eras, get_era_luminosity, get_luminosity
+from common.shapes_merge import merge_if_needed
 from CustomLogging import setup_logging
 from plotting.plot_shapes_control import (
     CHANNEL_LABELS,
@@ -101,6 +103,8 @@ def era_lumi_text(era: str, variant: str) -> str:
 
 
 def inclusive_lumi_text(eras: list, variant: str) -> str:
+    if variant == "events":
+        return "Inclusive eras, effective MC events"
     if variant == "scaled":
         data_eras = {d for e in eras for d in get_data_eras(e)}
         total_lumi = sum(get_era_luminosity(e) for e in data_eras)
@@ -108,17 +112,28 @@ def inclusive_lumi_text(eras: list, variant: str) -> str:
     return "Inclusive eras, unscaled event counts"
 
 
-def collect_signal_hists(rootfile, channel, variable, scale=1.0):
+def collect_signal_hists(rootfile, channel, variable, scale=1.0, events=False):
+    """events: per bin the effective number of MC events, content^2/error^2 (the raw count for uniform weights)."""
     hists = {}
     for sig_proc in CONTROL_SIGNALS:
         h = _get_hist(rootfile, sig_proc, channel, variable)
         if h and h.Integral() > 0:
             h = h.Clone()
             h.SetDirectory(0)
-            if scale != 1.0:
+            if events:
+                for i in range(1, h.GetNbinsX() + 1):
+                    c, e = h.GetBinContent(i), h.GetBinError(i)
+                    h.SetBinContent(i, c * c / (e * e) if e > 0 else 0.0)
+                    h.SetBinError(i, 0.0)
+            elif scale != 1.0:
                 h.Scale(scale)
             hists[sig_proc] = h
     return hists
+
+
+def bin_table(h):
+    """{HTXS bin code: value} of the filled bins (the bins are one code wide, starting at the code)."""
+    return {int(round(h.GetXaxis().GetBinLowEdge(i))): h.GetBinContent(i) for i in range(1, h.GetNbinsX() + 1) if h.GetBinContent(i) > 0}
 
 
 def add_hist_dicts(dict_list):
@@ -245,6 +260,7 @@ def main(args):
         key = (source_era, channel)
         if key not in rootfile_cache:
             infile = Path(args.input_dir) / source_era / channel / "shapes.root"
+            merge_if_needed(infile, logger)  # condor/submit_shapes.py --process-selection writes shapes__<group>.root parts
             if not infile.exists():
                 logger.warning(f"Missing shapes file: {infile}.")
                 rootfile_cache[key] = None
@@ -256,12 +272,15 @@ def main(args):
     out_base = Path(args.output_dir)
 
     for variable in args.variables:
-        for variant in ("scaled", "raw"):
-            variant_suffix = "" if variant == "scaled" else "_raw"
+        tables = {}
+        for variant in ("scaled", "raw", "events"):
+            variant_suffix = "" if variant == "scaled" else f"_{variant}"
 
             # Collect per-era, per-channel histogram dicts.
             per_era_channel = {}
             for era in args.eras:
+                if variant == "events" and era in PROXY_ERA_SOURCE:
+                    continue  # a copy of its source era's MC, no events of its own
                 source = era_source(era)
                 scale = era_scale(era, variant)
                 per_channel = {}
@@ -269,7 +288,7 @@ def main(args):
                     rf = get_rootfile(source, channel)
                     if rf is None:
                         continue
-                    hists = collect_signal_hists(rf, channel, variable, scale=scale)
+                    hists = collect_signal_hists(rf, channel, variable, scale=scale, events=variant == "events")
                     if hists:
                         per_channel[channel] = hists
                 if per_channel:
@@ -298,9 +317,21 @@ def main(args):
                     if not dicts:
                         continue
                     combined = add_hist_dicts(dicts)
+                    if variant in ("scaled", "events"):
+                        # the training uses the real eras only, not the 2026 projection
+                        real = add_hist_dicts([per_era_channel[e][channel] for e in sum_eras if e in REAL_ERAS and channel in per_era_channel[e]])
+                        for sig_proc, h in real.items():
+                            tables.setdefault(channel, {}).setdefault(sig_proc, {})[variant] = bin_table(h)
                     for sig_proc, h in combined.items():
                         stub = out_base / incl_dir / channel / f"{channel}_inclusive_{sig_proc}_{variable}{variant_suffix}"
                         render_stxs(sig_proc, h, stub, CHANNEL_LABELS.get(channel, channel), lumi_text, log_y=args.log_y)
+
+        if tables:
+            # per channel and signal process, per HTXS bin: effective MC events and expected yield, the input of the training's class merging
+            out = out_base / f"inclusive_eras_counts_{variable}.json"
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(json.dumps(tables, indent=1))
+            logger.info(f"Bin table written to {out}")
 
     for rf in rootfile_cache.values():
         if rf is not None:

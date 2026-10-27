@@ -259,6 +259,12 @@ def get_luminosity(era: str) -> float:
     return sum(get_era_luminosity(e) for e in get_data_eras(era))
 
 
+def mc_lumi_scale(era: str) -> float:
+    """Data lumi of `era` over the lumi in CROWN's MC `weight` (its MC era plus the eras merged into it): 1 except for e.g. 2026 alone."""
+    mc_era = get_mc_ntuple_era(era)
+    return get_luminosity(era) / sum(get_era_luminosity(e) for e in [mc_era, *DATA_ERA_MERGE.get(mc_era, ())])
+
+
 def get_center_of_mass(era: str) -> float:
     if era in RUN2_ERAS:
         return 13.0

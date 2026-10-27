@@ -13,9 +13,14 @@ from functools import cached_property
 from typing import Callable
 from pathlib import Path
 
-from utils.environment import DEFAULT_CONDA_ENV, REPO_ROOT, ensure_tauer_env, env_block as _env_block
+from utils.environment import DEFAULT_CONDA_BASE, DEFAULT_CONDA_ENV, REPO_ROOT, ensure_tauer_env, env_block as _env_block
 
 DEFAULT_ACCOUNTING_GROUP = "cms.higgs"
+PACKED_ENV_DIR = Path(f"/ceph/{getpass.getuser()}/tauer_envs")
+# the TOpAS GPU containers have no /ceph: packed jobs get their /ceph inputs through this GridKa dCache mirror
+DCACHE_HOST = "cmsdcache-kit-disk.gridka.de"
+DCACHE_MIRROR = f"/store/user/{getpass.getuser()}/tauer_remote"
+CODE_EXCLUDES = ("./.git", "./condor/run", "./logs", "./fake_factors", "./btag_efficiencies", "./validation_database", "__pycache__")
 
 
 def csv(value: str) -> list[str]:
@@ -49,7 +54,7 @@ class SubmissionPlan:
     conda_env: str = DEFAULT_CONDA_ENV
     # tau_es/make_taues_datacard.py + run_taues_fit.py need the CMSSW/Combine environment
     # (utils/setup_cmssw.sh), not the tauer conda env; "cmssw" sources that instead.
-    env_mode: str = "conda"  # "conda" | "cmssw" | "lcg"
+    env_mode: str = "conda"  # "conda" | "cmssw" | "lcg" | "packed"
     request_cpus: int = 1
     request_memory_mb: int = 4000
     request_disk_kb: int = 4_000_000
@@ -57,6 +62,9 @@ class SubmissionPlan:
     cluster: int | None = None  # set by submit() from condor_submit's output
     setups: list[Callable] = field(default_factory=list)  # filesystem writes the jobs rely on, run only by a real submit
     run_root: Path | None = None  # redirects run_dir (a dry run uses a temporary directory)
+    # env_mode "packed": {job-local dir: /ceph path} copied in through dCache, and the /ceph directory the job's ./<its name> is transferred back into
+    stage_in: dict = field(default_factory=dict)
+    stage_out: str | None = None
 
     @cached_property
     def timestamp(self) -> str:
@@ -89,16 +97,61 @@ def env_block(plan: SubmissionPlan) -> str:
     return _env_block(plan.env_mode, plan.conda_env)
 
 
+def packed_env_path(conda_env: str) -> Path:
+    return PACKED_ENV_DIR / f"{conda_env}.tar.gz"
+
+
+def dcache_url(path) -> str:
+    return f"root://{DCACHE_HOST}/{DCACHE_MIRROR}/{Path(path).relative_to(f'/ceph/{getpass.getuser()}')}"
+
+
+def mirror_to_dcache(path: Path) -> None:
+    """Uploads the files of `path` that are missing on the dCache mirror or have another size there."""
+    env = {**os.environ, "X509_USER_PROXY": default_proxy_path()}
+    for f in [path] if path.is_file() else sorted(p for p in path.rglob("*") if p.is_file()):
+        url = dcache_url(f)
+        stat = subprocess.run(["xrdfs", DCACHE_HOST, "stat", url.split(DCACHE_HOST, 1)[1]], capture_output=True, text=True, env=env).stdout
+        if (m := re.search(r"Size:\s+(\d+)", stat)) and int(m.group(1)) == f.stat().st_size:
+            continue
+        print(f"[condor] uploading {f} to {url}")
+        subprocess.run(["xrdcp", "-f", "-s", str(f), url], check=True, env=env)
+
+
+def pack_for_remote(plan: SubmissionPlan) -> None:
+    """env_mode "packed": the working tree goes next to submit.sub, the conda env to /ceph (re-packed when the env changed)."""
+    plan.run_dir.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["tar", "-czf", str(plan.run_dir / "code.tar.gz"), *(f"--exclude={e}" for e in CODE_EXCLUDES), "-C", str(REPO_ROOT), "."], check=True)
+    prefix, tarball = Path(DEFAULT_CONDA_BASE, "envs", plan.conda_env), packed_env_path(plan.conda_env)
+    changed = max(p.stat().st_mtime for p in [prefix / "conda-meta", *prefix.glob("lib/python3*/site-packages")])
+    if not tarball.exists() or tarball.stat().st_mtime < changed:
+        print(f"[condor] packing the {plan.conda_env} env into {tarball} (a few minutes)")
+        tarball.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["conda-pack", "-p", str(prefix), "-o", f"{tarball}.tmp", "--format", "tar.gz", "--force", "--ignore-missing-files", "--quiet"], check=True)
+        os.replace(f"{tarball}.tmp", tarball)
+    for path in [tarball, *plan.stage_in.values()]:
+        mirror_to_dcache(Path(path))
+
+
 def write_wrapper_script(plan: SubmissionPlan) -> Path:
     wrapper = plan.run_dir / "wrapper.sh"
     wrapper.parent.mkdir(parents=True, exist_ok=True)
+    # remote workers (TOpAS GPUs) have neither /ceph nor /work: env and inputs come from dCache, the code with the job
+    stage_in = "".join(f"mkdir -p {Path(local).parent} && xrdcp -r -s {dcache_url(path)} {Path(local).parent}/\n" for local, path in plan.stage_in.items())
+    setup = f"""mkdir -p env tauer {Path(plan.stage_out).name if plan.stage_out else ""}
+xrdcp -s {dcache_url(packed_env_path(plan.conda_env))} env.tar.gz
+tar -xzf env.tar.gz -C env && rm env.tar.gz
+{stage_in}source env/bin/activate
+conda-unpack
+tar -xzf code.tar.gz -C tauer
+cd tauer
+export LAW_HOME="$PWD/.law"
+export PYTHONPATH="$PWD:$PWD/fake_factors:${{PYTHONPATH:-}}\"""" if plan.env_mode == "packed" else f"cd {REPO_ROOT}\n{env_block(plan)}"
 
     content = f"""#!/bin/bash
 set -eo pipefail
 ulimit -c 0
 export USER={getpass.getuser()}
-cd {REPO_ROOT}
-{env_block(plan)}
+{setup}
 echo "[wrapper] host=$(hostname) stage={plan.stage} entry_point={plan.entry_point}"
 echo "[wrapper] args: $@"
 exec nice -n 19 python3 {plan.entry_point} "$@"
@@ -135,6 +188,10 @@ def build_submit_text(plan: SubmissionPlan, wrapper: Path) -> str:
         "output": str(out_dir / "$(job_name).out"),
         "error": str(err_dir / "$(job_name).err"),
     }
+    if plan.env_mode == "packed":
+        classads["transfer_input_files"] = str(plan.run_dir / "code.tar.gz")
+        if plan.stage_out:
+            classads.update(initialdir=str(Path(plan.stage_out).parent), transfer_output_files=Path(plan.stage_out).name)
     classads.update(plan.extra_classads)
 
     lines = [f"{k} = {v}" for k, v in classads.items()]
@@ -174,6 +231,8 @@ def submit(plan: SubmissionPlan, dry_run: bool = False) -> int:
                 return _submit(plan, dry_run=True)
             finally:
                 plan.run_root = None
+    if plan.env_mode == "packed":
+        pack_for_remote(plan)
     for setup in plan.setups:
         setup()
     return _submit(plan, dry_run=False)

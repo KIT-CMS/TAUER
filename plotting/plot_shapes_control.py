@@ -4,6 +4,7 @@ Control-plot and shape comparison plotting using mplhep (CMS style).
 """
 import argparse
 import importlib
+import itertools
 import logging
 import os
 from pathlib import Path
@@ -110,6 +111,7 @@ _COMMON_X_LABELS = {
     "puppimet": r"Missing transverse energy [GeV]",
     "nbtag": "Number of b-tagged jets",
     "njets": "Number of jets",
+    "njets_recoil": r"Number of jets (recoil def., $p_T>30$ GeV in HF)",
 }
 
 # Per-channel leading/subleading lepton naming (mm/em/mt/et/tt use "Muon"/"Electron"/
@@ -376,6 +378,7 @@ def plot_control(
     category: str = "",
     show_signal: bool = True,
     include_systematics: bool = True,
+    mc_systematic: str = None,
 ):
     bkg_hists  = {}
     sig_hists  = {}
@@ -385,13 +388,13 @@ def plot_control(
     bkg_processes = process_config()
 
     for proc in bkg_processes:
-        h = _get_hist(rootfile, proc, channel, variable, category=category)
+        h = _get_hist(rootfile, proc, channel, variable, category=category, systematic=mc_systematic)
         if h:
             bkg_hists[proc] = h
 
     if show_signal:
         for sig_proc in _SIGNALS:
-            h = _get_hist(rootfile, sig_proc, channel, variable, category=category)
+            h = _get_hist(rootfile, sig_proc, channel, variable, category=category, systematic=mc_systematic)
             if h and h.Integral() > 0:
                 sig_hists[sig_proc] = h
 
@@ -467,9 +470,9 @@ def plot_control(
         stack_colors=stack_colors,
         total_mc_err=total_mc_err,
         x_label=_channel_x_labels(channel).get(variable, variable),
-        top_left_label=CHANNEL_LABELS.get(channel, channel) + (f" ({category})" if category else ""),
+        top_left_label=CHANNEL_LABELS.get(channel, channel) + (f" ({category})" if category else "") + (f" {mc_systematic}" if mc_systematic else ""),
         top_right_label=lumi_label(era),
-        out_dir=Path(output_dir) / channel / category if category else Path(output_dir) / channel,
+        out_dir=Path(output_dir, channel, category or "", mc_systematic or ""),
         fname=f"Run{era}_{channel}__{variable}",
         y_data=y_data,
         yerr_data=yerr_data,
@@ -516,9 +519,15 @@ def parse_arguments():
         "--categories", default=None,
         type=lambda s: s.split(","),
         help="Comma-separated category names to plot, one output subdirectory per category "
-             "(e.g. 'njets0,njets1,njets2p' for --special-analysis NjetsControl shapes -- see "
-             "shapes/special/njets_control_categories.py's _regions). Default: no category "
+             "(e.g. 'njets0,njets1,njets2p' for --special-analysis NjetsControl shapes, 'trg_cross,trg_single' "
+             "for TriggerRegions -- see shapes/special/*_categories.py's _regions). Default: no category "
              "dimension, i.e. plain control-plot shapes (matches every prior invocation)."
+    )
+    parser.add_argument(
+        "--mc-systematics", default=[""], type=lambda s: s.split(","),
+        help="Comma-separated variations to read the simulated processes from, as <process>_<variation> (data stays "
+             "nominal; an empty entry is the nominal), e.g. ',noVsJetSF' with --categories ar for --special-analysis "
+             "AntiIsoTauSF shapes. Each variation goes to a subdirectory of its name."
     )
     return parser.parse_args()
 
@@ -554,12 +563,13 @@ def main(args):
     plot_vars = sorted(all_vars - flag_vars)
 
     for channel in args.channels:
-        proc_config = ControlShapeBkgProcesses(
-            embedding=args.embedding,
-            fake_factor=args.fake_factor,
-            channel=channel,
-        )
-        for category in (args.categories or [""]):
+        for category, mc_systematic in itertools.product(args.categories or [""], args.mc_systematics):
+            # the anti-isolated region (AntiIsoTauSF) has no jetFakes estimate: stack the jet->tau MC instead
+            proc_config = ControlShapeBkgProcesses(
+                embedding=args.embedding,
+                fake_factor=args.fake_factor and category != "ar",
+                channel=channel,
+            )
             for variable in plot_vars:
                 plot_control(
                     rootfile=rootfile,
@@ -573,6 +583,7 @@ def main(args):
                     category=category,
                     show_signal=args.show_signal,
                     include_systematics=args.include_systematics,
+                    mc_systematic=mc_systematic or None,
                 )
     rootfile.Close()
 

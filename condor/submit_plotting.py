@@ -39,6 +39,8 @@ def parse_args(argv=None):
     p.add_argument("--blinded", action="store_true")
     p.add_argument("--embedding", action="store_true")
     p.add_argument("--fake-factor", action="store_true", help="Selects the 'ff' half of the ss-os/ff input+output split; also passed through to plot_shapes_control.py.")
+    p.add_argument("--categories", type=csv, default=None, help="Passed through to plot_shapes_control.py (the categories of a --special-analysis).")
+    p.add_argument("--mc-systematics", default=None, help="Passed through to plot_shapes_control.py, e.g. ',noVsJetSF' (empty entry: nominal).")
     p.add_argument("--tag", default=None, help="Shapes run tag to read (default: --ntupletag, as run.py/submit_shapes.py --tag) and condor run label.")
     p.add_argument("--request-cpus", type=int, default=1)
     p.add_argument("--request-memory-mb", type=int, default=2000)
@@ -83,6 +85,10 @@ def build_jobs(args) -> list:
                 common.append("--embedding")
             if args.fake_factor:
                 common.append("--fake-factor")
+            if args.categories:
+                common.append(f"--categories {','.join(args.categories)}")
+            if args.mc_systematics is not None:
+                common.append(f"--mc-systematics={args.mc_systematics}")
 
             if args.split_variables and args.variables:
                 for i, var_chunk in enumerate(chunk(args.variables, args.split_variables)):

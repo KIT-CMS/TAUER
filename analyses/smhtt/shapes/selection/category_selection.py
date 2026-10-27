@@ -53,30 +53,34 @@ def build_xxh_cutstring(channel, ggh_index=None, qqh_index=None):
 
 fine_binning = np.linspace(0.0, 1.0, 51)
 
-# 7-class mt/et scheme
-_seven_class_scheme = {
+# 9-class mt/et scheme, the output order of the trainings' run3-coarse configs
+_nine_class_scheme = {
     "ggh": {"index": 0, "binning": fine_binning},
     "qqh": {"index": 1, "binning": fine_binning},
-    "ztt": {"index": 2, "binning": fine_binning},
-    "ff": {"index": 3, "binning": fine_binning},
-    "zll": {"index": 4, "binning": fine_binning},
-    "tt": {"index": 5, "binning": fine_binning},
-    "misc": {"index": 6, "binning": fine_binning},
+    "vh": {"index": 2, "binning": fine_binning},
+    "tth": {"index": 3, "binning": fine_binning},
+    "ztt": {"index": 4, "binning": fine_binning},
+    "ff": {"index": 5, "binning": fine_binning},
+    "zll": {"index": 6, "binning": fine_binning},
+    "tt": {"index": 7, "binning": fine_binning},
+    "misc": {"index": 8, "binning": fine_binning},
 }
 
 category_mapping = {
-    "mt": dict(_seven_class_scheme),
-    "et": dict(_seven_class_scheme),
-    # 5-class tt scheme 
+    "mt": dict(_nine_class_scheme),
+    "et": dict(_nine_class_scheme),
+    # 7-class tt scheme
     "tt": {
         "ggh": {"index": 0, "binning": fine_binning},
         "qqh": {"index": 1, "binning": fine_binning},
-        "ztt": {"index": 2, "binning": fine_binning},
-        "ff": {"index": 3, "binning": fine_binning},
-        "misc": {"index": 4, "binning": fine_binning},
+        "vh": {"index": 2, "binning": fine_binning},
+        "tth": {"index": 3, "binning": fine_binning},
+        "ztt": {"index": 4, "binning": fine_binning},
+        "ff": {"index": 5, "binning": fine_binning},
+        "misc": {"index": 6, "binning": fine_binning},
     },
 }
-SIGNAL_CLASSES = {"ggh", "qqh"}  # ggH + qqH/VBF
+SIGNAL_CLASSES = {"ggh", "qqh", "vh", "tth"}  # the STXS stage-0 production modes
 
 DNN_CLASS_MAPPING = {
     channel: {

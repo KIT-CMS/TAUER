@@ -4,7 +4,6 @@ import getpass
 import glob
 import json
 import os
-import re
 import shlex
 from dataclasses import dataclass
 from itertools import product
@@ -13,10 +12,9 @@ from typing import Callable
 
 from common.sample_paths import build_shape_output_paths, output_run_dir, plot_output_dir
 from condor.submit_taues_fit import DEFAULT_CATEGORIES
-from common.analysis import ACTIVE_ANALYSIS, DATA_ERA_MERGE, ff_config_era
+from common.analysis import ACTIVE_ANALYSIS, DATA_ERA_MERGE, ff_config_era, get_flags, get_output_features
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-UAT = REPO_ROOT / "trainings/uncertainty-aware-training"
 TRAIN_TASKS = {  # law wrapper task -> its .success files below the law output directory ({v} = law version <tag>_<channel>)
     "RunAllCENNTConfusionMatrixWorkflow": ["ConfusionMatrices_{v}/SMHtt/fold_combined/.success"],
     "RunAllCENNTWorkflow": ["CombinedModels_{v}/.success"],
@@ -74,8 +72,8 @@ def opts(**kw):
 
 
 def analysis_eras(cfg):
-    # eras whose data is merged into another analysis era only exist as CROWN ntuples
-    return [e for e in cfg["eras"] if not any(e in m for m in DATA_ERA_MERGE.values())]
+    # eras whose data is merged into another analysis era only exist as CROWN ntuples, unless picked alone (data vs the borrowed MC)
+    return list(dict.fromkeys(e for e in cfg["eras"] if not any(e in m and a in cfg["eras"] for a, m in DATA_ERA_MERGE.items())))
 
 
 def units(cfg, step):
@@ -99,10 +97,11 @@ def finalize(cfg):
     cfg = {"analysis": ACTIVE_ANALYSIS, "user": getpass.getuser(), "ff_type": "fake_factor", "stxs_stage": "stage0", "extras": {}, **cfg}
     cfg["tag"] = cfg.get("tag") or cfg["ntupletag"]
     cfg["tag_arg"] = "" if cfg["tag"] == cfg["ntupletag"] else cfg["tag"]
-    defaults = {"dc_analysis": "stxs_stage0_run3", "variable": "m_vis", "plot_variables": "m_vis,pt_1,pt_2,eta_1,eta_2,mt_1",
+    cfg["model_tag"] = cfg.get("model_tag") or f"{cfg['ntupletag']}_{cfg['stxs_stage']}"
+    defaults = {"dc_analysis": "stxs_stage0_run3", "variable": "m_vis",
                 "train_task": next(iter(TRAIN_TASKS)), "request_gpus": "1"}
-    for key in ("selection_friend", "ff_friend", "additional_friends", "correction_tag", "process_selection", "special_analysis", "sample_list", "dc_analysis", "variable",
-                "plot_variables", "fitdir", "dc_output_dir", "taues_fit_dir", "train_task", "request_gpus"):
+    for key in ("selection_friend", "ff_friend", "additional_friends", "correction_tag", "skip_systematics", "process_selection", "special_analysis", "sample_list", "dc_analysis", "variable",
+                "fitdir", "dc_output_dir", "taues_fit_dir", "train_task", "request_gpus"):
         cfg[key] = cfg.get(key) or defaults.get(key, "")
     cfg["fitdir"] = cfg["fitdir"] or os.environ.get("FITDIR") or str(REPO_ROOT)
     cfg["dc_output_dir"] = cfg["dc_output_dir"] or f"{cfg['fitdir']}/output_{cfg['dc_analysis']}"
@@ -128,9 +127,45 @@ def shapes_path(cfg, u):
     return shapes_file(cfg, u, qcd_label(cfg))
 
 
-def plot_files(cfg, u, qcd_label):
-    plot_dir = plot_output_dir({**cfg, "era": u["era"]}, qcd_label)
-    return [f"{plot_dir}{u['channel']}/Run{u['era']}_{u['channel']}__{v}.{ext}" for v in cfg["plot_variables"].split(",") for ext in ("png", "pdf")]
+def plot_variables(channel):
+    """The variables.yaml output_features shapes books (those with a control binning), minus the flags plot_shapes_control.py skips."""
+    from common.binning import control_binning  # slow import (ntuple_processor)
+    return sorted(set(get_output_features()) & set(control_binning[channel]) - set(get_flags()))
+
+
+def condor_plot_dir(cfg):
+    # condor nodes cannot write /web (and its web server cannot follow links to /ceph): plot-web copies from here
+    return f"{build_shape_output_paths(cfg['ntupletag'], user=cfg['user']).base}/plots"
+
+
+# categories and MC variations (empty: nominal) of the special analyses' shapes, as booked in shapes/special/ and produce_shapes.py
+SPECIAL_PLOTS = {
+    "NjetsControl": (["njets0", "njets1", "njets2p"], [""]),
+    "TriggerRegions": (["trg_cross", "trg_single"], [""]),
+    "AntiIsoTauSF": (["ar"], ["", "noVsJetSF"]),
+}
+
+
+def special_plots(cfg):
+    return SPECIAL_PLOTS.get(cfg.get("special_analysis"), ([""], [""]))
+
+
+def plot_argv(cfg):
+    categories, variations = special_plots(cfg)
+    return [*(["--categories", ",".join(categories)] if any(categories) else []), *([f"--mc-systematics={','.join(variations)}"] if any(variations) else [])]
+
+
+def plot_files(cfg, u, base=None):
+    plot_dir = plot_output_dir({**cfg, "era": u["era"]}, qcd_label(cfg), base)
+    return [os.path.join(plot_dir, u["channel"], cat, var, f"Run{u['era']}_{u['channel']}__{v}.{ext}")
+            for cat, var in product(*special_plots(cfg)) for v in plot_variables(u["channel"]) for ext in ("png", "pdf")]
+
+
+def plot_web_sources(cfg, u):
+    """(plot on /ceph, its copy on /web), plus a gallery index.php in the era, channel and every plot directory."""
+    web, plots = plot_output_dir({**cfg, "era": u["era"]}, qcd_label(cfg)), plot_files(cfg, u)
+    index = [(str(REPO_ROOT / "plotting/index.php"), f"{d}/index.php") for d in dict.fromkeys([web.rstrip("/"), f"{web}{u['channel']}", *map(os.path.dirname, plots)])]
+    return [*zip(plot_files(cfg, u, condor_plot_dir(cfg)), plots), *index]
 
 
 def gof_job(cfg, u):
@@ -138,18 +173,17 @@ def gof_job(cfg, u):
 
 
 def train_dir(cfg, u):
-    # the law workflow hardcodes its output base (PRE_WORK in _law_CENNT_workflow.py), run.py passes no --directory
-    base = re.search(r'PRE_WORK = "([^"]+)"', (UAT / "_law_CENNT_workflow.py").read_text()).group(1)
-    return f"{base}routine_output/CENNTExperiments"
+    # run.py TRAIN's --directory of the law workflow
+    return f"{training_dir(cfg)}/models/CENNTExperiments"
 
 
 def train_outputs(cfg, u):
-    return [f"{train_dir(cfg, u)}/{out.format(v=cfg['tag'] + '_' + u['channel'])}" for out in TRAIN_TASKS[cfg["train_task"]]]
+    return [f"{train_dir(cfg, u)}/{out.format(v=cfg['model_tag'] + '_' + u['channel'])}" for out in TRAIN_TASKS[cfg["train_task"]]]
 
 
 def nn_sources(cfg, u):
     ch = u["channel"]
-    return [(f"{train_dir(cfg, u)}/CombinedModels_{cfg['tag']}_{ch}/onnx_model/fold_combined/model.onnx", crown_analysis_dir() / f"payloads/DNN/{ch}/model.onnx")]
+    return [(f"{train_dir(cfg, u)}/CombinedModels_{cfg['model_tag']}_{ch}/onnx_model/fold_combined/model.onnx", crown_analysis_dir() / f"payloads/DNN/{ch}/model.onnx")]
 
 
 def ff_dir(cfg, u):
@@ -182,7 +216,7 @@ def crown_cmd(kind):
     def command(cfg, us):
         friend = [] if kind is None else ["--friend-tag", cfg[f"{kind}_friend"] or f"<{kind} friend tag>", "--friend-config", FRIEND_CONFIG[kind]]
         scopes = ",".join(dict.fromkeys(u["channel"] for u in us))
-        return [f"cd {kingmaker_dir()} && source setup.sh KingMaker",
+        return [f"cd {kingmaker_dir()} && source setup.sh",
                 shlex.join(["law", "run", "ProduceNtuples", "--analysis", crown_analysis_dir().name, "--config", "config", "--production-tag", cfg["ntupletag"],
                             "--sample-list", cfg["sample_list"] or "<sample list>", "--scopes", scopes, "--shifts", "All", "--workers", "50", *friend])]
     return command
@@ -199,7 +233,7 @@ def shapes_argv(cfg, u, ff=False, special=None):
     return ["--ntupletag", cfg["ntupletag"], "--eras", u["era"], "--channels", u["channel"], "--user", cfg["user"],
             *opts(selection_friend=cfg["selection_friend"], additional_friends=cfg["additional_friends"], stxs_stage=cfg["stxs_stage"], tag=cfg["tag_arg"],
                   process_selection=cfg.get("process_selection"), special_analysis=special or cfg.get("special_analysis")),
-            *(["--ff-friend", cfg["ff_friend"], "--ff-type", cfg["ff_type"]] if ff else [])]
+            *(["--ff-friend", cfg["ff_friend"], "--ff-type", cfg["ff_type"]] if ff else []), *(["--skip-systematics"] if cfg["skip_systematics"] else [])]
 
 
 def estimations_argv(cfg, u, ff=False):
@@ -263,18 +297,9 @@ def training_dir(cfg):
     return build_shape_output_paths(cfg["ntupletag"], user=cfg["user"]).training
 
 
-def nn_dataset_cmd(cfg, us):
-    # one dataset per channel: run.py TRAIN reads <datasets>/<channel>/
-    return [shlex.join(["python", "run.py", "TRAIN-DATASET", "--channels", u["channel"], "--ntupletag", cfg["ntupletag"], "--train-eras", ",".join(analysis_eras(cfg)),
-                        "--base-dataset-dir", f"{training_dir(cfg)}/datasets/{u['channel']}"]) for u in us]
-
-
 def taues_fit_argv(cfg, u):
     return ["--era", u["era"], "--categories", u["category"], "--input-file", str(shapes_file(cfg, {"era": u["era"], "channel": "mt"}, "ss-os")), "--output-dir", cfg["taues_fit_dir"], *opts(tag=cfg["tag_arg"])]
 
-
-def plot_cmd(cfg, us):
-    return [f"export VARIABLES={cfg['plot_variables']}", *run_py("PLOT", cfg, us, "--ntupletag", cfg["ntupletag"], *opts(tag=cfg["tag_arg"], ff_friend=cfg["ff_friend"]))]
 
 STEPS = [
     Step("crown-ntuples", "CROWN ntuples (KingMaker)", "crown", "era×channel", "crown", params=("sample_list",), check="crown-ntuples", command=crown_cmd(None), env="kingmaker"),
@@ -296,12 +321,16 @@ STEPS = [
          channels=FF_CHANNELS, check="crown-friend", command=crown_cmd("ff"), env="kingmaker"),
     Step("shapes", "Shapes (QCD, or fake factors if an FF friend is set)", "condor", "era×channel", "shapes",
          needs=lambda cfg: ("crown-selection-friend", *(("crown-ff-friend",) if cfg["ff_friend"] else ())),
-         params=("selection_friend", "additional_friends", "ff_friend", "stxs_stage", "tag", "process_selection", "special_analysis"), check="shapes",
+         params=("selection_friend", "additional_friends", "ff_friend", "stxs_stage", "tag", "skip_systematics", "process_selection", "special_analysis"), check="shapes",
          submitter="submit_shapes", argv=lambda cfg, u: shapes_argv(cfg, u, ff=bool(cfg["ff_friend"]))),
     Step("estimations", "Estimations (QCD or fake factors)", "condor", "era×channel", "estimations", needs=("shapes",), params=("ff_friend", "tag"), check="estimations",
          submitter="submit_estimations", argv=lambda cfg, u: estimations_argv(cfg, u, ff=bool(cfg["ff_friend"]))),
-    Step("plot", "Control plots", "local", "era×channel", "plot", needs=("estimations",), params=("ff_friend", "tag", "plot_variables"), command=plot_cmd,
-         outputs=lambda cfg, u: plot_files(cfg, u, qcd_label(cfg)), inputs=lambda cfg, u: [shapes_path(cfg, u)]),
+    Step("plot", "Control plots (to /ceph)", "condor", "era×channel", "plot", needs=("estimations",), params=("ff_friend", "tag", "special_analysis"), submitter="submit_plotting",
+         argv=lambda cfg, u: ["--ntupletag", cfg["ntupletag"], "--eras", u["era"], "--channels", u["channel"], "--user", cfg["user"], "--output-dir", condor_plot_dir(cfg),
+                              *opts(tag=cfg["tag_arg"]), *(["--fake-factor"] if cfg["ff_friend"] else []), *plot_argv(cfg)],
+         outputs=lambda cfg, u: plot_files(cfg, u, condor_plot_dir(cfg)), inputs=lambda cfg, u: [shapes_path(cfg, u)]),
+    Step("plot-web", "Control plots: copy to /web", "handoff", "era×channel", "plot", needs=("plot",), params=("ff_friend", "tag"), check="handoff",
+         outputs=plot_web_sources, command=handoff_copies(plot_web_sources), env=""),
     Step("datacards", "Datacards", "local", "era×channel", "datacards", needs=("estimations",), params=("dc_analysis", "variable", "stxs_stage", "fitdir", "dc_output_dir"),
          env="cmssw", command=datacard_cmd, outputs=lambda cfg, u: [f"{cfg['dc_output_dir']}/{u['channel']}/{u['era']}/*.txt"], inputs=lambda cfg, u: [shapes_path(cfg, u)]),
     Step("workspace", "Combine workspace", "local", "era", "datacards", needs=("datacards",), params=("dc_analysis", "fitdir"), env="cmssw", command=workspace_cmd,
@@ -318,15 +347,17 @@ STEPS = [
     Step("btag-calc", "B-tag: efficiencies", "condor", "era×channel", "btag", needs=("btag-presel",), params=("tag",),
          outputs=lambda cfg, u: [f"{btag_calc_dir(cfg, u)}/btag_efficiency.json*"], submitter="submit_btag_efficiency", argv=btag_argv("calc")),
     Step("btag-handoff", "B-tag: payloads to CROWN", "handoff", "era×channel", "btag", needs=("btag-calc",), check="handoff", outputs=btag_sources, command=handoff_copies(btag_sources), env=""),
-    Step("nn-configs", "NN: training configs", "condor", "era×channel", "nn", channels=NN_CHANNELS, needs=("crown-selection-friend", "crown-ff-friend"), params=("selection_friend", "additional_friends", "ff_friend", "tag"),
-         outputs=lambda cfg, u: [f"{training_dir(cfg)}/configs/{u['era']}__{u['channel']}__config.yaml"], submitter="submit_train_configs",
-         argv=lambda cfg, u: ["--ntupletag", cfg["ntupletag"], "--eras", u["era"], "--channels", u["channel"], "--user", cfg["user"], *opts(selection_friend=cfg["selection_friend"], ff_friend=cfg["ff_friend"], additional_friends=cfg["additional_friends"], tag=cfg["tag_arg"])]),
-    Step("nn-dataset", "NN: training dataset", "local", "channel", "nn", channels=NN_CHANNELS, needs=("nn-configs",), params=("ff_friend",),
-         outputs=lambda cfg, u: [f"{training_dir(cfg)}/datasets/{u['channel']}/folds/fold{fold}.feather" for fold in (0, 1)], command=nn_dataset_cmd),
-    Step("nn-train", "NN: training (GPU)", "condor", "channel", "train", channels=NN_CHANNELS, needs=("nn-dataset",), params=("ff_friend", "tag", "train_task", "request_gpus"), outputs=train_outputs,
+    Step("nn-configs", "NN: training configs", "condor", "era×channel", "nn", channels=NN_CHANNELS, needs=("crown-selection-friend", "crown-ff-friend"), params=("selection_friend", "additional_friends", "ff_friend", "skip_systematics"),
+         outputs=lambda cfg, u: [f"{training_dir(cfg)}/configs/stage0/{u['era']}__{u['channel']}__config.yaml"], submitter="submit_train_configs",
+         argv=lambda cfg, u: ["--ntupletag", cfg["ntupletag"], "--eras", u["era"], "--channels", u["channel"], "--user", cfg["user"], *opts(selection_friend=cfg["selection_friend"], ff_friend=cfg["ff_friend"], additional_friends=cfg["additional_friends"]),
+                                  *([] if cfg["skip_systematics"] else ["--include-systematics"])]),
+    Step("nn-dataset", "NN: training dataset", "condor", "channel", "nn", channels=NN_CHANNELS, needs=("nn-configs",), params=("ff_friend",),
+         outputs=lambda cfg, u: [f"{training_dir(cfg)}/datasets/stage0/{u['channel']}/folds/fold{fold}.feather" for fold in (0, 1)], submitter="submit_nn_dataset",
+         argv=lambda cfg, u: ["--ntupletag", cfg["ntupletag"], "--channels", u["channel"], "--user", cfg["user"], "--train-eras", ",".join(analysis_eras(cfg))]),
+    Step("nn-train", "NN: training (GPU)", "condor", "channel", "train", channels=NN_CHANNELS, needs=("nn-dataset",), params=("ff_friend", "stxs_stage", "model_tag", "train_task", "request_gpus"), outputs=train_outputs,
          submitter="submit_nn_train", argv=lambda cfg, u: ["--ntupletag", cfg["ntupletag"], "--channels", u["channel"], "--user", cfg["user"], "--train-task", cfg["train_task"],
-                                                            "--request-gpus", cfg["request_gpus"], *opts(tag=cfg["tag_arg"])]),
-    Step("nn-handoff", "NN: model to CROWN", "handoff", "channel", "train", channels=NN_CHANNELS, needs=("nn-train",), params=("tag",),
+                                                            "--request-gpus", cfg["request_gpus"], "--stxs-stage", cfg["stxs_stage"], "--tag", cfg["model_tag"]]),
+    Step("nn-handoff", "NN: model to CROWN", "handoff", "channel", "train", channels=NN_CHANNELS, needs=("nn-train",), params=("stxs_stage", "model_tag"),
          check="handoff", outputs=nn_sources, command=handoff_copies(nn_sources), env=""),
     Step("taues-shapes", "TauES: shapes", "condor", "era×channel", "taues", needs=("crown-selection-friend",), params=("selection_friend", "additional_friends", "stxs_stage", "tag"), check="shapes",
          submitter="submit_shapes", argv=lambda cfg, u: shapes_argv(cfg, u, special="TauES")),

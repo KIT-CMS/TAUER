@@ -1,6 +1,6 @@
 import logging
 
-from common.analysis import AR_MASK_BRANCH, SR_MASK_SS_BRANCH
+from common.analysis import AR_MASK_BRANCH, SR_MASK_SS_BRANCH, TAU_VS_JET_WP
 from CustomLogging import setup_logging
 from ntuple_processor.utils import Cut, Weight
 from ntuple_processor.systematics import (
@@ -30,6 +30,15 @@ def _anti_iso(suffix=""):
 
 
 anti_iso = ReplaceCutAndAddWeight("anti_iso", "SR_mask", _anti_iso(), Weight(FF_WEIGHT, "fake_factor"))
+
+# AntiIsoTauSF control plots: the anti-isolated region without fake factors, and for MC also without the vsJet SF that
+# CROWN's `weight` applies to genuine taus
+anti_iso_no_ff = ReplaceCut("anti_iso", "SR_mask", _anti_iso())
+
+
+def anti_iso_no_vsjet_sf(channel):
+    sf = " * ".join(f"((gen_match_{leg}==5)*id_wgt_tau_vsJet_{TAU_VS_JET_WP}_{leg} + (gen_match_{leg}!=5))" for leg in ((1, 2) if channel == "tt" else (2,)))
+    return ReplaceCutAndAddWeight("anti_iso_noVsJetSF", "SR_mask", _anti_iso(), Weight(f"1/({sf})", "no_vsjet_sf"))
 
 
 def shape_systematics(syst):

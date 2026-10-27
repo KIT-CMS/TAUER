@@ -20,81 +20,10 @@ dataset_modifications:
     - ZJ
     - TTJ
     - VVJ
-    ## why remove signal ??
-    # - qqH125
-    # - ggH125
   labels:
+    # the signal labels (one per STXS unit the shapes book) are added by run.py TRAIN-DATASET, see write_training_setup()
     renaming_map:
-      # stxs stage 0
-      is_ggh_htautau: 
-        - is_ggH__ggH_htt125_bin101_selection
-        - is_ggH__ggH_htt125_bin102_selection
-        - is_ggH__ggH_htt125_bin103_selection
-        - is_ggH__ggH_htt125_bin104_selection
-        - is_ggH__ggH_htt125_bin105_selection
-        - is_ggH__ggH_htt125_bin106_selection
-        - is_ggH__ggH_htt125_bin107_selection
-        - is_ggH__ggH_htt125_bin108_selection
-        - is_ggH__ggH_htt125_bin109_selection
-        - is_ggH__ggH_htt125_bin110_selection
-        - is_ggH__ggH_htt125_bin111_selection
-        - is_ggH__ggH_htt125_bin112_selection
-        - is_ggH__ggH_htt125_bin113_selection
-        - is_ggH__ggH_htt125_bin114_selection
-        - is_ggH__ggH_htt125_bin115_selection
-        - is_ggH__ggH_htt125_bin116_selection
-      is_vbf_htautau: 
-        - is_qqH_VH__qqH_htt125_bin201_selection
-        - is_qqH_VH__qqH_htt125_bin202_selection
-        - is_qqH_VH__qqH_htt125_bin203_selection
-        - is_qqH_VH__qqH_htt125_bin204_selection
-        - is_qqH_VH__qqH_htt125_bin205_selection
-        - is_qqH_VH__qqH_htt125_bin206_selection
-        - is_qqH_VH__qqH_htt125_bin207_selection
-        - is_qqH_VH__qqH_htt125_bin208_selection
-        - is_qqH_VH__qqH_htt125_bin209_selection
-        - is_qqH_VH__qqH_htt125_bin210_selection
-      # recombined stxs stage 1.2
-      is_ggh_htautau_bin101to104:
-        - is_ggH__ggH_htt125_bin101_selection
-        - is_ggH__ggH_htt125_bin102_selection
-        - is_ggH__ggH_htt125_bin103_selection
-        - is_ggH__ggH_htt125_bin104_selection
-      is_ggh_htautau_bin105:
-        - is_ggH__ggH_htt125_bin105_selection
-      is_ggh_htautau_bin106:
-        - is_ggH__ggH_htt125_bin106_selection
-      is_ggh_htautau_bin107:
-        - is_ggH__ggH_htt125_bin107_selection
-      is_ggh_htautau_bin108:
-        - is_ggH__ggH_htt125_bin108_selection
-      is_ggh_htautau_bin109:
-        - is_ggH__ggH_htt125_bin109_selection
-      is_ggh_htautau_bin110to112:
-        - is_ggH__ggH_htt125_bin110_selection
-        - is_ggH__ggH_htt125_bin111_selection
-        - is_ggH__ggH_htt125_bin112_selection
-      is_ggh_htautau_bin113to116:
-        - is_ggH__ggH_htt125_bin113_selection
-        - is_ggH__ggH_htt125_bin114_selection
-        - is_ggH__ggH_htt125_bin115_selection
-        - is_ggH__ggH_htt125_bin116_selection
-      is_vbf_htautau_bin201to202:
-        - is_qqH_VH__qqH_htt125_bin201_selection
-        - is_qqH_VH__qqH_htt125_bin202_selection
-      is_vbf_htautau_bin203to205:
-        - is_qqH_VH__qqH_htt125_bin203_selection
-        - is_qqH_VH__qqH_htt125_bin204_selection
-        - is_qqH_VH__qqH_htt125_bin205_selection
-      is_vbf_htautau_bin206:
-        - is_qqH_VH__qqH_htt125_bin206_selection
-      is_vbf_htautau_bin207to208:
-        - is_qqH_VH__qqH_htt125_bin207_selection
-        - is_qqH_VH__qqH_htt125_bin208_selection
-      is_vbf_htautau_bin209to210:
-        - is_qqH_VH__qqH_htt125_bin209_selection
-        - is_qqH_VH__qqH_htt125_bin210_selection
-      # bakcgrounds
+      # backgrounds
       is_dyjets_tt: is_DY__ZTT
       is_dyjets_ll: is_DY__ZL
       # is_embedding: is_EMB__EMB
@@ -104,7 +33,7 @@ dataset_modifications:
       is_diboson: 
         - is_VV__VVL
         - is_VV__VVT
-      is_jetFakes: is_data
+      is_jetFakes: is_jetFakes__jetFakes  # data is renamed jetFakes above
       # combined category for subleading backgrounds in tt
       is_bkg_rest: 
         - is_TT__TTL
@@ -114,7 +43,7 @@ dataset_modifications:
   selections:
     is_dyjets: anti_iso+nominal
     is_dyjets_tt: anti_iso+nominal
-    is_dy_ll: anti_iso+nominal
+    is_dyjets_ll: anti_iso+nominal
     is_embedding: anti_iso+nominal
     is_ttbar: anti_iso+nominal
     is_diboson: anti_iso+nominal

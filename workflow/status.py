@@ -7,16 +7,18 @@ import json
 import os
 import subprocess
 import sys
+import warnings
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from common.sample_paths import XROOTD_REDIRECTOR, crown_ntuple_base
-from common.shapes_merge import find_parts, missing_processes, read_expected_processes
+from common.shapes_merge import _ff_only_parts, find_parts, missing_processes, read_expected_processes, ss_os_sibling
 from common.analysis import ff_config_era, get_mc_ntuple_era, get_samples
 from workflow import steps as S
 
 REPO_ROOT = S.REPO_ROOT
 DONE_LIKE = ("done", "other-options", "stale", "unknown", "manual")
+FRIEND_PARAMS = ("selection_friend", "additional_friends", "ff_friend")
 _PROBES: dict[str, dict] = {}
 _XRD: dict[str, list | None] = {}
 
@@ -51,6 +53,8 @@ def xrd_ls(path):
         try:
             from XRootD import client
 
+            # see ntuple_processor/booking.py: silences ROOT's deprecation warning raised by XRootD's exit-time finalizer
+            warnings.filterwarnings("ignore", message=r"\s*In ROOT 6\.36, the ROOT\.RDF\.Experimental\.Distributed", category=FutureWarning)
             status, listing = client.FileSystem(XROOTD_REDIRECTOR).dirlist(path)
             _XRD[path] = [e.name for e in listing] if status.ok else ([] if status.errno == 3011 else None)
         except Exception:
@@ -145,6 +149,12 @@ def check_shapes(cfg, step, u):
     expected = read_expected_processes(file.parent)
     if parts and expected and all(any(f"_{p}_" in f"_{part.stem}_" for part in parts) for p in expected):
         return "done", "unmerged parts (merged by the estimations)"
+    # ff run reusing the ss-os shapes: only the FF-weighted parts, merged with the ss-os file by the estimations
+    ff_parts = _ff_only_parts(file)
+    if ff_parts and (sibling := ss_os_sibling(file)) and sibling.exists() and (
+            ff_parts[0].name == "shapes_ff_only.root" or expected and all(any(f"_{p}_" in f"_{part.stem}_" for part in ff_parts) for p in expected)):
+        return "done", "ff-only parts + ss-os shapes (merged by the estimations)"
+    parts += ff_parts
     return ("partial", f"{len(parts)} part(s)") if parts else ("missing", "")
 
 
@@ -173,15 +183,32 @@ def stamp_file(cfg):
     return REPO_ROOT / "condor/run" / cfg["ntupletag"] / "tauer_stamps.json"
 
 
+def stamp_key(cfg, step, u):
+    # outputs of steps with a tag live under it: sessions with other tags must not overwrite each other's stamps
+    return f"{step.name}|{cfg['tag_arg'] + '|' if 'tag' in step.params and cfg['tag_arg'] else ''}{S.label(u)}"
+
+
 def options_hash(cfg, step):
     keys = {k: cfg.get(k) for k in ("ntupletag", *step.params)}
     return hashlib.sha1(json.dumps([keys, cfg["extras"].get(step.name)], sort_keys=True).encode()).hexdigest()[:10]
 
 
+def stamp_options(cfg, step):
+    return {**{k: cfg.get(k) for k in ("ntupletag", *step.params)}, "extras": cfg["extras"].get(step.name)}
+
+
+def changed_options(old, cfg, step):
+    """Options that differ from the stamp: [] if equal, None if they differ but an old hash-only stamp cannot tell which."""
+    if isinstance(old, str):
+        return [] if old == options_hash(cfg, step) else None
+    new = stamp_options(cfg, step)
+    return [k for k in new.keys() | old.keys() if new.get(k) != old.get(k)]
+
+
 def record_stamp(cfg, step, u):
     file = stamp_file(cfg)
     stamps = json.loads(file.read_text()) if file.exists() else {}
-    stamps[f"{step.name}|{S.label(u)}"] = options_hash(cfg, step)
+    stamps[stamp_key(cfg, step, u)] = stamp_options(cfg, step)
     file.parent.mkdir(parents=True, exist_ok=True)
     file.write_text(json.dumps(stamps, indent=1))
 
@@ -217,6 +244,7 @@ def resolve(cfg, selected, jobs=None):
             closure.add(name)
             todo += need_names(cfg, S.BY_NAME[name])
     stamps = json.loads(stamp_file(cfg).read_text()) if stamp_file(cfg).exists() else {}
+    asked = {"ntupletag", *(k for name in selected for k in S.BY_NAME[name].params)}
     result, unit_list = {}, {}
     for step in (s for s in S.STEPS if s.name in closure):
         us = unit_list[step.name] = S.units(cfg, step)
@@ -227,20 +255,33 @@ def resolve(cfg, selected, jobs=None):
         result[step.name] = {}
         for u in us:
             state, note = raw[S.label(u)]
-            if (job := (jobs or {}).get((step.name, S.label(u)))) and state in ("missing", "partial"):
+            if job := (jobs or {}).get((step.name, S.label(u))):  # queued/running/held: the output is being (re)written
                 state, note = job
             elif state == "done":
                 own = output_mtime(cfg, step, u)
                 upstream = [output_mtime(cfg, S.BY_NAME[n], v) for n in need_names(cfg, step) for v in unit_list[n] if related(cfg, u, v)]
                 upstream += [newest([p]) for p in (step.inputs(cfg, u) if step.inputs else [])]
-                if (old := stamps.get(f"{step.name}|{S.label(u)}")) and old != options_hash(cfg, step):
-                    state, note = "other-options", "done with different options"
+                changed = changed_options(old, cfg, step) if (old := stamps.get(stamp_key(cfg, step, u))) else []
+                if step.name not in selected:
+                    # the options of the other steps are not asked this session: only the asked ones can differ
+                    changed = [k for k in changed or [] if k in asked]
+                if changed != []:
+                    # outputs made from other friend ntuples are other results in the same place: redo them
+                    if friends := [f"{k}={old[k]}" for k in changed or [] if k in FRIEND_PARAMS]:
+                        state, note = "missing", "made with " + ", ".join(friends)
+                    else:
+                        state, note = "other-options", "done with different options" + (f" ({', '.join(sorted(changed))})" if changed else "")
                 elif own and any(t and t > own for t in upstream):
                     state, note = "stale", "an input is newer than the output"
-            elif state in ("missing", "partial", "manual", "unknown"):
+            if state in ("missing", "partial", "manual", "unknown", "other-options"):
                 pending = {n for n in need_names(cfg, step) for v in unit_list[n] if related(cfg, u, v) and result[n][S.label(v)][0] not in DONE_LIKE}
                 if pending:
                     state, note = ("waiting" if pending <= set(selected) else "blocked"), "needs " + ", ".join(sorted(pending))
+            elif state == "done":
+                # its output is outdated as soon as an upstream unit is being redone
+                redoing = {n for n in need_names(cfg, step) for v in unit_list[n] if related(cfg, u, v) and result[n][S.label(v)][0] in ("queued", "running", "held", "waiting")}
+                if redoing:
+                    state, note = "waiting", "needs " + ", ".join(sorted(redoing)) + " (being redone)"
             result[step.name][S.label(u)] = (state, note)
     # only show the upstream steps a shown step still waits for: the needs of fully done steps are not relevant
     shown = set(selected)
@@ -260,7 +301,7 @@ if __name__ == "__main__" and sys.argv[1:2] == ["--probe"]:
         names = set()
         if f and not f.IsZombie() and f.GetListOfKeys().GetSize():
             variable = f.GetListOfKeys()[0].ReadObj()
-            names = {k.GetName() for k in variable.GetListOfKeys()[0].ReadObj().GetListOfKeys()}
+            names = {k.GetName() for b in variable.GetListOfKeys() for k in b.ReadObj().GetListOfKeys()}
         out[path] = {"missing": missing_processes(Path(path)), "QCD": "QCD" in names, "jetFakes": "jetFakes" in names}
     print(json.dumps(out))
 

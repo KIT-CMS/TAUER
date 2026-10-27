@@ -91,9 +91,9 @@ def output_run_dir(cfg, qcd_label, channel):
     return Path(*parts)
 
 
-def plot_output_dir(cfg, qcd_label):
-    # plot_shapes_control.py appends <channel>/ under this itself.
-    parts = [f"/web/{cfg['user'] or getpass.getuser()}/public_html/CMS_HTT", qcd_label, cfg["era"], cfg["ntupletag"] or "notag"]
+def plot_output_dir(cfg, qcd_label, base=None):
+    # plot_shapes_control.py appends <channel>/ under this itself; base: condor/submit_plotting.py's --output-dir (default: the /web gallery)
+    parts = [base or f"/web/{cfg['user'] or getpass.getuser()}/public_html/CMS_HTT", qcd_label, cfg["era"], cfg["ntupletag"] or "notag"]
     if cfg["tag"] != cfg["ntupletag"]:
         parts.append(cfg["tag"])
     return os.path.join(*parts) + "/"

@@ -56,7 +56,7 @@ def build_jobs(args, setups: list) -> list[JobSpec]:
     ff_friend_dir = resolve_friend(args.ff_friend) if args.ff_friend else None
     additional_friend_dirs = [resolve_friend(tag) for tag in (args.additional_friends or [])]
 
-    output_dir = Path(args.output_dir or f"{build_shape_output_paths(args.ntupletag, user=args.user).training}/configs")
+    output_dir = Path(args.output_dir or f"{build_shape_output_paths(args.ntupletag, user=args.user).training}/configs/stage0")  # stage0 booking, the stage-1.2 labels are per event
     setups.append(lambda: output_dir.mkdir(parents=True, exist_ok=True))
 
     for era in args.eras:
@@ -74,6 +74,7 @@ def build_jobs(args, setups: list) -> list[JobSpec]:
                 *([f"--{channel}-friend-directory", " ".join(friend_dirs)] if friend_dirs else []),
                 "--xrootd",
                 "--collect-config-only",
+                "--no-dnn-categorization",  # no NN friend before training: the NN categories cut on nn_predicted_class
                 # collect_config() itself prefixes the basename with "{era}__{channel}__",
                 # landing the real output at output_dir/{era}__{channel}__config.yaml.
                 f"--config-output-file {output_dir / 'config.yaml'}",

@@ -25,14 +25,17 @@ default_categorization = importlib.import_module(f"analyses.{ACTIVE_ANALYSIS}.sh
 from tau_es.taues_categories import categorization as taues_categorization
 from shapes.special.ttbar_dy_weight_categories import categorization as ttbar_dy_weight_categorization
 from shapes.special.njets_control_categories import categorization as njets_control_categorization
+from shapes.special.trigger_region_categories import categorization as trigger_region_categorization
+from shapes.special.njets_control_categories import _variables_for as control_variables
 import tau_es.energy_scales as tau_es_energy_scales
 from shapes.selection.channel_selection import channel_selection
 from common.binning import control_binning as default_control_binning
 from common.sample_paths import build_selection_friend_dir, parse_ntuple_directory
-from common.analysis import build_files_dict, get_mc_ntuple_era
+from common.analysis import RUN3_ERAS, build_files_dict, get_mc_ntuple_era, mc_lumi_scale
 from common.systematics import systematics
 from common.analysis import BACKGROUNDS, GROUPS, SIGNAL_DATASETS, expand
 from ntuple_processor import GraphManager, RunManager, UnitManager
+from ntuple_processor.utils import Selection
 
 
 def parse_arguments():
@@ -128,13 +131,16 @@ def parse_arguments():
     )
     parser.add_argument(
         "--special-analysis", default=None,
-        choices=[None, "TauES", "TTbarDYWeight", "NjetsControl"],
+        choices=[None, "TauES", "TTbarDYWeight", "NjetsControl", "TriggerRegions", "AntiIsoTauSF"],
         help="Produce shapes for a special analysis instead of the default categorization. "
              "'TauES': mt-only tau energy-scale fit inputs (per-shift embedded datasets, "
              "tau_es/energy_scales.py). 'TTbarDYWeight': em-only nbtag x m_vis-Z-peak 2x2 "
              "categorization (shapes/special/ttbar_dy_weight_categories.py) for the ttbar/DY "
              "normalization measurement. 'NjetsControl': njets==0/==1/>=2 categorization "
-             "over the control-plot variable set, all channels.",
+             "over the control-plot variable set, all channels. 'TriggerRegions': et/mt/tt "
+             "trg_cross/trg_single offline-pt categorization (shapes/special/trigger_region_categories.py), Run 3 only. "
+             "'AntiIsoTauSF': et/mt/tt control variables in the anti-isolated region (<ch>_ar) without fake factors, "
+             "MC also as <proc>_noVsJetSF without the Medium vsJet SF, Run 3 only.",
     )
     return parser.parse_args()
 
@@ -196,6 +202,9 @@ def get_select_function(channel_selection_obj, selection_kwargs, selection_memo)
             if _proc.__name__ not in selection_memo:
                 selection_memo[_proc.__name__] = _proc(**selection_kwargs)
             _sel.append(selection_memo[_proc.__name__])
+        # MC normalized to this run's data, e.g. 2026 alone with the 2025(+2026) MC
+        if args and (scale := mc_lumi_scale(selection_kwargs["era"])) != 1:
+            _sel.append(Selection(name="mc_lumi_scale", weights=[(f"{scale:.9g}", "mc_lumi_scale")]))
         return _sel
     return _function
 
@@ -267,7 +276,6 @@ def collect_config(graphs, era, channel, filename, processes):
     with open(_path, "w") as config_file:
         yaml.dump(r_manager.config.regular, config_file, default_flow_style=False, Dumper=PreserveROOTPathsAsStrings)
     logger.info(f"Configuration written to {_path}")
-    logger.info("Due to a ROOT/xrd bug the script may not exit cleanly. Kill with Ctrl+z && kill %1 if needed.")
 
 
 def main(args):
@@ -387,6 +395,14 @@ def main(args):
             nominals[args.era]["units"][channel] = get_analysis_units(**common_kwargs, categorization=ttbar_dy_weight_categorization)
         elif args.special_analysis == "NjetsControl":
             nominals[args.era]["units"][channel] = get_analysis_units(**common_kwargs, categorization=njets_control_categorization)
+        elif args.special_analysis == "TriggerRegions":
+            if channel not in ("et", "mt", "tt"):
+                raise ValueError(f"--special-analysis TriggerRegions is only implemented for et/mt/tt; got channel={channel!r}.")
+            nominals[args.era]["units"][channel] = get_analysis_units(**common_kwargs, categorization=trigger_region_categorization(args.era))
+        elif args.special_analysis == "AntiIsoTauSF":
+            if channel not in ("et", "mt", "tt") or args.era not in RUN3_ERAS or args.ff_only:
+                raise ValueError(f"--special-analysis AntiIsoTauSF is only implemented for et/mt/tt in Run 3 and not with --ff-only; got {args.era} {channel}.")
+            nominals[args.era]["units"][channel] = get_control_units(**common_kwargs, variables=control_variables(channel))
         else:
             nominals[args.era]["units"][channel] = get_analysis_units(**common_kwargs, categorization=default_categorization)
 
@@ -447,6 +463,10 @@ def main(args):
                     enable_check=args.enable_booking_check,
                 )
             continue
+        if args.special_analysis == "AntiIsoTauSF":
+            _book_qcd(procS, [selection_systematics.anti_iso_no_ff])
+            _book_qcd(simulatedProcsS, [selection_systematics.anti_iso_no_vsjet_sf(channel)])
+            continue
         _book_nonff(signalsS, [])
         # Unconditional OS/signal-region nominal for every non-signal process
         _book_nonff(procS - signalsS, [])
@@ -491,7 +511,8 @@ def main(args):
             graphs=graphs, era=args.era, channel=args.channels[0], filename=args.config_output_file,
             processes={unit.path.split("/")[-1] for unit in unit_manager.booked_units},
         )
-        return
+        logging.shutdown()
+        os._exit(0)  # the ROOT/xrootd teardown hangs after the config is written
 
     if args.only_create_graphs:
         _channels = ",".join(args.channels)

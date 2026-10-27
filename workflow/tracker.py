@@ -35,6 +35,7 @@ def build_plan(cfg, step, us):
         else:
             plan.jobs += part.jobs
             plan.setups += part.setups
+            plan.stage_in |= part.stage_in
     return plan, names
 
 
@@ -105,7 +106,8 @@ def poll(state):
             lines = [line.strip(" │╭╰─╮╯") for log in logs if log.exists() for line in log.read_text(errors="replace").splitlines()]
             errors = [line for line in lines if re.search(r"\w+(Error|Exception)\b|Traceback|CRITICAL", line) and "Warning" not in line]
             tail = errors[-1] if errors else " | ".join(lines[-2:])
-            result[(step, lab)] = ("failed", f"{job['name']}: exit {h.get('ExitCode', '?') if h else 'unknown (left the queue)'}; {tail}")
+            result[(step, lab)] = ("failed", f"{job['name']}: removed (condor_rm)" if h and h["JobStatus"] == 3 else
+                                   f"{job['name']}: exit {h.get('ExitCode', '?') if h else 'unknown (left the queue)'}; {tail}")
         else:
             result[(step, lab)] = ("exited", "")
     return result

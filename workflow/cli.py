@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import filecmp
 import getpass
 import importlib
 import io
@@ -17,6 +18,7 @@ import questionary
 from questionary import Style
 from common.sample_paths import crown_ntuple_base
 from rich.console import Console, Group
+from rich.markup import escape
 from rich.tree import Tree
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -32,17 +34,19 @@ custom_style = Style([
 COLORS = {"done": LIGHT_GREEN, "missing": RED, "partial": AMBER, "stale": AMBER, "other-options": AMBER, "waiting": LIGHT_BLUE,
           "blocked": DARK_BLUE, "unknown": GREY, "manual": GREY, "queued": LIGHT_BLUE, "running": TEAL, "held": f"bold {RED}", "failed": f"bold {RED}"}
 STXS_STAGES = ["stage0", "stage1p2"]
-SPECIAL_ANALYSES = ["", "TauES", "TTbarDYWeight", "NjetsControl"]
-PROMPTS = {  # key -> (question, default, choices | "friend" | None)
+SPECIAL_ANALYSES = ["", "TauES", "TTbarDYWeight", "NjetsControl", "TriggerRegions", "AntiIsoTauSF"]
+PROMPTS = {  # key -> (question, default, choices | "friend" | "bool" | None)
     "selection_friend": ("Selection friend tag", "", "friend"), "ff_friend": ("Fake-factor friend tag (skip: ss-os QCD method)", "", "friend"),
     "additional_friends": ("Additional friend tags, e.g. FastMTT (space to select)", "", "friends"),
     "stxs_stage": ("STXS stage", "stage0", STXS_STAGES), "tag": ("Run tag (empty: ntupletag)", "", None),
-    "correction_tag": ("FF correction tag (empty: the one of corrections_<ch>.yaml)", "", None),
+    "correction_tag": ("Fake-factor correction tag (empty: the one of corrections_<ch>.yaml)", "", None),
+    "skip_systematics": ("Skip the systematic variations?", False, "bool"),
     "process_selection": ("Process groups for splitting the shapes jobs, e.g. data,ztt+zl+zj (empty: one job per era/channel)", "", None),
     "special_analysis": ("Special analysis", "", SPECIAL_ANALYSES), "dc_analysis": ("Datacard analysis (categorization scheme)", "stxs_stage0_run3", None),
     "variable": ("Datacard/GoF variable", "m_vis", None), "fitdir": ("FITDIR for Combine", os.environ.get("FITDIR", ""), None),
     "taues_fit_dir": ("TauES fit output directory (empty: <ntupletag>/taues_fit)", "", None),
-    "plot_variables": ("Plot variables", "m_vis,pt_1,pt_2,eta_1,eta_2,mt_1", None), "dc_output_dir": ("Datacard output directory (empty: $FITDIR/output_<analysis>)", "", None),
+    "dc_output_dir": ("Datacard output directory (empty: $FITDIR/output_<analysis>)", "", None),
+    "model_tag": ("NN model tag, law version <tag>_<channel> (empty: <ntupletag>_<STXS stage>)", "", None),
     "train_task": ("Law training task", None, "train_tasks"), "request_gpus": ("GPUs per training job", "1", None), "sample_list": ("KingMaker sample list", None, "samples"),
 }
 S = status = tracker = None
@@ -89,7 +93,7 @@ def render(cfg, selected, result):
         branch = tree.add(head if name in selected else f"[dim]{head} (needed)[/]")
         for state in (k for k in counts if k != "done"):
             labels = [lab for lab, (st, _) in units.items() if st == state]
-            notes = [] if step.where == "crown" or state in ("running", "queued") else sorted({note for lab, (st, note) in units.items() if st == state and note})
+            notes = [] if state in ("running", "queued") else sorted({note for lab, (st, note) in units.items() if st == state and note})
             shown = f"all {len(labels)}" if len(labels) == len(units) > 1 else ", ".join(labels)
             branch.add(f"[{COLORS.get(state, 'white')}]{state}[/]: {shown}" + (f"  ({'; '.join(notes[:2])})" if notes else ""))
     return tree
@@ -105,14 +109,54 @@ def print_commands(cfg, step, us):
         console.print("  " + line, markup=False, soft_wrap=True)
 
 
+def show_plan(cfg, step, us, after):
+    """Dry run of a condor step: its jobs by submission wave and unit, checked with condor_submit -dry-run. after: {unit label: steps it waits for}."""
+    if not us:
+        return
+    out = io.StringIO()
+    try:
+        plan, names = tracker.build_plan(cfg, step, us)
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            code = tracker.submit(plan, dry_run=True)
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"\n[bold]{step.name}[/] ({step.desc}): [{RED}]plan not built: {escape(str(exc))}[/]")
+        return
+    args = {j.name: j.arguments for j in plan.jobs}
+    check = f"[{LIGHT_GREEN}]condor_submit -dry-run ok[/]" if code == 0 else f"[{RED}]condor_submit -dry-run failed[/]"
+    tree = Tree(f"[bold]{step.name}[/] ({step.desc}): {len(plan.jobs)} job(s), {plan.request_cpus} cpu, {plan.request_memory_mb} MB, "
+                f"python3 {plan.entry_point}  {check}")
+    waves = {}
+    for u in us:
+        waves.setdefault(tuple(after[S.label(u)]), []).append(S.label(u))
+    for wave, labels in waves.items():
+        branch = tree.add(f"[{TEAL}]now[/]" if not wave else f"[{LIGHT_BLUE}]after {', '.join(wave)}[/] (automatic only if every submission is approved)")
+        for lab in labels:
+            unit = branch.add(f"[bold]{escape(lab)}[/]")
+            for name in names[lab]:
+                unit.add(f"{escape(name)}  [{GREY}]{escape(args[name])}[/]")
+    console.print()
+    console.print(tree)
+    if code != 0:
+        console.print(escape(out.getvalue().strip()), style=RED)
+
+
 def handoff(step, copies, confirm, dry_run):
-    """Copy the TAUER outputs into the CROWN payloads, after one confirmation per step."""
+    """Copy the TAUER outputs into the CROWN payloads or the /web gallery, after one confirmation per step."""
+    # units can share a file (the era-level index.php), identical ones are skipped
+    copies = [(src, dst) for src, dst in dict.fromkeys(copies) if not Path(dst).exists() or not filecmp.cmp(src, dst, shallow=False)]
     if not copies:
         return
-    console.print(f"\n[bold]{step.name}[/] ({step.desc}): {len(copies)} file(s) into {S.crown_analysis_dir()}/payloads")
+    replaced = sum(Path(dst).exists() for _, dst in copies)
+    console.print(f"\n[bold]{step.name}[/] ({step.desc}): {len(copies)} file(s) into {os.path.commonpath([dst for _, dst in copies])}")
+    groups = {}  # one line per destination directory, a single file shown in full
     for src, dst in copies:
-        console.print(f"  {src} -> {dst}", markup=False, soft_wrap=True)
-    if dry_run or not confirm(f"Copy these {len(copies)} payload file(s), overwriting the CROWN ones?"):
+        groups.setdefault(os.path.dirname(dst), []).append((src, dst))
+    for dst_dir, files in groups.items():
+        n_replaced = sum(Path(dst).exists() for _, dst in files)
+        line = (f"{files[0][0]} -> {files[0][1]}" if len(files) == 1 else
+                f"{dst_dir}/: {len(files)} files from {', '.join(dict.fromkeys(os.path.dirname(src) + '/' for src, _ in files))}")
+        console.print(f"  {line}" + (f"  ({n_replaced} replace different ones)" if n_replaced else ""), markup=False, soft_wrap=True)
+    if dry_run or not confirm(f"{step.name}: copy {len(copies) - replaced} new file(s)" + (f" and overwrite {replaced} different existing one(s)" if replaced else "") + "?"):
         return
     for src, dst in copies:
         Path(dst).parent.mkdir(parents=True, exist_ok=True)
@@ -139,12 +183,29 @@ def advance(state, confirm, dry_run=False, show=True):
     result = status.resolve(cfg, selected, tracker.active_jobs(polled))
     for name, tracked in state["units"].items():
         for u in S.units(cfg, S.BY_NAME[name]):
-            if not dry_run and S.label(u) in tracked and result[name][S.label(u)][0] == "done":
+            if not dry_run and S.label(u) in tracked and result.get(name, {}).get(S.label(u), ("",))[0] == "done":
                 status.record_stamp(cfg, S.BY_NAME[name], u)
+    submitted = set()
     for step in (s for s in S.STEPS if s.name in result):  # also the missing steps the selected ones need
         todo = ("missing", "partial") if step.where == "condor" else ("missing", "partial", "manual", "unknown")
         # CROWN commands are printed for every unit not done yet, also when they wait for another CROWN step
-        ready = [u for u in S.units(cfg, step) if (result[step.name][S.label(u)][0] != "done" if step.where == "crown" else result[step.name][S.label(u)][0] in todo)]
+        # units on top of upstream ones submitted (or held back) in this pass wait for them, also transitively
+        held = {S.label(u) for u in S.units(cfg, step)
+                if any((n, S.label(v)) in submitted for n in status.need_names(cfg, step) for v in S.units(cfg, S.BY_NAME[n]) if status.related(cfg, u, v))}
+        submitted |= {(step.name, lab) for lab in held}
+        ready = [u for u in S.units(cfg, step) if (result[step.name][S.label(u)][0] != "done" if step.where == "crown" else result[step.name][S.label(u)][0] in todo)
+                 and S.label(u) not in held]
+        redo = [u for u in S.units(cfg, step) if step.where == "condor" and result[step.name][S.label(u)][0] == "other-options" and S.label(u) not in held]
+        if redo and (dry_run or confirm(f"condor_submit {step.name} again: {len(redo)} unit(s) done with different options "
+                                        f"({result[step.name][S.label(redo[0])][1]})?")):
+            ready += redo
+        if dry_run and step.where == "condor":
+            # the units an approved session submits later, once what they need is done
+            ready += [u for u in S.units(cfg, step) if S.label(u) in held or result[step.name][S.label(u)][0] == "waiting"]
+            show_plan(cfg, step, ready, {S.label(u): sorted({n for n in status.need_names(cfg, step) for v in S.units(cfg, S.BY_NAME[n])
+                                                             if (n, S.label(v)) in submitted and status.related(cfg, u, v)}) for u in ready})
+            submitted |= {(step.name, S.label(u)) for u in ready}
+            continue
         if not ready:
             continue
         if step.where == "handoff":
@@ -155,8 +216,10 @@ def advance(state, confirm, dry_run=False, show=True):
                 print_commands(cfg, step, ready)
             continue
         tracked = state["units"].get(step.name, {})
-        capped = [S.label(u) for u in ready if tracked.get(S.label(u), {}).get("attempts", 0) >= tracker.MAX_ATTEMPTS]
+        capped =[S.label(u) for u in ready if tracked.get(S.label(u), {}).get("attempts", 0) >= tracker.MAX_ATTEMPTS]
         ready = [u for u in ready if S.label(u) not in capped]
+        if confirm is auto_confirm:  # a condor_rm stops the automatic resubmission, `tauer status` still offers it
+            ready = [u for u in ready if "removed (condor_rm)" not in polled.get((step.name, S.label(u)), ("", ""))[1]]
         if capped and show:
             console.print(f"[{RED}]{step.name}: {', '.join(capped)} failed {tracker.MAX_ATTEMPTS} times, not resubmitted[/]")
         if not ready or (problem := tracker.proxy_problem()) and not dry_run and console.print(f"[{RED}]{problem}[/]") is None:
@@ -167,6 +230,7 @@ def advance(state, confirm, dry_run=False, show=True):
                 console.print("  " + line, markup=False, soft_wrap=True)
             continue
         records = tracker.submit_units(cfg, step, ready, dry_run=dry_run)
+        submitted |= {(step.name, S.label(u)) for u in ready}
         if not dry_run:
             for lab, rec in records.items():
                 tracked[lab] = {**rec, "attempts": tracked.get(lab, {}).get("attempts", 0) + 1}
@@ -225,7 +289,7 @@ def interactive():
     analysis = ask(questionary.select("Analysis", choices=analyses, default=last.get("analysis") if last.get("analysis") in analyses else os.environ.get("TAUER_ANALYSIS", "smhtt"), style=custom_style))
     load_modules(analysis)
     setup()
-    from common.analysis import DATA_ERA_MERGE, RUN3_ERAS, SUPPORTED_ERAS, get_channels
+    from common.analysis import _VARIABLES_YAML, DATA_ERA_MERGE, RUN3_ERAS, SUPPORTED_ERAS, _load_variables, get_channels, get_mc_ntuple_era, get_output_features
 
     selected = ask(questionary.checkbox("Steps", choices=[questionary.Choice(f"{s.name:24} {s.desc} [{s.where}]", s.name, checked=s.name in last.get("steps", []))
                                                           for s in sorted(S.STEPS, key=lambda s: MENU_GROUPS.index(s.group))], style=custom_style, validate=bool))
@@ -233,9 +297,11 @@ def interactive():
     if not crown_only:
         # an analysis era and the eras whose data is merged into it are one choice, e.g. 2025+2026
         merged = {e: [e, *DATA_ERA_MERGE.get(e, ())] for e in SUPPORTED_ERAS if not any(e in m for m in DATA_ERA_MERGE.values())}
-        picked = ask(questionary.checkbox("Eras", choices=[questionary.Choice("+".join(group), e, checked=e in last.get("eras", RUN3_ERAS)) for e, group in merged.items()],
+        alone = {e: [e] for m in DATA_ERA_MERGE.values() for e in m}  # its own data only, with the MC of MC_NTUPLE_ERA_OVERRIDE scaled to its lumi
+        picked = ask(questionary.checkbox("Eras", choices=[questionary.Choice("+".join(group), e, checked=e in last.get("eras", RUN3_ERAS)) for e, group in merged.items()]
+                                          + [questionary.Choice(f"{e} alone ({get_mc_ntuple_era(e)} MC)", e, checked=False) for e in alone],
                                           style=custom_style, validate=bool))
-        eras = [x for e in picked for x in merged[e]]
+        eras = list(dict.fromkeys(x for e in picked for x in {**merged, **alone}[e]))
     channels = ask(questionary.checkbox("Channels", choices=[questionary.Choice(c, checked=c in last.get("channels", get_channels())) for c in get_channels()], style=custom_style, validate=bool))
     ntupletag = pick_tag("Ntuple tag", status.xrd_ls(crown_ntuple_base("", user=getpass.getuser()).rstrip("/")) or [], last.get("ntupletag", ""))
     if crown_only:
@@ -253,6 +319,8 @@ def interactive():
             others = [t for t in friend_tags(cfg) if t not in (params.get("selection_friend"), params.get("ff_friend"))]
             params[key] = ",".join(ask(questionary.checkbox(question, choices=[questionary.Choice(t, checked=t in (default or "").split(",")) for t in others], style=custom_style))
                                    if others else ask(questionary.text(question + ", comma-separated", default=default or "", style=custom_style)).split(","))
+        elif choices == "bool":
+            params[key] = ask(questionary.confirm(question, default=bool(default), style=custom_style))
         elif choices == "train_tasks":
             params[key] = ask(questionary.select(question, choices=list(S.TRAIN_TASKS), default=default if default in S.TRAIN_TASKS else None, style=custom_style))
         elif choices == "samples":
@@ -265,6 +333,16 @@ def interactive():
             params[key] = ask(questionary.select(question, choices=choices, default=default if default in choices else None, style=custom_style))
         else:
             params[key] = ask(questionary.text(question, default=default or "", style=custom_style)).strip()
+    if {"shapes", "plot"} & set(selected):
+        from common.binning import control_binning
+        unbinned = lambda t: [v for v in t.replace(" ", "").split(",") if v and v not in control_binning["mt"]]
+        new = [v for v in dict.fromkeys(ask(questionary.text("Variables to add to common/variables.yaml output_features, comma-separated (empty: none)", style=custom_style,
+                                                             validate=lambda t: not unbinned(t) or f"no control binning in common/binning.py: {', '.join(unbinned(t))}"))
+                                        .replace(" ", "").split(",")) if v and v not in get_output_features()]
+        if new and ask(questionary.confirm(f"Add {', '.join(new)} to {_VARIABLES_YAML}? (shapes must be rerun to book them)", default=False, style=custom_style)):
+            head, sep, tail = _VARIABLES_YAML.read_text().partition("\nselection_masks:")
+            _VARIABLES_YAML.write_text(head.rstrip("\n") + "".join(f"\n  - {v}" for v in new) + "\n" + sep + tail)
+            _load_variables.cache_clear()
     cfg.update(params)
     # params are merged so answers to prompts not asked this time are kept for the next session
     LAST_INPUTS.parent.mkdir(parents=True, exist_ok=True)
@@ -283,18 +361,23 @@ def interactive():
         console.print(f"[{RED}]{problem}[/]")
     result = status.resolve(cfg, selected)
     console.print(render(cfg, selected, result))
-    if not any(S.BY_NAME[name].where == "condor" for name in result):
-        advance(tracker.new_state(cfg, selected), lambda msg: False, dry_run=True)
+    if not any(S.BY_NAME[name].where == "condor" and state in ("missing", "partial", "other-options") for name in result for state, _ in result[name].values()):
+        # nothing for condor: print the local/CROWN commands and ask directly about the payload copies
+        advance(tracker.new_state(cfg, selected), lambda msg: ask(questionary.confirm(msg, default=False, style=custom_style)))
         return 0
-    if ask(questionary.confirm("Dry run only (condor_submit -dry-run, nothing is written or saved)?", default=False, style=custom_style)):
+    if ask(questionary.confirm("Dry run first (nothing is written or saved)?", default=False, style=custom_style)):
         advance(tracker.new_state(cfg, selected), lambda msg: False, dry_run=True)
-        return 0
+        if not ask(questionary.confirm("Submit these now?", default=False, style=custom_style)):
+            return 0
     state = tracker.new_state(cfg, selected)
-    advance(state, lambda msg: ask(questionary.confirm(msg, default=False, style=custom_style)))
+    state["auto"] = ask(questionary.confirm("Approve now every condor submission of these steps?",
+                                            default=False, style=custom_style))
+    advance(state, auto_confirm if state["auto"] else lambda msg: ask(questionary.confirm(msg, default=False, style=custom_style)))
     if not any(state["units"].values()):
+        console.print("Nothing submitted: every selected unit is done or waits for a step that is not.")
         return 0
     tracker.save(state)
-    console.print("\nWatching every job submitted through tauer (Ctrl+C stops watching, the jobs keep running; later: `tauer watch`, `tauer status`)")
+    console.print("\nWatching every job submitted through tauer (Ctrl+C stops watching, the jobs keep running; later: `tauer status --watch`, `tauer status`)")
     return watch(read_states(None), interval=5)
 
 
@@ -312,11 +395,15 @@ def read_states(flow_id):
     if not states:
         raise SystemExit(f"No jobs submitted through tauer{' with id ' + flow_id if flow_id else ''} under {REPO_ROOT}/condor/run: start with `tauer`.")
     load_modules(states[0]["cfg"]["analysis"])
+    for state in states:  # sessions saved before a key was added get its default
+        state["cfg"] = S.finalize(state["cfg"])
     return states
 
 
 def cmd_status(args):
-    """Tree of each session, then asks about held jobs, resubmitting failed ones and submitting the steps that became ready."""
+    """Tree of each session, then asks about held jobs, resubmitting failed ones and submitting the steps that became ready; --watch loops without asking."""
+    if args.watch:
+        return watch(read_states(args.id), args.watch)
     states = [st for st in read_states(args.id) if args.id or st["units"]]
     for state in states:
         console.print(f"\n[bold]session {state['id']}[/] ({state['cfg']['ntupletag']}: {', '.join(state['steps'])})")
@@ -330,18 +417,32 @@ def cmd_status(args):
     return 0
 
 
+def auto_confirm(msg):
+    """Pre-approved sessions: condor submissions and the /web plot copies go through, payload copies into CROWN still wait for `tauer status`."""
+    return msg.startswith(("condor_submit", "plot-web:"))
+
+
 def watch(states, interval):
-    """Show the sessions with jobs in the queue until none is left; never submits anything."""
+    """Show the sessions with jobs in the queue until none is left; submits the ready condor steps of the sessions approved at the start."""
     try:
         while True:
-            trees = []
+            trees, waiting = [], []
             for state in states:
+                if state.get("auto"):
+                    with console.capture():  # the screen is redrawn below
+                        result = advance(state, auto_confirm, show=False)
+                    waiting += [f"{name} [{S.BY_NAME[name].where}]" for name, units in result.items() if S.BY_NAME[name].where in ("local", "crown", "handoff")
+                                and any(st in ("missing", "partial", "manual", "unknown") for st, _ in units.values())]
                 jobs = tracker.active_jobs(tracker.poll(state))
                 if jobs:
                     trees.append(render(state["cfg"], state["steps"], status.resolve(state["cfg"], state["steps"], jobs)))
             console.clear()
-            console.print(f"{time.strftime('%H:%M')}  tauer watch (every {interval:g} min, Ctrl+C to stop; the jobs keep running)")
+            console.print(f"{time.strftime('%H:%M')}  tauer status --watch (every {interval:g} min, Ctrl+C to stop; the jobs keep running)")
             console.print(Group(*trees) if trees else "No tauer jobs in the queue.")
+            if waiting:
+                console.print(f"[{AMBER}]not run by tauer, `tauer status` prints/copies them: {', '.join(dict.fromkeys(waiting))}[/]")
+            if any(st.get("auto") for st in states) and (problem := tracker.proxy_problem()):
+                console.print(f"[{RED}]{problem}: nothing new is submitted[/]")
             if not trees:
                 break
             time.sleep(interval * 60)
@@ -351,8 +452,21 @@ def watch(states, interval):
     return 0
 
 
-def cmd_watch(args):
-    return watch(read_states(args.id), args.interval)
+def cmd_clean(args):
+    """Asks for each session whether to drop its tauer.json files: status/watch stop showing it, the condor run directories and jobs are kept."""
+    sessions = {}
+    for path in sorted(REPO_ROOT.glob("condor/run/**/tauer.json")):
+        record = json.loads(path.read_text())
+        sessions.setdefault(record["id"], []).append((path, record))
+    if not sessions:
+        console.print("No tauer sessions to clean.")
+    for fid, records in sorted(sessions.items()):
+        steps = dict.fromkeys(step for _, record in records for step in record["units"])
+        if ask(questionary.confirm(f"Clean session {fid} ({records[0][1]['cfg']['ntupletag']}: {', '.join(steps)}; {len(records)} submissions)?",
+                                   default=False, style=custom_style)):
+            for path, _ in records:
+                path.unlink()
+    return 0
 
 
 def cmd_setup(args):
@@ -366,9 +480,12 @@ def main(argv=None):
     sub = parser.add_subparsers(dest="cmd")
     p = sub.add_parser("status", help="status of the jobs submitted through tauer (all sessions, or one id); asks before resubmitting failed jobs, handling held ones and submitting the steps that became ready")
     p.add_argument("id", nargs="?")
-    p = sub.add_parser("watch", help="show the jobs submitted through tauer until they leave the queue (all sessions, or one id); never submits")
+    p.add_argument("--watch", nargs="?", type=float, const=5, default=None, metavar="MIN",
+                   help="redraw every MIN minutes (default 5) until no job is left, without asking: only the sessions approved at the start get their ready condor steps submitted")
+    p = sub.add_parser("watch", help="alias of `status --watch`")
     p.add_argument("id", nargs="?")
-    p.add_argument("--interval", type=float, default=5, help="minutes between polls (default: 5)")
+    p.add_argument("--interval", dest="watch", type=float, default=5, help="minutes between polls (default: 5)")
+    sub.add_parser("clean", help="asks for each tauer session whether to stop tracking it (its condor run directories and jobs are kept)")
     p = sub.add_parser("setup", help="where the CROWN analysis configuration (and its payloads/) is")
     args = parser.parse_args(argv)
-    return {None: lambda a: interactive(), "status": cmd_status, "watch": cmd_watch, "setup": cmd_setup}[args.cmd](args)
+    return {None: lambda a: interactive(), "status": cmd_status, "watch": cmd_status, "clean": cmd_clean, "setup": cmd_setup}[args.cmd](args)

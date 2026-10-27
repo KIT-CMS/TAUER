@@ -138,6 +138,10 @@ def make_parser() -> argparse.ArgumentParser:
              "see common.sample_paths.build_shape_output_paths). Env: BASE_DATASET_DIR.",
     )
     parser.add_argument(
+        "--train-output-dir", dest="train_output_dir", default=None,
+        help="TRAIN only: law output directory of the models (default: models/ next to the datasets on /ceph). Env: TRAIN_OUTPUT_DIR.",
+    )
+    parser.add_argument(
         "--common-setup-config", dest="common_setup_config", default=None,
         help="TRAIN-DATASET only: trainings/create_training_dataset.py's --common-setup-config "
              "(default when merging via --train-configs-dir: common/training_setup.yaml). Env: "
@@ -422,6 +426,7 @@ def mode_configs(cfg, extra):
         *(["--selection-friend", cfg["selection_friend"]] if cfg["selection_friend"] else []),
         "--output-file", str(outfile.with_suffix(".root")),
         "--collect-config-only",
+        "--no-dnn-categorization",
         "--xrootd",
         "--config-output-file", str(outfile),
         *extra,
@@ -802,7 +807,7 @@ def mode_train_dataset(cfg, extra):
             if len(parts) < 2:
                 continue
             era, channel = parts[0], parts[1]
-            if channel not in channels:
+            if era == "merged" or channel not in channels:
                 continue
             if eras_filter and era not in eras_filter:
                 continue
@@ -820,7 +825,7 @@ def mode_train_dataset(cfg, extra):
         print(f"[TRAIN-DATASET] Merging {len(matched)} per-(era,channel) config(s) from {configs_dir}:")
         for p in matched:
             print(f"[TRAIN-DATASET]   {p.name}")
-        merge_setup_config = common_setup_config or "common/training_setup.yaml"
+        merge_setup_config = common_setup_config or write_training_setup(configs_path, channels)
         merged_config = configs_path / f"merged__{'-'.join(channels)}__config.yaml"
         adjust_cmd = [
             "python", "trainings/adjust_config.py",
@@ -846,16 +851,49 @@ def mode_train_dataset(cfg, extra):
     return run_conda(cmd, env_overrides={"PYTHONPATH": pythonpath_with_tff()}).returncode
 
 
+def uat_config_dir(stage) -> Path:
+    """The training's class and input definitions: stage0 ggh/qqh in run3-coarse, the stage-1.2 bins in run3-fine."""
+    default = REPO_ROOT / "trainings/uncertainty-aware-training/datasets" / ACTIVE_ANALYSIS / ("run3-fine" if stage == "stage1p2" else "run3-coarse")
+    return Path(os.environ.get("UAT_CONFIG_DIR", default))
+
+
+def write_training_setup(directory: Path, channels: list) -> str:
+    """common/training_setup.yaml plus the signal labels of both stages and only the inputs of both trainings,
+    one file per channel set: one label per stage-0 unit the shapes book, and the stage-1.2 classes of
+    common/training_stxs_classes.yaml, per event from the HTXS stage-1.2 bin (analyses/<analysis>/trainings/training_labels.py)."""
+    import importlib
+    import yaml
+
+    flags = {unit["key"]: f"is_{'_'.join(unit['datasets'])}__{unit['selection']}"  # the config's is_<dataset>__<process> flag of the unit
+             for unit in importlib.import_module(f"analyses.{ACTIVE_ANALYSIS}.common.stxs_tools").signal_units("stage0").values()}
+    labels = {f"is_{key}_htautau": [flag] for key, flag in flags.items()}
+    stage1p2 = REPO_ROOT / "common/training_stxs_classes.yaml"
+    for ch in channels:
+        for c in (yaml.safe_load(stage1p2.read_text()) or {}).get(ch, []) if stage1p2.exists() else []:
+            labels[c["label"]] = [f"{flags[c['mode']]}_bin{b}_selection" for b in c["bins"]]
+    setup = yaml.safe_load((REPO_ROOT / "common/training_setup.yaml").read_text())
+    setup["dataset_modifications"]["labels"]["renaming_map"].update(labels)
+    # only the inputs of the stage-0 and stage-1.2 trainings: every stored column costs memory in the 2022-2025 folds
+    setup["training_variables"] = list(dict.fromkeys(v for ch in channels for stage in ("stage0", "stage1p2")
+                                                     if (uat := uat_config_dir(stage) / f"smhtt_{ch}.yaml").exists()
+                                                     for v in yaml.safe_load(uat.read_text()).get("training_variables", [])))
+    path = directory / f"training_setup_{'-'.join(channels)}.yaml"
+    path.write_text(yaml.safe_dump(setup, sort_keys=False))
+    return str(path)
+
+
 def mode_train(cfg, extra):
     # The uncertainty-aware-training submodule's own `law run ...` workflow is left
     # untouched deliberately -- run.py just forwards parameters to its law CLI, same as
     # FF/FF-CORR shelling out to TauFakeFactors' own scripts.
     train_tag = cfg["tag"]
     train_task, cuda_device, workers = cfg["train_task"], cfg["cuda_device"], cfg["workers"]
-    dataset_dir = cfg["base_dataset_dir"]
-    uat_config_dir = os.environ.get(
-        "UAT_CONFIG_DIR", str(REPO_ROOT / "trainings" / "uncertainty-aware-training" / "datasets" / ACTIVE_ANALYSIS / "run3-coarse")
-    )
+    dataset_dir, output_dir = (Path(cfg[key]).resolve() for key in ("base_dataset_dir", "train_output_dir"))
+    config_dir = uat_config_dir(cfg["stxs_stage"])
+    missing = [ch for ch in cfg["channels"].split(",") if not (config_dir / f"smhtt_{ch}.yaml").exists()]
+    if missing:
+        print(f"ERROR: no training config for {','.join(missing)} in {config_dir} (smhtt_<channel>.yaml)", file=sys.stderr)
+        return 1
     print(f"[TRAIN] task={train_task} tag={train_tag} channels={cfg['channels']}")
 
     uat_dir = REPO_ROOT / "trainings" / "uncertainty-aware-training"
@@ -867,8 +905,17 @@ def mode_train(cfg, extra):
     env["PYTHONPATH"] = f"{env.get('PYTHONPATH', '')}:{REPO_ROOT}"
     subprocess.run(["nice", "-n", "19", "law", "index", "-v"], cwd=str(uat_dir), env=env, check=True)
 
+    import yaml
+    from common.analysis import get_center_of_mass, get_data_eras, get_luminosity
+    from plotting.plot_shapes_control import CHANNEL_LABELS
+
     for channel in cfg["channels"].split(","):
         print(f"[TRAIN] Running {train_task} for channel {channel}")
+        # plot header from the era flags the model is trained with (merged data eras included)
+        eras = [v[3:] for v in yaml.safe_load((config_dir / f"smhtt_{channel}.yaml").read_text())["training_variables"] if v.startswith("is_20")]
+        years = sorted({e[:4] for era in eras for e in get_data_eras(era)})
+        com = get_center_of_mass(eras[0])
+        lumi_text = f"{sum(get_luminosity(e) for e in eras):.1f} fb$^{{-1}}$ ({'–'.join(dict.fromkeys([years[0], years[-1]]))}, {com:g} TeV)"
         cmd = [
             "nice", "-n", "19",
             "law", "run", train_task,
@@ -878,9 +925,14 @@ def mode_train(cfg, extra):
             "--log-level", "INFO",
             "--cuda-device", cuda_device,
             "--no-lock",
-            f"--dataset-directory={dataset_dir}/{channel}/",
-            f"--base-config-file={uat_config_dir}/smhtt_{channel}.yaml",
+            f"--dataset-directory={dataset_dir}/{channel}/folds/",
+            f"--base-config-file={config_dir}/smhtt_{channel}.yaml",
+            # everything on /ceph next to the datasets: the law defaults are one shared config file and the old smhtt_ul checkout
+            f"--dataset-config-file={dataset_dir}/{channel}/training_config_{train_tag}_{channel}.yaml",
+            f"--directory={output_dir}",
         ]
+        if train_task == "RunAllCENNTConfusionMatrixWorkflow":
+            cmd += [f"--title-left={CHANNEL_LABELS.get(channel, channel)}", f"--title-right={lumi_text}"]
         result = subprocess.run(cmd, cwd=str(uat_dir), env=env)
         if result.returncode != 0:
             return result.returncode
@@ -926,6 +978,7 @@ def main(argv=None) -> int:
         "train_configs_dir": env_or(args.train_configs_dir, "TRAIN_CONFIGS_DIR", None),
         "train_eras": env_or(args.train_eras, "TRAIN_ERAS", None),
         "base_dataset_dir": env_or(args.base_dataset_dir, "BASE_DATASET_DIR", None),
+        "train_output_dir": env_or(args.train_output_dir, "TRAIN_OUTPUT_DIR", None),
         "common_setup_config": env_or(args.common_setup_config, "COMMON_SETUP_CONFIG", ""),
     }
 
@@ -957,8 +1010,10 @@ def main(argv=None) -> int:
         if cfg["output_dir"] is None:
             cfg["output_dir"] = shape_paths.output
         cfg["validation_dir"] = shape_paths.validation
-        cfg["train_configs_dir"] = cfg["train_configs_dir"] or f"{shape_paths.training}/configs"
-        cfg["base_dataset_dir"] = cfg["base_dataset_dir"] or f"{shape_paths.training}/datasets"
+        # signals booked per production mode (stage0) for both stages: the stage-1.2 labels come per event from the HTXS fine bin
+        cfg["train_configs_dir"] = cfg["train_configs_dir"] or f"{shape_paths.training}/configs/stage0"
+        cfg["base_dataset_dir"] = cfg["base_dataset_dir"] or f"{shape_paths.training}/datasets/stage0"
+        cfg["train_output_dir"] = cfg["train_output_dir"] or f"{shape_paths.training}/models"
         # --ff-friend/FF_FRIENDS_DIR: a bare tag (no '/') resolves against this
         # ntupletag, same as --additional-friends/ADDITIONAL_FRIENDS_DIR below
         # (each comma-separated entry resolved independently) -- see

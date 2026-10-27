@@ -144,11 +144,11 @@ commands run next to it (saved in `~/.config/tauer/settings.json`, change it wit
    - **local steps** (plots, datacards, workspace, GoF, impacts, NN dataset, FF config generation) are not run: tauer prints the exact commands to copy and run yourself;
    - **CROWN steps** (ntuples, selection / FF friends) print the `law run ProduceNtuples ...` command to run in KingMaker;
    - **payload handoffs** (the FF and b-tag results and the trained NN model to CROWN's `payloads/`) list the files and copy them after a confirmation.
-7. If jobs were submitted, the session ends in `tauer watch`; Ctrl+C stops watching, the jobs keep running.
+7. If jobs were submitted, the session ends in `tauer status --watch`; Ctrl+C stops watching, the jobs keep running.
 
 The answers are remembered in `~/.config/tauer/last_inputs.json` and used as defaults of the next session. Every condor submission made by tauer
 keeps its usual directory, `condor/run/<ntupletag>/[<tag>/]<stage>/<timestamp>/`, where tauer also writes a `tauer.json` with the submitted units
-and job ids; `tauer status` and `tauer watch` find the jobs through these files.
+and job ids; `tauer status` finds the jobs through these files.
 
 ### Commands
 
@@ -156,8 +156,12 @@ and job ids; `tauer status` and `tauer watch` find the jobs through these files.
 error and asks whether to resubmit them, for held jobs whether to release or remove them, and it offers to submit the steps whose inputs are now done.
 Every action asks for a confirmation; a rejected submission prints the commands to run those jobs locally instead.
 
-**`tauer watch [<id>] [--interval MIN]`** redraws the status of the jobs still in the queue every `MIN` minutes (5 by default) until none is left.
-It never submits anything.
+**`tauer status [<id>] --watch [MIN]`** (alias `tauer watch [<id>] [--interval MIN]`) redraws the status of the jobs still in the queue every `MIN`
+minutes (5 by default) until none is left, without asking anything. For sessions whose condor submissions were approved at the start, it submits the
+steps that became ready and resubmits failed jobs (up to 3 attempts, not after a `condor_rm`); CROWN, local and payload steps still need `tauer status`.
+
+**`tauer clean`** asks for each tauer session whether to stop tracking it: its `tauer.json` files are deleted, so `tauer status`
+no longer shows it. The condor run directories, logs and outputs are kept, and jobs still in the queue keep running.
 
 **`tauer setup`** changes the location of the CROWN analysis configuration asked on first use.
 
@@ -451,6 +455,9 @@ python3 condor/submit_training.py --master-config <merged-config-from-adjust_con
                                                           # use this one instead when the merged
                                                           # config is large enough to want the
                                                           # per-(era,channel) split parallelized
+python3 condor/submit_nn_dataset.py --ntupletag <ntupletag> --channels <channels> --train-eras <eras> --dry-run
+                                                          # run.py TRAIN-DATASET, one job per channel (all eras of
+                                                          # a channel in one job: combine_folds merges every part)
 python3 condor/submit_nn_train.py --ntupletag <ntupletag> --channels <channels> --request-gpus 1 --dry-run
                                                           # run.py TRAIN (law) as one condor job, GPUs via --request-gpus
 python3 condor/submit_btag_efficiency.py --ntupletag <btag-ntupletag> --selection-friend <selection-tag> \

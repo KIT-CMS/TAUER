@@ -1,9 +1,11 @@
 import argparse
 import logging
 import os
+import re
 import gc
 from functools import partial
 from pathlib import Path
+import numpy as np
 import pandas as pd
 import yaml
 from src.dataset_manipulation import (
@@ -65,6 +67,12 @@ def parse_args():
         default=False,
         help="Force recreation of existing datasets and folds (default: skip if they exist)",
     )
+    parser.add_argument(
+        "--files-per-part",
+        type=int,
+        default=300,
+        help="Process the ntuple files of a subprocess in parts of this size to bound the memory",
+    )
     return parser.parse_args()
 
 
@@ -103,6 +111,8 @@ def collect_filtered_plain_dataframes(
     subprocess: str,
     subprocess_dict: dict,
     common_setup_config: dict = None,
+    nonempty_filepaths: list = (),
+    part: str = "",
 ) -> tuple:
     """
     TODO: Update docstring
@@ -125,9 +135,6 @@ def collect_filtered_plain_dataframes(
         pattern = "__common__cut__"
         return df[[it for it in df.columns if it.startswith(pattern)]].any(axis=1)
 
-    all_filepaths = list(Iterate.rdf_files(config[channel][era][process][Keys.PATHS]))
-    nonempty_filepaths = [tpl for tpl in all_filepaths if is_nonempty_root_file(tpl[1], tpl[0])]
-    logger.debug(f"{channel}/{era}/{process}/{subprocess}: {len(all_filepaths)} total files, {len(nonempty_filepaths)} non-empty")
     common_dict = config[channel][era][process].get(Keys.COMMON, {})
     if not common_dict:
         logger.debug(f"No '{Keys.COMMON}' key found for {channel}/{era}/{process}, using empty definitions")
@@ -169,8 +176,8 @@ def collect_filtered_plain_dataframes(
         logger.warning("No training variables found in config or common_setup_config")
 
     root_plain = ROOTToPlain(
-        raw_path=filepath("raw", f"{channel}_{era}_{process}_{subprocess}"),
-        filtered_path=filepath("filtered", f"{channel}_{era}_{process}_{subprocess}"),
+        raw_path=filepath("raw", f"{channel}_{era}_{process}_{subprocess}{part}"),
+        filtered_path=filepath("filtered", f"{channel}_{era}_{process}_{subprocess}{part}"),
     )
     # Remove existing cached feather files to force recreation if requested
     if args.recreate:
@@ -182,8 +189,9 @@ def collect_filtered_plain_dataframes(
         tree_and_filepaths=nonempty_filepaths,
         definitions=definitions_tuples + subprocess_flag_tuples,
         additional_columns=additional_columns + list(Keys.EVENT_IDENTIFIER_COLUMNS),
-        filters=None,
-        description=f"{channel}_{era}_{process}_{subprocess}",
+        # only this subprocess's non-ss cuts, per file in ROOT: the common cuts span all subprocesses of the sample
+        filters=["||".join(sorted(set(re.findall(r"__common__cut__\d+__", str({k: v for k, v in subprocess_dict.items() if k != "ss"}))))) or "true"],
+        description=f"{channel}_{era}_{process}_{subprocess}{part}",
         max_workers=16,
     ).filter_dataframe(
         filter_function=any_cut,
@@ -196,6 +204,7 @@ def collect_filtered_plain_dataframes(
         subprocess,
         subprocess_dict,
         filtered_df,
+        part,
     )
 
 
@@ -207,6 +216,7 @@ def create_process_folds(
     subprocess: str,
     subprocess_dict: dict,
     plain_subprocess_dataframe_obj: ROOTToPlain,
+    part: str,
     common_setup_config: dict,
 ) -> None:
     """
@@ -231,7 +241,7 @@ def create_process_folds(
 
     fold_conditions = get_fold_conditions()
     filenames = {
-        fold_name: filepath("_folds", f"__{fold_name}__{channel}_{era}_{process}_{subprocess}")
+        fold_name: filepath("_folds", f"__{fold_name}__{channel}_{era}_{process}_{subprocess}{part}")
         for fold_name in fold_conditions.keys()
     }
 
@@ -271,6 +281,9 @@ def create_process_folds(
             )
 
         process_df.columns = pd.MultiIndex.from_tuples(process_df.columns)
+        # one-hot labels: int8 instead of int32 saves ~40% of the folds with the ~85 stage-0 and stage-1.2 labels
+        labels = [c for c in process_df.columns if c[0] == Keys.LABELS]
+        process_df[labels] = process_df[labels].astype(np.int8)
 
         process_df = (
             process_df
@@ -390,10 +403,17 @@ if __name__ == "__main__":
     logger.debug(f"SUBPROCESSES_TO_SKIP = {SUBPROCESSES_TO_SKIP}")
 
     subprocess_count = 0
+    def file_chunks(paths):
+        files = [tpl for tpl in Iterate.rdf_files(paths) if is_nonempty_root_file(tpl[1], tpl[0])]
+        # the 2024+ samples do not fit in memory at once; every step up to the per-part folds is per event
+        chunks = [files[i:i + args.files_per_part] for i in range(0, len(files), args.files_per_part)]
+        return [(chunk, f"_part{i}" if len(chunks) > 1 else "") for i, chunk in enumerate(chunks)]
+
     processing_pipeline = (
-        collect_filtered_plain_dataframes(config, channel, era, process, subprocess, subprocess_dict, args.common_setup_config)
+        collect_filtered_plain_dataframes(config, channel, era, process, subprocess, subprocess_dict, args.common_setup_config, chunk, part)
         for channel, era, process, subprocess, subprocess_dict in Iterate.subprocesses(config)
         if subprocess not in SUBPROCESSES_TO_SKIP
+        for chunk, part in file_chunks(config[channel][era][process][Keys.PATHS])
     )
 
     for items in processing_pipeline:
@@ -401,7 +421,7 @@ if __name__ == "__main__":
         logger.debug(f"Processing tuple #{subprocess_count}: {[str(x) for x in items[:5]]}")
         create_process_folds(config, *items, args.common_setup_config)
 
-        items[-1]._dataframe = None
+        items[5]._dataframe = None
         del items
         gc.collect()
 

@@ -18,7 +18,7 @@ def fake_factor_estimation(
     floor_negative=True,
 ):
     """jetFakes from the anti-isolated region: FF-weighted data minus the FF-weighted subtracted backgrounds. The data
-    take the shift too unless it is a tau energy scale one, which only moves the subtracted simulation."""
+    take the shift too unless it only moves the subtracted simulation (tau energy scale, noVsJetSF)."""
     if is_embedding:
         procs_to_subtract = ["EMB"] + [BACKGROUNDS[k].datacard for k in GROUPS["lep_fake"]]
     else:
@@ -26,7 +26,7 @@ def fake_factor_estimation(
     logger.info(f"Subtracting {procs_to_subtract}")
 
     _get = partial(naming.get, rootfile, variable, channel, category=category, region="ar")
-    base_hist = _get(naming.DATA, systematic=None if shift and "scale_t" in shift else shift).Clone()
+    base_hist = _get(naming.DATA, systematic=None if shift and ("scale_t" in shift or shift == "noVsJetSF") else shift).Clone()
     for proc in procs_to_subtract:
         base_hist.Add(_get(proc, systematic=shift), -1)
     if floor_negative:

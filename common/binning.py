@@ -40,6 +40,7 @@ common_binning = HistogramBuildingDict(
         "jphi_1": np.linspace(-np.pi, np.pi, 50),
         "jphi_2": np.linspace(-np.pi, np.pi, 50),
         "njets": np.arange(-0.5, 7.5, 1),
+        "njets_recoil": np.arange(-0.5, 7.5, 1),
         "nbtag": np.arange(-0.5, 7.5, 1),
         "tau_decaymode_1": np.arange(-0.5, 12.5, 1),
         "tau_decaymode_2": np.arange(-0.5, 12.5, 1),

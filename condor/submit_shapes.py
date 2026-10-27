@@ -42,10 +42,11 @@ def parse_args(argv=None):
     p.add_argument("--stxs-stage", default="stage0", choices=["stage0", "stage1p2"], help="Signal split, same as run.py/produce_shapes.py --stxs-stage.")
     p.add_argument("--skip-systematics", action="store_true")
     p.add_argument("--control-plots", action="store_true")
+    p.add_argument("--control-plot-set", type=csv, default=None, help="Comma-separated variables of --control-plots (default: produce_shapes.py's, m_vis).")
     p.add_argument("--special-analysis", default=None,
-                    choices=[None, "TauES", "TTbarDYWeight", "NjetsControl"],
+                    choices=[None, "TauES", "TTbarDYWeight", "NjetsControl", "TriggerRegions", "AntiIsoTauSF"],
                     help="Passed through to produce_shapes.py's own --special-analysis. "
-                         "'TTbarDYWeight' is em channel only; 'NjetsControl' supports all channels.")
+                         "'TTbarDYWeight' is em channel only; 'NjetsControl' supports all channels; 'TriggerRegions'/'AntiIsoTauSF' et/mt/tt, Run 3.")
     p.add_argument("--dnn-categorization", action="store_true",
                     help="Use DNN-based categorization (needs a DNN friend tree). See README's "
                          "\"submit_shapes.py --process-selection\" section for why this defaults off.")
@@ -126,6 +127,8 @@ def build_jobs(args, setups: list) -> list[JobSpec]:
                 common.append("--skip-systematics")
             if args.control_plots:
                 common.append("--control-plots")
+                if args.control_plot_set:
+                    common.append(f"--control-plot-set {' '.join(args.control_plot_set)}")
             if not args.dnn_categorization and not args.special_analysis:
                 common.append("--no-dnn-categorization")
             if args.special_analysis:

@@ -468,6 +468,13 @@ class _SpecificConfigManipulation(object):
                 if not isinstance(shift_dict, dict):
                     continue
 
+                # the shapes' own application region (CROWN AR_mask, FF weight applied): its cut cannot be derived from the SR mask
+                ar_dict = subprocess_dict.get("ar" if shift == "Nominal" else f"ar_{shift}")
+                if isinstance(ar_dict, dict) and process not in ignore_anti_iso_string_for_processes:
+                    shift_dict[Keys.ANTI_ISO_CUT], shift_dict[Keys.ANTI_ISO_WEIGHT] = ar_dict[Keys.CUT], ar_dict[Keys.WEIGHT]
+                    logger.info(f"{channel} {era} {process} {subprocess}\n\t\t{shift}: anti-iso cut and weight from the booked AR region")
+                    continue
+
                 if process not in ignore_anti_iso_string_for_processes:
                     shift_dict[Keys.ANTI_ISO_CUT] = modify_tau_iso_string(
                         shift_dict[Keys.CUT],

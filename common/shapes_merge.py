@@ -162,7 +162,8 @@ def missing_processes(shapes_path: Path) -> list[str]:
     known = set().union(*names.values())
     signals = {name for key, procs in names.items() if key not in BACKGROUNDS and key != "data" for name in procs}
 
-    is_ff = ss_os_sibling(shapes_path) is not None
+    # without ss-os shapes to inherit (e.g. AntiIsoTauSF, ar only) the ff file stands alone
+    is_ff = (sibling := ss_os_sibling(shapes_path)) is not None and sibling.exists()
     present_anti_iso: set[str] = set()
     present_other: set[str] = set()
     f = ROOT.TFile(str(shapes_path), "read")

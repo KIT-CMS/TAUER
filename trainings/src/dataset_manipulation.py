@@ -267,10 +267,12 @@ class ROOTToPlain(object):
 
         chain = ROOT.TChain(tree_name)
         chain.Add(ntuple_file)
+        ROOT.SetOwnership(chain, False)
 
         for friend in friend_files:
             fchain = ROOT.TChain(tree_name)
             fchain.Add(friend)
+            ROOT.SetOwnership(fchain, False)  # else Python deletes it when fchain is rebound: only the last friend survived
             chain.AddFriend(fchain)
 
         return chain, ROOT.RDataFrame(chain)
@@ -327,6 +329,12 @@ class ROOTToPlain(object):
                 raise ValueError("Additional columns must be a list/tuple of strings.")
 
             columns += list(additional_columns)
+            # MC-only branches absent in data: the defaults of TauFakeFactors' preselection
+            data_defaults = {"gen_match_": "-1", "btag_weight": "1.", "id_wgt_tau_vsJet_": "1."}
+            for column in additional_columns:
+                default = next((v for k, v in data_defaults.items() if column.startswith(k)), None)
+                if default is not None and not rdf.HasColumn(column):
+                    rdf = rdf.Define(column, default)
 
         logger.debug(f"Columns: {columns}")
 

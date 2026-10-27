@@ -1,6 +1,6 @@
 name: tauer
 channels:
-  - pytorch
+  - pytorch=*=cuda*  # CUDA build for the condor GPU trainings; on a GPU-less machine: CONDA_OVERRIDE_CUDA=12.4
   - conda-forge
   - defaults
 dependencies:
@@ -23,17 +23,22 @@ dependencies:
   - ruamel.yaml
   - rich
   - questionary>=2.1.1  # tauer TUI; 2.1.0 crashes with prompt_toolkit 3.0.52
+  - conda-pack  # ships conda envs to the remote GPU workers (condor/common.py)
   - wurlitzer
   # from trainings/uncertainty-aware-training -- merged in so the separate
   # `uncertainty-training` conda env is no longer needed
   - scikit-learn
-  - pytorch
-  - torchvision
-  - torchaudio
+  - pytorch=*=cuda*  # CUDA build for the condor GPU trainings; on a GPU-less machine: CONDA_OVERRIDE_CUDA=12.4
+  - torchvision=*=cuda*
+  - torchaudio=*=cuda*
   - pyarrow
   - dill
+  - frozendict
+  - more-itertools
   - seaborn
   - onnx
+  - onnxscript  # torch.onnx.export(dynamo=True) of the NN fold-combined model
+  - pyinstrument  # its profile=True
   - opt_einsum
   - law
   - luigi
