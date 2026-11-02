@@ -314,8 +314,9 @@ The ntuples are always stage-0: the split is a cut on the HTXS stage-1.2 bin and
 (`stxs_family`) written by CROWN's `STXSNormalization` into the weights friend.
 
 - Normalization: CROWN's norm table takes the xsec x B(tautau) x generator-filter efficiency and the per-bin
-  fraction rescaling to the recommended values from `sample_database/aux_data/stxs_nick_table.json`, built by
-  `python -m analyses.smhtt.common.stxs_tools`. The recommendations are read from `$STXS_RECOMMENDATIONS_DIR`.
+  fraction rescaling to the recommended values from the `samples` section of `sample_database/aux_data/stxs_table.json`, built by
+  `python -m analyses.smhtt.common.stxs_tools`. Its `lhe_scale_nuisances` section maps each `CMS_LHEScaleWeight_*` to the
+  (`stxs_family`, HTXS bin) pairs it applies to, read by CROWN's `STXSLheScale`. The recommendations are read from `$STXS_RECOMMENDATIONS_DIR`.
 - Building the nick table: the per-bin fractions f_MC come from the unfiltered samples (pooled over eras, ggH NNLOPS-weighted) and are
   applied to the filtered nicks of `analyses/smhtt/common/signals.yaml`. `signal_nicks` adds the unfiltered nicks of the signal families on its own (skipping
   2025, a copy of 2024, and the non-ReNano 2024 nick where a ReNano one exists); they are scanned but never booked as signals. Eras sharing a dbs
@@ -324,7 +325,7 @@ The ntuples are always stage-0: the split is a cut on the HTXS stage-1.2 bin and
   python3 condor/submit_stxs_table.py [--dry-run]                       # one job per 25 files, chunks in condor/run/stxs_table/scans
   python3 condor/submit_stxs_table.py --missing-only                    # resubmit only the chunks without an output file
   python -m analyses.smhtt.common.stxs_tools --scan-dir condor/run/stxs_table/scans   # build the table (fails if a chunk is missing)
-  cp sample_database/aux_data/stxs_nick_table.json ../KingMaker/sample_database/aux_data/   # CROWN reads its own copy
+  cp sample_database/aux_data/stxs_table.json ../KingMaker/CROWN/data/normalization/   # CROWN reads its own copy
   ```
 - Uncertainties: `THU_*`, `pdf_Higgs_*`, `alphaS_*` are flat lnN: per `<PROCESS>_<STXS_BIN>` in stage1p2, and in stage0 the average of
   the bin values weighted by the recommended sigma x fraction. `CMS_LHEScaleWeight_*` are shapes from the per-bin normalized
