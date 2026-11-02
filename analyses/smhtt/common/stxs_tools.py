@@ -25,8 +25,7 @@ RECS_DIR = Path(os.environ.get(
     REPO_ROOT.parent / "KingMaker/CROWN/data/htxs/stxs-run3-recommendations",
 ))
 NNLOPS_FILE = RECS_DIR.parents[0] / "NNLOPS_reweight.root"
-NICK_TABLE = REPO_ROOT / "sample_database/aux_data/stxs_nick_table.json"
-LHE_SCALE_TABLE = REPO_ROOT / "sample_database/aux_data/stxs_lhe_scale_table.json"
+STXS_TABLE = REPO_ROOT / "sample_database/aux_data/stxs_table.json"
 MH = 125.08
 XROOTD_SERVERS = ["root://cmsdcache-kit-disk.gridka.de", "root://xrootd-cms.infn.it", "root://cms-xrd-global.cern.ch"]
 
@@ -187,12 +186,19 @@ def lhe_scale_scheme() -> dict:
     return _recommendations()["lhe_scale"]
 
 
-def write_lhe_scale_table(output_path: str = str(LHE_SCALE_TABLE)) -> dict:
-    """LHEScaleWeight systematic -> [[stxs_family code, HTXS bin], ...] it applies to, read by CROWN's STXSLheScale."""
+def lhe_scale_nuisances() -> dict:
+    """LHEScaleWeight systematic -> [[stxs_family code, HTXS bin], ...] it applies to, the `lhe_scale_nuisances` section read by CROWN's STXSLheScale."""
     info = _name_info()
-    table = {np_name: [[FAMILIES[info[n][0]][0], info[n][2]] for n in names if n in info] for np_name, names in lhe_scale_scheme().items()}
+    return {np_name: [[FAMILIES[info[n][0]][0], info[n][2]] for n in names if n in info] for np_name, names in lhe_scale_scheme().items()}
+
+
+def write_stxs_table(samples: dict, output_path: str = str(STXS_TABLE)) -> dict:
+    """Writes the combined STXS table read by CROWN: {"lhe_scale_nuisances": lhe_scale_nuisances(), "samples": samples}."""
+    table = {"lhe_scale_nuisances": lhe_scale_nuisances(), "samples": samples}
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    json.dump(table, open(output_path, "w"), indent=1, sort_keys=True)
+    with open(output_path, "w") as f:
+        json.dump(table, f, indent=1, sort_keys=True)
+        f.write("\n")
     return table
 
 
@@ -350,16 +356,17 @@ def load_scan(scan_dir: str, dbs: str, n_files: int) -> dict:
     return total
 
 
-def calculate_stxs_nick_table(
+def calculate_stxs_table(
     signals_yaml: str = str(REPO_ROOT / "analyses/smhtt/common/signals.yaml"),
-    output_path: str = str(NICK_TABLE),
+    output_path: str = str(STXS_TABLE),
     eras=None,
     max_files: int = None,
     max_files_unfiltered: int = None,
     n_workers: int = 20,
     scan_dir: str = None,
 ) -> dict:
-    """Per signal nick: family code, xsec*B*eps_F (pb) and per HTXS bin [norm, LHEScale R_up, R_down] for CROWN's STXSNormalization.
+    """Combined STXS table for CROWN: `lhe_scale_nuisances` (see lhe_scale_nuisances) and per signal nick in `samples` the family code
+    and per HTXS bin [norm, LHEScale R_up, R_down] for STXSNormalization.
     The nanoAOD scan is read from the chunks of `scan_dir` (see scan_chunk) instead of being done here if given."""
     nicks, wanted = signal_nicks(signals_yaml, eras)
     selected = dbs_files(nicks, max_files, max_files_unfiltered)
@@ -379,7 +386,7 @@ def calculate_stxs_nick_table(
                 pooled.setdefault(fam, {}).setdefault(b, np.zeros(6))
                 pooled[fam][b] = pooled[fam][b] + vals
     rec = _recommendations()
-    table = {}
+    samples = {}
     for nick, (fam, *_) in nicks.items():
         if nick not in wanted:
             continue
@@ -399,33 +406,28 @@ def calculate_stxs_nick_table(
                 s = scan.get(htxs_bin)
                 r_up, r_down = (s[4] / s[3], s[5] / s[3]) if s is not None and s[3] > 0 else (1.0, 1.0)
                 bins[str(htxs_bin)] = [float(norm), float(r_up), float(r_down)]
-        table[nick] = {"family": code, "xsec": float(sigma_nick), "bins": bins}
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    json.dump(table, open(output_path, "w"), indent=1, sort_keys=True)
-    logger.info(f"Wrote {len(table)} nicks to {output_path}")
+        samples[nick] = {"family": code, "bins": bins}
+    table = write_stxs_table(samples, output_path)
+    logger.info(f"Wrote {len(samples)} nicks to {output_path}")
     return table
 
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(description="Build the per-nick STXS normalisation table read by CROWN's build_norm_table.")
+    parser = argparse.ArgumentParser(description="Build the combined STXS table (LHE scale nuisances + per-nick normalisation) read by CROWN's stxs::Normalization and stxs::LHEScale.")
     parser.add_argument("--eras", nargs="*", default=None)
     parser.add_argument("--max-files", type=int, default=None, help="Scan only the first N files of each filtered nick.")
     parser.add_argument("--max-files-unfiltered", type=int, default=None, help="Scan only the first N files of each unfiltered nick.")
     parser.add_argument("--workers", type=int, default=20)
-    parser.add_argument("--output-file", default=str(NICK_TABLE))
+    parser.add_argument("--output-file", default=str(STXS_TABLE))
     parser.add_argument("--update-sample-database", nargs="+", metavar="ROOT", help="Only write the recommended xsec of the signal samples into these sample database roots.")
     parser.add_argument("--scan-chunk", nargs=3, metavar=("DBS", "START", "STOP"), help="Only scan the files START:STOP of a dataset into --scan-dir (condor job).")
     parser.add_argument("--scan-dir", default=None, help="Directory of the scan chunks: written by --scan-chunk, read to calculate the table instead of scanning it.")
-    parser.add_argument("--lhe-scale-table", action="store_true", help="Only write the LHEScaleWeight systematic table read by CROWN's STXSLheScale.")
     cli = parser.parse_args()
-    if cli.lhe_scale_table:
-        write_lhe_scale_table()
-        raise SystemExit
     if cli.update_sample_database:
         update_sample_database(cli.update_sample_database)
         raise SystemExit
     if cli.scan_chunk:
         scan_chunk(cli.scan_chunk[0], int(cli.scan_chunk[1]), int(cli.scan_chunk[2]), cli.scan_dir)
         raise SystemExit
-    calculate_stxs_nick_table(eras=cli.eras, max_files=cli.max_files, max_files_unfiltered=cli.max_files_unfiltered, n_workers=cli.workers, output_path=cli.output_file, scan_dir=cli.scan_dir)
+    calculate_stxs_table(eras=cli.eras, max_files=cli.max_files, max_files_unfiltered=cli.max_files_unfiltered, n_workers=cli.workers, output_path=cli.output_file, scan_dir=cli.scan_dir)
