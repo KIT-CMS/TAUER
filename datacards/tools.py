@@ -6,11 +6,13 @@ conversion, Asimov replacement, NN-output rebinning).
 import ctypes
 import logging
 import math
+import re
 from typing import Literal, Optional, Dict, List
 
 import ROOT
 
 import CombineHarvester.CombineTools.ch as ch
+from common.analysis import legacy_nuisance_name
 from CustomLogging import setup_logging
 
 
@@ -120,8 +122,8 @@ def signal_shape_pattern(cb, variable: str) -> str:
 
 
 def convert_shapes_to_lnN(cb: ch.CombineHarvester) -> None:
-    # Checks shape systematics. If the normalization shift is smaller than the statistical
-    # uncertainty of the template, it replaces the shape systematic with a symmetrized lnN systematic.
+    # Checks shape systematics. If the normalization shift and the bin-by-bin shape change are both within the
+    # statistical uncertainty of the templates, it replaces the shape systematic with a symmetrized lnN systematic.
 
     logger.info("Checking shape systematics for lnN conversion...")
     count = {"lnN": 0, "all": 0, "all_considered": 0}
@@ -159,8 +161,16 @@ def convert_shapes_to_lnN(cb: ch.CombineHarvester) -> None:
 
             value_u, value_d = s.value_u(), s.value_d()
 
-            # Is the shift smaller than the statistical uncertainty of the shift?
-            if abs(value_u - 1.0) + abs(value_d - 1.0) < (err_u / yield_u) + (err_d / yield_d):
+            # bin-by-bin difference of the unit-area up and down templates in units of their statistical uncertainty
+            chi2, ndf = 0.0, 0
+            for i in range(1, nbins + 1):
+                var = (shape_u.GetBinError(i) / yield_u) ** 2 + (shape_d.GetBinError(i) / yield_d) ** 2
+                if var > 0.0:
+                    chi2 += (shape_u.GetBinContent(i) / yield_u - shape_d.GetBinContent(i) / yield_d) ** 2 / var
+                    ndf += 1
+
+            # Are both the normalisation shift and the shape change smaller than the statistical uncertainty of the shift?
+            if abs(value_u - 1.0) + abs(value_d - 1.0) < (err_u / yield_u) + (err_d / yield_d) and chi2 <= ndf:
                 count["lnN"] += 1
                 logger.warning(f"Replacing systematic by lnN: {name} (bin: {s.bin()}, proc: {s.process()})")
 
@@ -184,6 +194,160 @@ def convert_shapes_to_lnN(cb: ch.CombineHarvester) -> None:
 
     cb.cp().ForEachSyst(check_and_convert)
     logger.warning(f"Turned {count['lnN']} of {count['all_considered']} considered (out of {count['all']}) checked systematics into lnN.")
+
+
+_THEORY_NUISANCE = re.compile(r"THU_.*|BR_.*|pdf_.*|alphaS_.*|ps_.*|.*QCDscale.*")
+
+
+def prune_signals(cb: ch.CombineHarvester, drop_processes: bool = False, syst_fraction: float = 0.01, syst_budget: float = 0.05,
+                  proc_fraction: float = 0.001, proc_budget: float = 0.005) -> dict:
+    """STXS pruning of the recommendations (PruningStrategies.md), per category, smallest signal processes first: step 1 drops the
+    experimental systematics of processes below syst_fraction of the category's signal until syst_budget of it is reached, step 2
+    (drop_processes) drops processes below proc_fraction until proc_budget. Theory nuisances are never pruned. Returns what was pruned."""
+    pruned = {}
+    for category in sorted(cb.bin_set()):
+        signals = cb.cp().bin([category]).signals()
+        rates = {p: signals.cp().process([p]).GetRate() for p in signals.process_set()}
+        total = sum(rates.values())
+        if total <= 0:
+            continue
+        steps = [("systematics", syst_fraction, syst_budget)] + ([("processes", proc_fraction, proc_budget)] if drop_processes else [])
+        for step, fraction, budget in steps:
+            selected, cumulated = _smallest_processes(rates, total, fraction, budget)
+            if not selected:
+                continue
+            pruned.setdefault(category, {})[step] = {"processes": selected, "signal_fraction": cumulated / total}
+            if step == "systematics":
+                cb.FilterSysts(lambda s: s.bin() == category and s.process() in selected and not _THEORY_NUISANCE.fullmatch(s.name()))
+            else:
+                cb.FilterSysts(lambda s: s.bin() == category and s.process() in selected)
+                cb.FilterProcs(lambda p: p.bin() == category and p.process() in selected)
+            logger.info(f"Pruning {category}: {step} of {len(selected)} signal processes ({100 * cumulated / total:.2f}% of the signal)")
+    return pruned
+
+
+def _smallest_processes(rates: dict, total: float, fraction: float, budget: float) -> tuple:
+    """The processes below fraction of total, smallest first, while their sum stays within budget of total, and that sum."""
+    selected, cumulated = [], 0.0
+    for process in sorted(rates, key=rates.get):
+        if rates[process] >= fraction * total or cumulated + rates[process] > budget * total:
+            break
+        selected.append(process)
+        cumulated += rates[process]
+    return selected, cumulated
+
+
+def prune_backgrounds(cb: ch.CombineHarvester, fraction: float = 0.001, budget: float = 0.005) -> dict:
+    """Drops per category the backgrounds below fraction of the category's background, smallest first, until budget of it
+    (step 2 of the STXS pruning applied to the backgrounds). Returns what was pruned."""
+    pruned = {}
+    for category in sorted(cb.bin_set()):
+        backgrounds = cb.cp().bin([category]).backgrounds()
+        rates = {p: backgrounds.cp().process([p]).GetRate() for p in backgrounds.process_set()}
+        total = sum(rates.values())
+        selected, cumulated = _smallest_processes(rates, total, fraction, budget) if total > 0 else ([], 0.0)
+        if not selected:
+            continue
+        cb.FilterSysts(lambda s: s.bin() == category and s.process() in selected)
+        cb.FilterProcs(lambda p: p.bin() == category and p.process() in selected)
+        pruned[category] = {"processes": selected, "background_fraction": cumulated / total}
+        logger.info(f"Pruning {category}: {selected} ({100 * cumulated / total:.3f}% of the background)")
+    return pruned
+
+
+def smooth_noisy_bins(cb: ch.CombineHarvester, max_stat: float = 0.5, significance: float = 2.0) -> dict:
+    """In the bins where the nominal template of a process has a relative MC uncertainty above max_stat, its shape systematics
+    take the nominal bin content scaled by their overall normalisation effect, unless their deviation from it is above
+    significance times the nominal MC uncertainty. Returns the number of replaced bins per systematic."""
+    nominal = {}
+    cb.ForEachProc(lambda p: nominal.__setitem__((p.bin(), p.process()), p.shape()))
+    replaced = {}
+
+    def smooth(s):
+        hist = nominal.get((s.bin(), s.process()))
+        if s.type() != "shape" or not hist or not s.shape_u() or _THEORY_NUISANCE.fullmatch(s.name()):
+            return
+        noisy = [i for i in range(1, hist.GetNbinsX() + 1)
+                 if hist.GetBinContent(i) > 0.0 and hist.GetBinError(i) > max_stat * hist.GetBinContent(i)]
+        for shifted in (s.shape_u(), s.shape_d()):
+            # shapes are unit-normalised with the normalisation in value_u/value_d: the scaled nominal is the nominal itself
+            bins = [i for i in noisy if abs(shifted.GetBinContent(i) - hist.GetBinContent(i)) < significance * hist.GetBinError(i)]
+            for i in bins:
+                shifted.SetBinContent(i, hist.GetBinContent(i))
+                shifted.SetBinError(i, hist.GetBinError(i))
+            if bins and shifted.Integral() > 0.0:
+                shifted.Scale(1.0 / shifted.Integral())
+                replaced[s.name()] = replaced.get(s.name(), 0) + len(bins)
+
+    cb.ForEachSyst(smooth)
+    logger.info(f"Smoothing: {sum(replaced.values())} noisy bins of {len(replaced)} shape systematics set to the scaled nominal")
+    return replaced
+
+
+def symmetrize_shapes(cb: ch.CombineHarvester, pattern: str) -> dict:
+    """Shape systematics matching pattern take per bin the symmetric shifts nominal +- (up - down) / 2, which removes the
+    one-sided (same direction) part of the up/down templates. Returns the number of symmetrised processes per systematic."""
+    nominal = {}
+    cb.ForEachProc(lambda p: nominal.__setitem__((p.bin(), p.process()), p.shape()))
+    regex, done = re.compile(pattern), {}
+
+    def symmetrize(s):
+        hist = nominal.get((s.bin(), s.process()))
+        if s.type() != "shape" or not hist or not s.shape_u() or not regex.fullmatch(s.name()):
+            return
+        up, down = s.shape_u(), s.shape_d()
+        # unit-normalised templates: the absolute shifts relative to the nominal are value * shape
+        half = [(s.value_u() * up.GetBinContent(i) - s.value_d() * down.GetBinContent(i)) / 2.0 for i in range(1, hist.GetNbinsX() + 1)]
+        for shifted, sign in ((up, 1.0), (down, -1.0)):
+            for i, delta in enumerate(half, start=1):
+                shifted.SetBinContent(i, max(hist.GetBinContent(i) + sign * delta, 0.0))
+        if up.Integral() <= 0.0 or down.Integral() <= 0.0:
+            return
+        s.set_value_u(up.Integral())
+        s.set_value_d(down.Integral())
+        up.Scale(1.0 / up.Integral())
+        down.Scale(1.0 / down.Integral())
+        done[s.name()] = done.get(s.name(), 0) + 1
+
+    cb.ForEachSyst(symmetrize)
+    logger.info(f"Symmetrisation: {sum(done.values())} templates of {len(done)} shape systematics")
+    return done
+
+
+def prune_systematics(cb: ch.CombineHarvester, fraction: float = 0.01) -> dict:
+    """Drops the experimental shape systematics of a process in a category if neither shift moves any bin by more than fraction
+    of the bin's expected uncertainty (Poisson of the total yield and MC statistics). Returns the number pruned per systematic."""
+    nominal, uncertainty = {}, {}
+    cb.ForEachProc(lambda p: nominal.__setitem__((p.bin(), p.process()), (p.shape(), p.rate())))
+    for category in cb.bin_set():
+        total = cb.cp().bin([category]).GetShape()
+        uncertainty[category] = [math.sqrt(max(total.GetBinContent(i), 0.0) + total.GetBinError(i) ** 2)
+                                 for i in range(1, total.GetNbinsX() + 1)]
+    pruned = {}
+
+    def negligible(s):
+        hist, rate = nominal.get((s.bin(), s.process()), (None, 0.0))
+        if s.type() != "shape" or not hist or not s.shape_u() or _THEORY_NUISANCE.fullmatch(s.name()):
+            return False
+        effects = (abs(value * shifted.GetBinContent(i) - hist.GetBinContent(i)) * rate
+                   for value, shifted in ((s.value_u(), s.shape_u()), (s.value_d(), s.shape_d()))
+                   for i in range(1, hist.GetNbinsX() + 1))
+        if all(effect <= fraction * u for effect, u in zip(effects, uncertainty[s.bin()] * 2)):
+            pruned[s.name()] = pruned.get(s.name(), 0) + 1
+            return True
+        return False
+
+    cb.FilterSysts(negligible)
+    logger.info(f"Pruning: {sum(pruned.values())} negligible shape systematics of {len(pruned)} nuisances removed")
+    return pruned
+
+
+def rename_nuisances(cb: ch.CombineHarvester) -> None:
+    """Renames the nuisances of shapes made from older CROWN ntuples to their datacard names (common.analysis.legacy_nuisance_name)."""
+    for name in sorted(cb.syst_name_set()):
+        new_name = legacy_nuisance_name(name)
+        if new_name != name:
+            cb.RenameSystematic(cb, name, new_name)
 
 
 def replace_with_asimov(cb: ch.CombineHarvester) -> None:

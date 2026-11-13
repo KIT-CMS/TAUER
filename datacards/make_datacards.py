@@ -5,7 +5,7 @@ import json
 import logging
 import os
 
-from common.analysis import ACTIVE_ANALYSIS
+from common.analysis import ACTIVE_ANALYSIS, ANALYSIS_ID
 from CustomLogging import setup_logging
 from common.analysis import datacard_backgrounds
 from datacards import MASS as _MASS
@@ -13,16 +13,18 @@ from datacards.categories import get_categories
 from datacards.systematics import add_systematics
 
 get_signals = importlib.import_module(f"analyses.{ACTIVE_ANALYSIS}.datacards.systematics").get_signals
-try:
-    _CADI = importlib.import_module(f"analyses.{ACTIVE_ANALYSIS}.datacards.combine_model").CADI_LINE
-except (ModuleNotFoundError, AttributeError):
-    _CADI = "hig-26-018"
 from datacards.tools import (
     apply_nn_rebinning,
     convert_shapes_to_lnN,
+    rename_nuisances,
     filter_zero_yield_processes,
     filter_zero_yield_systs,
     fix_negative_bins,
+    prune_backgrounds,
+    prune_signals,
+    prune_systematics,
+    smooth_noisy_bins,
+    symmetrize_shapes,
     load_systematic_shapes,
     signal_shape_pattern,
     replace_with_asimov,
@@ -71,6 +73,17 @@ parser.add_argument("--rebinning-using-combine-threshold", type=float, default=1
 parser.add_argument("--rebinning-using-combine-uncert-fraction", type=float, default=0.1)
 parser.add_argument("--rebinning-using-combine-mode", type=int, default=1)
 
+parser.add_argument("--stxs-pruning", type=str, default="none", choices=["none", "systematics", "processes"],
+                    help="Pruning of small signal contributions per category (STXS recommendations, PruningStrategies.md): "
+                         "systematics = step 1 (their experimental systematics), processes = steps 1 and 2 (also the processes)")
+parser.add_argument("--prune-backgrounds", type=str2bool, default=False,
+                    help="Drop per category the backgrounds below 0.1%% of its background, up to 0.5%% of it")
+parser.add_argument("--noisy-bin-stat", type=float, default=0.0,
+                    help="Shape systematics take the scaled nominal in bins with a relative MC uncertainty above this (0: off)")
+parser.add_argument("--symmetrize", type=str, default="",
+                    help="Regex of the shape systematics made symmetric per bin, e.g. 'CMS_(scale|res)_j_.*' (empty: off)")
+parser.add_argument("--prune-systematics", type=float, default=0.0,
+                    help="Drop shape systematics moving no bin by more than this fraction of its expected uncertainty (0: off)")
 parser.add_argument("--custom-binning-file", type=str, default=None, help="Path to JSON file containing custom binning definitions")
 
 parser.add_argument("--shapes", type=str, required=True,
@@ -144,11 +157,7 @@ def main():
             pattern = signal_shape_pattern(cb, args.variable)
             cb.cp().channel([channel]).signals().ExtractShapes(root_file, pattern, f"{pattern}_$SYSTEMATIC")
 
-        fix_negative_bins(cb)
         filter_zero_yield_processes(cb)
-
-        if not args.real_data:
-            replace_with_asimov(cb)
 
         logger.info("Adding Systematics...")
         if not args.systematics:
@@ -171,9 +180,8 @@ def main():
 
         # $BIN expands to the current bin name (e.g. "mt_ggh"), which already
         # includes the channel prefix -- unlike $BINID, which is a bare integer.
-        # measurement categories follow the recommended RECO__<CADI-line>__<CATEGORY> scheme, GoF keeps htt_*
-        is_gof = args.categories == "gof" or args.nn_output_gof_bkg_only
-        ch.SetStandardBinNames(cb, "$ANALYSIS_$BIN_$ERA" if is_gof else f"RECO__{_CADI}__$BIN_$ERA")
+        # CMS_<analysisID>_<category>_<era>, as the CAT naming conventions for analysis-specific names
+        ch.SetStandardBinNames(cb, f"CMS_{ANALYSIS_ID}_$BIN_$ERA")
 
         custom_binnings = None
         if args.custom_binning_file:
@@ -218,8 +226,31 @@ def main():
             else:
                 raise ValueError(f"Invalid rebinning strategy: {args.rebinning_strategy}")
 
+        # after the systematics and the rebinning: nominal and shifted templates are zeroed alike, on the final bins
+        fix_negative_bins(cb)
+        if not args.real_data:
+            replace_with_asimov(cb)
+
+        pruned = {}
+        if args.stxs_pruning != "none":
+            pruned["signals"] = prune_signals(cb, drop_processes=args.stxs_pruning == "processes")
+        if args.prune_backgrounds:
+            pruned["backgrounds"] = prune_backgrounds(cb)
+        if args.noisy_bin_stat > 0.0:
+            pruned["smoothed_bins"] = smooth_noisy_bins(cb, max_stat=args.noisy_bin_stat)
+        if args.symmetrize:
+            pruned["symmetrized"] = symmetrize_shapes(cb, args.symmetrize)
+        if args.prune_systematics > 0.0:
+            pruned["systematics"] = prune_systematics(cb, fraction=args.prune_systematics)
+        if pruned:
+            os.makedirs(output_folder, exist_ok=True)
+            with open(os.path.join(output_folder, "pruning.json"), "w") as f:
+                json.dump(pruned, f, indent=1)
+
         if args.convert_shapes_to_lnN:
             convert_shapes_to_lnN(cb)
+
+        rename_nuisances(cb)
 
         if args.bbb:
             logger.info("Adding AutoMCStats...")
