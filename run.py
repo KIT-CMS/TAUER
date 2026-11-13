@@ -335,7 +335,7 @@ def mode_plot(cfg, extra):
     qcd_label = "ff" if cfg["ff_friends_dir"] else "ss-os"
     # /web only works run locally on a node where it's mounted (not condor).
     plot_dir = plot_output_dir(cfg, qcd_label)
-    variables = os.environ.get("VARIABLES", "m_vis,pt_1,pt_2,eta_1,eta_2,mt_1")
+    variables = os.environ.get("VARIABLES")
 
     for channel in cfg["channels"].split(","):
         # Same nested layout mode_shapes writes to (output/[{tag}/]{qcd-label}/{era}/{channel}/shapes.root).
@@ -348,7 +348,7 @@ def mode_plot(cfg, extra):
             "--output-dir", plot_dir,
             "--era", cfg["era"],
             "--channels", channel,
-            "--variables", variables,
+            *(["--variables", variables] if variables else []),
             # An ff-labeled shapes.root has no QCD -- without --fake-factor,
             # plot_shapes_control.py's QCD-seeking default silently drops that background.
             *(["--fake-factor"] if cfg["ff_friends_dir"] else []),

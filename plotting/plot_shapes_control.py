@@ -175,8 +175,21 @@ ERA_YEAR_LABEL = {
 }
 
 
+def merged_era_name(era: str) -> str:
+    """Comma-separated eras (shapes/merge_eras.py) -> their year span, e.g. '2022-2026'; a single era unchanged."""
+    if "," not in era:
+        return era
+    years = sorted({e[:4] for e in era.split(",") for e in get_data_eras(e)})
+    return f"{years[0]}-{years[-1]}"
+
+
 def lumi_label(era: str) -> str:
     """e.g. '8.08 fb$^{-1}$ (2022 preEE, 13.6 TeV)'."""
+    if "," in era:
+        eras = era.split(",")
+        com = get_center_of_mass(eras[0])
+        com_str = str(int(com)) if com == int(com) else str(com)
+        return f"{sum(get_luminosity(e) for e in eras):.1f} fb$^{{-1}}$ ({merged_era_name(era)}, {com_str} TeV)"
     if era not in RUN2_ERAS and era not in RUN3_ERAS:
         logger.warning(f"Era {era!r} not in RUN2_ERAS/RUN3_ERAS; using it verbatim in the lumi label.")
         return era
@@ -197,6 +210,16 @@ CHANNEL_LABELS = {
 # plotted process -> histogram process, the embedding estimates are the same jetFakes/QCD histograms
 HISTOGRAM_PROCESSES = {"QCDEMB": "QCD", "jetFakesEMB": "jetFakes"}
 
+# NN category -> its class in the x label of <channel>_score (<channel>_<category> overrides, misc in tt is tt+diboson)
+NN_CLASS_LABELS = {
+    "ggh": "ggH", "qqh": "qqH", "vh": "VH", "tth": r"t$\bar{t}$H", "ztt": r"Z$\rightarrow\tau\tau$",
+    "ff": r"Jet$\rightarrow\tau_h$", "zll": r"Z$\rightarrow$ll", "tt": r"t$\bar{t}$", "misc": "Diboson",
+    "tt_misc": r"t$\bar{t}$+diboson",
+}
+
+# bin edges of --binning, applied to every histogram read
+REBIN_EDGES = None
+
 
 def _th1_to_numpy(hist):
     n = hist.GetNbinsX()
@@ -211,7 +234,7 @@ def _get_hist(rootfile, process, channel, variable, category="", systematic=None
     if not h:
         logger.debug(f"Histogram not found: {variable}/{channel}/{process} (category={category!r}, systematic={systematic})")
         return None
-    return h.Clone()
+    return h.Rebin(len(REBIN_EDGES) - 1, f"{h.GetName()}_rebinned", np.array(REBIN_EDGES)) if REBIN_EDGES else h.Clone()
 
 
 def draw_stack_plot(
@@ -297,7 +320,7 @@ def draw_stack_plot(
 
     if log_y:
         ax_top.set_yscale("log")
-        ax_top.set_ylim(0.1, max_val * 300)
+        ax_top.set_ylim(0.1, 0.1 * (max(max_val, 1.0) / 0.1) ** (1 / 0.55))  # histograms fill the lower 55% (in decades), the legend the rest
     else:
         ax_top.set_ylim(0, max_val * 1.8)
         ax_top.yaxis.set_major_formatter(mticker.ScalarFormatter(useMathText=True))
@@ -463,17 +486,23 @@ def plot_control(
     if data_hist:
         _, y_data, yerr_data = _th1_to_numpy(data_hist)
 
+    nn_class = category.removesuffix("_ar").removesuffix("_ss")  # same NN class in the sideband regions
     draw_stack_plot(
         edges=edges,
         stack_values=stack_values,
         stack_labels=stack_labels,
         stack_colors=stack_colors,
         total_mc_err=total_mc_err,
-        x_label=_channel_x_labels(channel).get(variable, variable),
+        x_label=(
+            "NN score bin (ggH, qqH unrolled)" if nn_class == "xxh"
+            else f"NN score ({NN_CLASS_LABELS.get(f'{channel}_{nn_class}', NN_CLASS_LABELS[nn_class])} class)"
+            if variable == f"{channel}_score" and nn_class in NN_CLASS_LABELS
+            else _channel_x_labels(channel).get(variable, variable)
+        ),
         top_left_label=CHANNEL_LABELS.get(channel, channel) + (f" ({category})" if category else "") + (f" {mc_systematic}" if mc_systematic else ""),
         top_right_label=lumi_label(era),
         out_dir=Path(output_dir, channel, category or "", mc_systematic or ""),
-        fname=f"Run{era}_{channel}__{variable}",
+        fname=f"Run{merged_era_name(era)}_{channel}__{variable}",
         y_data=y_data,
         yerr_data=yerr_data,
         extra_steps=extra_steps,
@@ -492,8 +521,14 @@ def parse_arguments():
         type=lambda s: s.split(","),
     )
     parser.add_argument(
-        "--variables", default=["m_vis"],
+        "--variables", default=None,
         type=lambda s: s.split(","),
+        help="Comma-separated variables (default: the variables.yaml output features without the flags).",
+    )
+    parser.add_argument(
+        "--binning", default=None,
+        type=lambda s: [float(x) for x in s.split(",")],
+        help="Comma-separated bin edges to rebin to, e.g. the datacards' custom binning (must be edges of the input histograms).",
     )
     parser.add_argument("--log-y",   action="store_true")
     parser.add_argument("--blinded", action="store_true")
@@ -551,6 +586,8 @@ def main(args):
             f"depends on it, see condor/submit_shapes.py's --process-selection help)."
         )
 
+    global REBIN_EDGES
+    REBIN_EDGES = args.binning
     rootfile = ROOT.TFile(args.input_file, "read")
     if rootfile.IsZombie():
         raise RuntimeError(f"Cannot open {args.input_file}")
@@ -560,7 +597,7 @@ def main(args):
         variables_yaml = yaml.safe_load(f)
     all_vars = set(variables_yaml.get('output_features', []))
     flag_vars = set(variables_yaml.get('flags', []))
-    plot_vars = sorted(all_vars - flag_vars)
+    plot_vars = args.variables or sorted(all_vars - flag_vars)
 
     for channel in args.channels:
         for category, mc_systematic in itertools.product(args.categories or [""], args.mc_systematics):

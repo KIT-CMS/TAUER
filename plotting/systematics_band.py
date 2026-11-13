@@ -42,7 +42,9 @@ def shape_systematic_uncertainty(
         from plotting.plot_shapes_control import _get_hist as get_hist
 
     record = []
-    add_systematics(cb=None, era=era, record=record, shape_systematics=True)
+    for e in era.split(","):  # merged eras: the union of their systematics
+        add_systematics(cb=None, era=e, record=record, shape_systematics=True)
+    record = list(dict.fromkeys(record))
 
     total_sq = np.zeros(n_bins)
     found_any_overall = False
