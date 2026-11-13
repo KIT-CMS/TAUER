@@ -98,7 +98,7 @@ def finalize(cfg):
     cfg["tag"] = cfg.get("tag") or cfg["ntupletag"]
     cfg["tag_arg"] = "" if cfg["tag"] == cfg["ntupletag"] else cfg["tag"]
     cfg["model_tag"] = cfg.get("model_tag") or f"{cfg['ntupletag']}_{cfg['stxs_stage']}"
-    defaults = {"dc_analysis": "stxs_stage0_run3", "variable": "m_vis",
+    defaults = {"dc_analysis": f"stxs_{cfg['stxs_stage']}_run3", "variable": "m_vis",
                 "train_task": next(iter(TRAIN_TASKS)), "request_gpus": "1"}
     for key in ("selection_friend", "ff_friend", "additional_friends", "correction_tag", "skip_systematics", "process_selection", "special_analysis", "sample_list", "dc_analysis", "variable",
                 "fitdir", "dc_output_dir", "taues_fit_dir", "train_task", "request_gpus"):
@@ -278,7 +278,8 @@ def gof_cmd(cfg, us):
 
 
 def workspace_cmd(cfg, us):
-    return [f"export FITDIR={cfg['fitdir']}", shlex.join(["python3", "datacards/produce_workspace.py", ",".join(dict.fromkeys(u["era"] for u in us)), cfg["dc_analysis"], "4"])]
+    return [f"export FITDIR={cfg['fitdir']}", shlex.join(["python3", "datacards/produce_workspace.py", ",".join(dict.fromkeys(u["era"] for u in us)), cfg["dc_analysis"], "4",
+                                                                 "--stxs-stage", cfg["stxs_stage"]])]
 
 
 def impacts_cmd(cfg, us):
@@ -333,7 +334,7 @@ STEPS = [
          outputs=plot_web_sources, command=handoff_copies(plot_web_sources), env=""),
     Step("datacards", "Datacards", "local", "era×channel", "datacards", needs=("estimations",), params=("dc_analysis", "variable", "stxs_stage", "fitdir", "dc_output_dir"),
          env="cmssw", command=datacard_cmd, outputs=lambda cfg, u: [f"{cfg['dc_output_dir']}/{u['channel']}/{u['era']}/*.txt"], inputs=lambda cfg, u: [shapes_path(cfg, u)]),
-    Step("workspace", "Combine workspace", "local", "era", "datacards", needs=("datacards",), params=("dc_analysis", "fitdir"), env="cmssw", command=workspace_cmd,
+    Step("workspace", "Combine workspace", "local", "era", "datacards", needs=("datacards",), params=("dc_analysis", "stxs_stage", "fitdir"), env="cmssw", command=workspace_cmd,
          outputs=lambda cfg, u: [f"{cfg['fitdir']}/output_{cfg['dc_analysis']}/{ch}/{u['era']}/ws.root" for ch in cfg["channels"]]),
     Step("gof", "Goodness of fit", "local", "era×channel", "datacards", needs=("estimations",), params=("variable", "fitdir"), env="cmssw", command=gof_cmd,
          outputs=lambda cfg, u: [f"{cfg['fitdir']}/output/gof/{gof_job(cfg, u)}/gof_saturated.json"], inputs=lambda cfg, u: [shapes_path(cfg, u)]),

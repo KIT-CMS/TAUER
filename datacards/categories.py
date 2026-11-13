@@ -8,18 +8,9 @@ from CustomLogging import setup_logging
 logger = setup_logging(logger=logging.getLogger(__name__))
 
 
-def _get_dnn_class_mapping() -> dict:
+def _get_dnn_class_mapping(stage: str = "stage0") -> dict:
     category_selection = importlib.import_module(f"analyses.{ACTIVE_ANALYSIS}.shapes.selection.category_selection")
-    try:
-        return category_selection.DNN_CLASS_MAPPING
-    except AttributeError as exc:
-        raise NotImplementedError(
-            f"stxs_stage0_run3 categorization requires analyses.{ACTIVE_ANALYSIS}."
-            "category_selection.DNN_CLASS_MAPPING (per-channel dict of "
-            "{category_name: {'index': int, 'is_signal': bool}}), which does not exist "
-            "yet -- it currently only has a single-channel 'category_mapping' without an "
-            "'is_signal' flag. Use --categories gof or stxs_stage0 in the meantime."
-        ) from exc
+    return category_selection.dnn_class_mapping(stage)
 
 
 def get_categories(
@@ -39,29 +30,17 @@ def get_categories(
         logger.info(f"Using GOF categorization with category: {categories[0]}")
         return categories
 
-    # stxs_stage0_run3: pure DNN categorization for Run3 -- DNN score bins serve
-    # as both signal and control regions.  embedding / jetfakes flags are irrelevant.
-    if categorization == "stxs_stage0_run3":
-        dnn_class_mapping = _get_dnn_class_mapping()
-        if channel not in dnn_class_mapping:
-            raise NotImplementedError(f"stxs_stage0_run3 not defined for channel '{channel}'")
-        mapping = dnn_class_mapping[channel]
-        signal_dnn = [
-            (info["index"] + 1, f"{channel}_{name}")
-            for name, info in sorted(mapping.items(), key=lambda x: x[1]["index"])
-            if info["is_signal"]
-        ]
-        bkg_dnn = [
-            (info["index"] + 1, f"{channel}_{name}")
-            for name, info in sorted(mapping.items(), key=lambda x: x[1]["index"])
-            if not info["is_signal"]
-        ]
-        logger.info(f"Using stxs_stage0_run3: signal={signal_dnn}, background={bkg_dnn}")
+    # stxs_stage0_run3 / stxs_stage1p2_run3: pure DNN categorization for Run3, one category per NN class of the
+    # stage-0 or stage-1.2 training -- DNN score bins serve as both signal and control regions.
+    if categorization in ("stxs_stage0_run3", "stxs_stage1p2_run3"):
+        mapping = _get_dnn_class_mapping("stage0" if categorization == "stxs_stage0_run3" else "stage1p2").get(channel)
+        if mapping is None:
+            raise NotImplementedError(f"{categorization} not defined for channel '{channel}'")
+        ordered = sorted(mapping.items(), key=lambda x: x[1]["index"])
+        signal_dnn = [(info["index"] + 1, f"{channel}_{name}") for name, info in ordered if info["is_signal"]]
+        bkg_dnn = [(info["index"] + 1, f"{channel}_{name}") for name, info in ordered if not info["is_signal"]]
+        logger.info(f"Using {categorization}: signal={signal_dnn}, background={bkg_dnn}")
         return signal_dnn + bkg_dnn
-
-    # stxs_stage1p2_run3: placeholder for Run3 STXS stage 1.2 categorization
-    if categorization == "stxs_stage1p2_run3":
-        raise NotImplementedError("stxs_stage1p2_run3 is not yet implemented.")
 
     # All Run2 categorizations below use embedding / jetFakes control regions
     if embedding:

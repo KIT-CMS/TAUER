@@ -26,6 +26,7 @@ def parse_args(argv=None):
     parser.add_argument("cores", nargs="?", type=int, default=1)
     parser.add_argument("--channels", dest="channel", help="GoF only")
     parser.add_argument("--variable", help="GoF only")
+    parser.add_argument("--stxs-stage", choices=["stage0", "stage1p2"], default="stage0", help="POI scheme of the analysis cards (combine_model.POI_SCHEMES)")
     args = parser.parse_args(argv)
     if args.analysis == "gof" and not (args.channel and args.variable and "," not in args.eras):
         parser.error("ANALYSIS=gof needs a single era, --channels and --variable")
@@ -38,19 +39,25 @@ def main(argv=None) -> int:
 
     if args.analysis == "gof":
         card_dir = gof_card_dir(fitdir, args.eras, args.channel, args.variable)
-        cards = sorted(glob.glob(str(card_dir / "htt_*.txt")))
+        cards = sorted(glob.glob(str(card_dir / "CMS_*.txt")))
         if not cards:
-            print(f"ERROR: no datacard htt_*.txt found in {card_dir}. Run produce_datacard.py first.", file=sys.stderr)
+            print(f"ERROR: no datacard CMS_*.txt found in {card_dir}. Run produce_datacard.py first.", file=sys.stderr)
             return 1
         print(f"[workspace] building default single-r workspace from {cards[0]}")
         return run_in_cmsenv(["text2workspace.py", cards[0], "-m", MASS, "-o", str(card_dir / "ws.root")], check=False, unlimited_stack=True).returncode
 
     combine_model = importlib.import_module(f"analyses.{ACTIVE_ANALYSIS}.datacards.combine_model")
     print(f"Use {args.cores} cores.")
+    # per channel and era, and the all-era combinations of make_datacards.py ({channel}/combined.txt, cmb/combined.txt)
+    card_dirs = [d for era in args.eras.split(",") for d in sorted(glob.glob(f"output_{args.analysis}/*/{era}", root_dir=fitdir))]
+    card_dirs += sorted(str(Path(c).parent) for c in glob.glob(f"output_{args.analysis}/*/combined.txt", root_dir=fitdir))
+    if not card_dirs:
+        print(f"ERROR: no datacards in {fitdir}/output_{args.analysis}. Run produce_datacard.py first.", file=sys.stderr)
+        return 1
     cmd = [
         "combineTool.py", "-M", "T2W", "-o", "ws.root",
-        "-P", combine_model.PHYSICS_MODEL, *combine_model.PHYSICS_MODEL_OPTIONS,
-        "-i", f"output_{args.analysis}/{{et,mt,tt,em,cmb}}/{{{args.eras}}}",
+        "-P", combine_model.PHYSICS_MODEL, *combine_model.physics_model_options(args.stxs_stage),
+        "-i", *card_dirs,
         "-m", MASS,
         "--parallel", str(args.cores),
     ]

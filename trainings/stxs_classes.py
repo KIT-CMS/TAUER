@@ -11,26 +11,19 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 UAT_DATASETS = REPO_ROOT / "trainings/uncertainty-aware-training/datasets/smhtt"
 CLASSES_FILE = REPO_ROOT / "common/training_stxs_classes.yaml"
 
-# HTXS Stage1_2 bins (SimDataFormats/HTXS HiggsTemplateCrossSections.h) and the Stage1_2_Fine bins they contain, FWDH left out
-_vh = lambda b, p: {b + 1: (f"{p}_PTV_0_75", [b + 1, b + 6, b + 11]), b + 2: (f"{p}_PTV_75_150", [b + 2, b + 7, b + 12]),
-                    b + 3: (f"{p}_PTV_150_250_0J", [b + 3]), b + 4: (f"{p}_PTV_150_250_GE1J", [b + 8, b + 13]),
-                    b + 5: (f"{p}_PTV_GT250", [b + 4, b + 5, b + 9, b + 10, b + 14, b + 15])}
+# HTXS Stage1_2 bins (SimDataFormats/HTXS HiggsTemplateCrossSections.h), FWDH left out
+_vh = lambda b, p: {b + 1: f"{p}_PTV_0_75", b + 2: f"{p}_PTV_75_150", b + 3: f"{p}_PTV_150_250_0J", b + 4: f"{p}_PTV_150_250_GE1J", b + 5: f"{p}_PTV_GT250"}
 BINS = {
-    101: ("GG2H_PTH_200_300", [101, 105]), 102: ("GG2H_PTH_300_450", [102, 106]), 103: ("GG2H_PTH_450_650", [103, 107]),
-    104: ("GG2H_PTH_GT650", [104, 108]), 105: ("GG2H_0J_PTH_0_10", [109]), 106: ("GG2H_0J_PTH_GT10", [110]),
-    107: ("GG2H_1J_PTH_0_60", [111]), 108: ("GG2H_1J_PTH_60_120", [112]), 109: ("GG2H_1J_PTH_120_200", [113]),
-    110: ("GG2H_GE2J_MJJ_0_350_PTH_0_60", [114, 117]), 111: ("GG2H_GE2J_MJJ_0_350_PTH_60_120", [115, 118]),
-    112: ("GG2H_GE2J_MJJ_0_350_PTH_120_200", [116, 119]), 113: ("GG2H_GE2J_MJJ_350_700_PTH_0_200_PTHJJ_0_25", [120]),
-    114: ("GG2H_GE2J_MJJ_350_700_PTH_0_200_PTHJJ_GT25", [121]), 115: ("GG2H_GE2J_MJJ_GT700_PTH_0_200_PTHJJ_0_25", [122, 124, 126]),
-    116: ("GG2H_GE2J_MJJ_GT700_PTH_0_200_PTHJJ_GT25", [123, 125, 127]),
-    201: ("QQ2HQQ_0J", [201]), 202: ("QQ2HQQ_1J", [202]), 203: ("QQ2HQQ_GE2J_MJJ_0_60", [203, 206]),
-    204: ("QQ2HQQ_GE2J_MJJ_60_120", [204, 207]), 205: ("QQ2HQQ_GE2J_MJJ_120_350", [205, 208]),
-    206: ("QQ2HQQ_GE2J_MJJ_GT350_PTH_GT200", list(range(217, 225))), 207: ("QQ2HQQ_GE2J_MJJ_350_700_PTH_0_200_PTHJJ_0_25", [209]),
-    208: ("QQ2HQQ_GE2J_MJJ_350_700_PTH_0_200_PTHJJ_GT25", [210]), 209: ("QQ2HQQ_GE2J_MJJ_GT700_PTH_0_200_PTHJJ_0_25", [211, 213, 215]),
-    210: ("QQ2HQQ_GE2J_MJJ_GT700_PTH_0_200_PTHJJ_GT25", [212, 214, 216]),
+    101: "GG2H_PTH_200_300", 102: "GG2H_PTH_300_450", 103: "GG2H_PTH_450_650", 104: "GG2H_PTH_GT650",
+    105: "GG2H_0J_PTH_0_10", 106: "GG2H_0J_PTH_GT10", 107: "GG2H_1J_PTH_0_60", 108: "GG2H_1J_PTH_60_120", 109: "GG2H_1J_PTH_120_200",
+    110: "GG2H_GE2J_MJJ_0_350_PTH_0_60", 111: "GG2H_GE2J_MJJ_0_350_PTH_60_120", 112: "GG2H_GE2J_MJJ_0_350_PTH_120_200",
+    113: "GG2H_GE2J_MJJ_350_700_PTH_0_200_PTHJJ_0_25", 114: "GG2H_GE2J_MJJ_350_700_PTH_0_200_PTHJJ_GT25",
+    115: "GG2H_GE2J_MJJ_GT700_PTH_0_200_PTHJJ_0_25", 116: "GG2H_GE2J_MJJ_GT700_PTH_0_200_PTHJJ_GT25",
+    201: "QQ2HQQ_0J", 202: "QQ2HQQ_1J", 203: "QQ2HQQ_GE2J_MJJ_0_60", 204: "QQ2HQQ_GE2J_MJJ_60_120", 205: "QQ2HQQ_GE2J_MJJ_120_350",
+    206: "QQ2HQQ_GE2J_MJJ_GT350_PTH_GT200", 207: "QQ2HQQ_GE2J_MJJ_350_700_PTH_0_200_PTHJJ_0_25", 208: "QQ2HQQ_GE2J_MJJ_350_700_PTH_0_200_PTHJJ_GT25",
+    209: "QQ2HQQ_GE2J_MJJ_GT700_PTH_0_200_PTHJJ_0_25", 210: "QQ2HQQ_GE2J_MJJ_GT700_PTH_0_200_PTHJJ_GT25",
     **_vh(300, "QQ2HLNU"), **_vh(400, "QQ2HLL"), **_vh(500, "GG2HLL"),
-    601: ("TTH_PTH_0_60", [601]), 602: ("TTH_PTH_60_120", [602]), 603: ("TTH_PTH_120_200", [603]),
-    604: ("TTH_PTH_200_300", [604]), 605: ("TTH_PTH_GT300", [605, 606]),
+    601: "TTH_PTH_0_60", 602: "TTH_PTH_60_120", 603: "TTH_PTH_120_200", 604: "TTH_PTH_200_300", 605: "TTH_PTH_GT300",
 }
 
 # merge order: the bins of a node merge first among themselves, the leftovers then with the neighbouring nodes; a tuple is
@@ -62,7 +55,7 @@ def merge(node, events, threshold):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--counts", required=True, help="inclusive_eras_counts_HTXS_stage1_2_fine_cat_pTjet30GeV.json of plot_stxs.py")
+    p.add_argument("--counts", required=True, help="inclusive_eras_counts_HTXS_stage1_2_cat_pTjet30GeV.json of plot_stxs.py")
     p.add_argument("--threshold", type=float, default=2000, help="Minimum effective MC events per class and channel.")
     p.add_argument("--channels", default="et,mt,tt")
     args = p.parse_args()
@@ -72,13 +65,11 @@ def main():
     for ch in args.channels.split(","):
         table[ch] = []
         for mode, tree in TREE.items():
-            # plot_stxs.py counts per fine bin, summed into the stage-1.2 bins
-            fine = {key: {int(b): n for b, n in counts[ch][PROCESS[mode]][key].items()} for key in ("events", "scaled")}
-            events, yields = ({b: sum(fine[key].get(f, 0) for f in BINS[b][1]) for b in BINS} for key in ("events", "scaled"))
+            events, yields = ({int(b): n for b, n in counts[ch][PROCESS[mode]][key].items()} for key in ("events", "scaled"))
             for bins in merge(tree, events, args.threshold):
                 table[ch].append({"label": f"is_{mode}_htautau_bin{'_'.join(map(str, bins))}", "mode": mode, "bins": bins,
-                                  "names": [BINS[b][0] for b in bins], "events": round(sum(events[b] for b in bins)),
-                                  "yield": round(sum(yields[b] for b in bins), 2)})
+                                  "names": [BINS[b] for b in bins], "events": round(sum(events.get(b, 0) for b in bins)),
+                                  "yield": round(sum(yields.get(b, 0) for b in bins), 2)})
         for c in table[ch]:
             print(f"{ch} {c['label']:<45} {c['events']:>9} events {c['yield']:>10} expected" + ("  BELOW THRESHOLD" if c["events"] < args.threshold else ""))
 

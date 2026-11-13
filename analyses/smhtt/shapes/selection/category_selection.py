@@ -1,4 +1,7 @@
+from pathlib import Path
+
 import numpy as np
+import yaml
 try:
     from ntuple_processor import Histogram
     from ntuple_processor.utils import Selection
@@ -82,56 +85,46 @@ category_mapping = {
 }
 SIGNAL_CLASSES = {"ggh", "qqh", "vh", "tth"}  # the STXS stage-0 production modes
 
-DNN_CLASS_MAPPING = {
-    channel: {
-        name: {"index": info["index"], "is_signal": name in SIGNAL_CLASSES}
-        for name, info in classes.items()
-    }
-    for channel, classes in category_mapping.items()
+# stage-1.2 NN: classes of the run3-fine training configs, in their output order (signals ggh_bin105, ..., backgrounds as stage 0)
+_FINE_CONFIGS = Path(__file__).resolve().parents[4] / "trainings/uncertainty-aware-training/datasets/smhtt/run3-fine"
+_BACKGROUND_CLASS = {"is_dyjets_tt": "ztt", "is_jetFakes": "ff", "is_dyjets_ll": "zll", "is_ttbar": "tt", "is_diboson": "misc", "is_bkg_rest": "misc"}
+category_mapping_stage1p2 = {
+    channel: {_BACKGROUND_CLASS.get(label, label.removeprefix("is_").replace("_htautau", "")): {"index": i, "binning": fine_binning}
+              for i, label in enumerate(yaml.safe_load((_FINE_CONFIGS / f"smhtt_{channel}.yaml").read_text())["classes"])}
+    for channel in category_mapping if (_FINE_CONFIGS / f"smhtt_{channel}.yaml").exists()
 }
 
 
-categorization = {}
-for channel in ([] if not _ntuple_processor_available else list(category_mapping.keys())):
-    categorization[channel] = []
-    for category in category_mapping[channel].keys():
-        selection = (
-            Selection(
-                name=category,
-                cuts=[
-                    (
-                        f"nn_predicted_class == {category_mapping[channel][category]['index']}",
-                        "category selection",
-                    )
-                ],
-            ),
-            [
-                Histogram(
-                    f"{channel}_score",
-                    "nn_predicted_max_value",
-                    category_mapping[channel][category]["binning"],
-                )
-            ],
-        )
-        categorization[channel].append(selection)
-    # add the xxh category
+def dnn_class_mapping(stage="stage0"):
+    """{channel: {category: {index, is_signal}}} of the stage-0 or stage-1.2 NN."""
+    mapping = category_mapping if stage == "stage0" else category_mapping_stage1p2
+    return {channel: {name: {"index": info["index"], "is_signal": name not in _BACKGROUND_CLASS.values()} for name, info in classes.items()}
+            for channel, classes in mapping.items()}
+
+
+DNN_CLASS_MAPPING = dnn_class_mapping("stage0")
+
+
+def build_categorization(stage="stage0"):
+    """{channel: [(Selection, [Histogram])]}: one category per NN class (nn_predicted_class), plus the 2D ggh+qqh xxh one in stage 0."""
+    mapping = category_mapping if stage == "stage0" else category_mapping_stage1p2
+    result = {}
+    for channel in mapping if _ntuple_processor_available else []:
+        result[channel] = [
+            (Selection(name=category, cuts=[(f"nn_predicted_class == {info['index']}", "category selection")]),
+             [Histogram(f"{channel}_score", "nn_predicted_max_value", info["binning"])])
+            for category, info in mapping[channel].items()
+        ]
+        if stage == "stage0":
+            result[channel].append(_xxh_category(channel))
+    return result
+
+
+def _xxh_category(channel):
     cutstring, nbins = build_xxh_cutstring(channel)
-    selection = (
-        Selection(
-            name="xxh",
-            cuts=[
-                (
-                    f"((nn_predicted_class == {category_mapping[channel]['qqh']['index']}) || (nn_predicted_class == {category_mapping[channel]['ggh']['index']}))",
-                    "category selection",
-                )
-            ],
-        ),
-        [
-            Histogram(
-                f"{channel}_score",
-                cutstring,
-                np.arange(nbins + 1),
-            )
-        ],
-    )
-    categorization[channel].append(selection)
+    ggh, qqh = category_mapping[channel]["ggh"]["index"], category_mapping[channel]["qqh"]["index"]
+    return (Selection(name="xxh", cuts=[(f"((nn_predicted_class == {qqh}) || (nn_predicted_class == {ggh}))", "category selection")]),
+            [Histogram(f"{channel}_score", cutstring, np.arange(nbins + 1))])
+
+
+categorization = build_categorization("stage0")

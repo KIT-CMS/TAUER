@@ -181,10 +181,16 @@ def advance(state, confirm, dry_run=False, show=True):
     cfg, selected = state["cfg"], state["steps"]
     polled = tracker.poll(state)
     result = status.resolve(cfg, selected, tracker.active_jobs(polled))
+    restamped = False
     for name, tracked in state["units"].items():
         for u in S.units(cfg, S.BY_NAME[name]):
-            if not dry_run and S.label(u) in tracked and result.get(name, {}).get(S.label(u), ("",))[0] == "done":
+            unit_state = result.get(name, {}).get(S.label(u), ("",))[0]
+            # a job of this session that exited cleanly made the output with its options, whatever an older stamp says
+            if not dry_run and S.label(u) in tracked and (unit_state == "done" or unit_state == "other-options" and polled.get((name, S.label(u)), ("",))[0] == "exited"):
                 status.record_stamp(cfg, S.BY_NAME[name], u)
+                restamped |= unit_state == "other-options"
+    if restamped:
+        result = status.resolve(cfg, selected, tracker.active_jobs(polled))
     submitted = set()
     for step in (s for s in S.STEPS if s.name in result):  # also the missing steps the selected ones need
         todo = ("missing", "partial") if step.where == "condor" else ("missing", "partial", "manual", "unknown")

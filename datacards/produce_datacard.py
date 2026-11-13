@@ -30,6 +30,7 @@ def parse_args(argv=None):
     parser.add_argument("--jetfakes", choices=["true", "false"], default=None, help="Jet-fakes background model (default: false for gof)")
     parser.add_argument("--output-dir", default=None, help="Directory the datacards are written to (default: $FITDIR/output_<analysis>, or the GoF card directory for gof).")
     parser.add_argument("--stxs-stage", choices=["stage0", "stage1p2"], default="stage0", help="Signal split, must match the shapes' --stxs-stage (default: stage0)")
+    parser.add_argument("--stxs-pruning", choices=["none", "systematics", "processes"], default="none", help="make_datacards.py --stxs-pruning")
     parser.add_argument("--ff-type", choices=["fake_factor", "ml_fake_factor"], default=None, help="Fake factor flavour of the shapes (default: fake_factor)")
     args = parser.parse_args(argv)
     return args
@@ -46,6 +47,7 @@ def main(argv=None) -> int:
         f"--shapes={Path(args.shapes).resolve()}",
         f"--variable={args.variable}",
         f"--stxs-stage={args.stxs_stage}",
+        f"--stxs-pruning={args.stxs_pruning}",
     ]
     if args.analysis == "gof":
         cmd += [

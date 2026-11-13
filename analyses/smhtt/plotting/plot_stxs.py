@@ -62,6 +62,7 @@ plt.rcParams.update({
 logger = setup_logging(logger=logging.getLogger(__name__))
 
 HTXS_VARIABLES = [
+    "HTXS_stage1_2_cat_pTjet30GeV",
     "HTXS_stage1_2_fine_cat_pTjet30GeV",
 ]
 
