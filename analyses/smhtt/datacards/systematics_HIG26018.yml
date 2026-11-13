@@ -1,0 +1,69 @@
+# Nuisances of the HIG-26-018 datacards not in the CAT systematics_master.yml: Run 3 extensions of master names (eras the
+# master does not list yet, era suffix of the POG per-era decorrelation), schemes of POG/HLepRare recommendations without a
+# master name and the analysis-specific CMS_HIG26018_ ones (see NUISANCE_RENAMING in combine_model.py)
+CMS_eff_e_trigger_(2024|2025):
+    description: 'electron trigger efficiency uncertainty separated by year.'
+    class: 'electron_efficiency'
+CMS_res_j_(2024|2025):
+    description: 'jet energy resolution uncertainty separated per year.'
+    class: 'jet_energy_resolution'
+CMS_scale_met_unclustered_energy_(2024|2025):
+    description: 'total uncertainty on Missing Transverse Energy from unclustered energy in the detector, separated by year.'
+    class: 'MET_scale'
+CMS_(scale|res)_m_syst:
+    description: 'systematic component of the muon momentum scale and resolution corrections, correlated across years (MUO stat/syst scheme).'
+    class: 'muon_energy_scale'
+CMS_(scale|res)_m_stat_(2022|2022EE|2023|2023BPix|2024|2025):
+    description: 'statistical component of the muon momentum scale and resolution corrections, separated by year (MUO stat/syst scheme).'
+    class: 'muon_energy_scale'
+CMS_eff_t_DeepTau2018v2p5_VSjet_dm_DM(0|1|10|11)_pt_bin[1-3]_(2024|2025):
+    description: 'tau identification efficiency against jets per decay mode in the pT bins 20-40, 40-60 and >60 GeV, separated by year (TauPOG).'
+    class: 'tau_identification'
+CMS_fake_t_DeepTau2018v2p5_VSe_DM(0|1|10|11)_eta_bin[12]_(2022|2022EE|2023|2023BPix|2024|2025):
+    description: 'DeepTau mis-tag rate for electrons per decay mode in the barrel (bin1) and endcap (bin2), separated by year (TauPOG).'
+    class: 'fake_rate'
+CMS_fake_t_DeepTau2018v2p5_VSmu_eta_bin[1-5]_(2022|2022EE|2023|2023BPix|2024|2025):
+    description: 'DeepTau mis-tag rate for muons in the five eta bins, separated by year (TauPOG).'
+    class: 'fake_rate'
+CMS_scale_t_DeepTau2018v2p5_DM(0|1|10|11)_genTau_pT(20to40|40to60|60toInf)_2024:
+    description: 'tau energy scale uncertainty for hadronic taus per decay mode and pT bin of the 2024 measurement, separated by year (TauPOG json).'
+    class: 'tau_energy_scale'
+CMS_trig_t_(ditau|ditaujet|etau|mutau)_Medium_eff_(2022|2022EE|2023|2023BPix|2024|2025):
+    description: 'tau leg trigger scale factor uncertainty (combined up/down of the TauPOG json), separated by year.'
+    class: 'other_experimental'
+CMS_HIG26018_trig_j_ditaujet_(2022|2022EE|2023|2023BPix|2024|2025):
+    description: 'efficiency uncertainty of the jet leg of the ditau+jet trigger, uncorrelated with the tau legs, separated by year (HLepRare).'
+    class: 'custom'
+ps_(isr|fsr)_(ggH|qqH|VH|ttH):
+    description: 'parton shower initial (isr) and final (fsr) state radiation uncertainty, separated by signal sample.'
+    class: 'monte_carlo_tune'
+THU_(ggH|qqH|WH|ZH|ttH)_[A-Za-z0-9_]+:
+    description: 'LHCHWG theory uncertainties of the Higgs production cross sections and STXS bin migrations.'
+    class: 'qcd_scale'
+CMS_HIG26018_QCDscale_(ggH|qqH|WH|ZH|ttH)_[A-Za-z0-9_]+_ACCEPT:
+    description: 'renormalisation and factorisation scale variation (both x2 or x0.5) on the acceptance within groups of STXS bins, normalisation removed per bin.'
+    class: 'custom'
+CMS_HIG26018_fake_t_(QCD|QCD_subleading|Wjets|ttbar)_[A-Za-z0-9_]+:
+    description: 'uncertainties of the fake factor method for jets misidentified as hadronic taus: fake factor statistics and systematics, DR-to-SR and non-closure corrections and process fractions, per channel and year.'
+    class: 'custom'
+CMS_HIG26018_zptReweight_(2022|2022EE|2023|2023BPix|2024|2025):
+    description: 'uncertainty of the Drell-Yan Z pT reweighting, envelope of the fit-parameter variations, separated by year.'
+    class: 'custom'
+CMS_HIG26018_(scale_met_recoil_response|res_met_recoil_resolution)_(2022|2022EE|2023|2023BPix|2024|2025):
+    description: 'response and resolution uncertainties of the boson recoil corrections of the missing transverse momentum, separated by year.'
+    class: 'custom'
+CMS_HIG26018_wjXsec:
+    description: 'uncertainty on the W+jets cross section.'
+    class: 'custom'
+CMS_HIG26018_qcd_(0jet|1jet|2jet)_(rate|shape|shape2)_(2022|2022EE|2023|2023BPix|2024|2025):
+    description: 'normalisation and shape uncertainties of the same-sign QCD estimate in the e+mu channel per jet multiplicity, separated by year.'
+    class: 'custom'
+CMS_HIG26018_qcd_iso:
+    description: 'uncertainty of the isolation extrapolation of the same-sign QCD estimate in the e+mu channel.'
+    class: 'custom'
+CMS_eff_m_trigger_(2024|2025):
+    description: 'muon trigger efficiency uncertainty (stat and syst combined) separated by year, htt_261012 ntuples only (LEGACY_NTUPLE_SHIFTS).'
+    class: 'muon_efficiency'
+CMS_scale_t_DeepTau2018v2p5_DM(0|1|10|11)_genElectron_(barrel|endcap)_(2022|2022EE|2023|2023BPix|2024|2025):
+    description: 'energy scale uncertainty for electrons reconstructed as hadronic taus per decay mode, barrel and endcap, separated by year, htt_261012 ntuples only (LEGACY_NTUPLE_SHIFTS).'
+    class: 'tau_energy_scale'

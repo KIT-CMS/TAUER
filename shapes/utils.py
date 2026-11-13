@@ -14,7 +14,7 @@ from copy import deepcopy
 from concurrent.futures import ProcessPoolExecutor
 import logging
 
-from common.analysis import get_signal_process_keys
+from common.analysis import get_signal_process_keys, legacy_nuisance_name
 from CustomLogging import setup_logging
 
 logger = setup_logging(logger=logging.getLogger(__name__))
@@ -25,7 +25,16 @@ _VALIDATION_WORKERS = 8
 
 def _book_one_dataset(job):
     key, kwargs = job
-    return key, dataset_from_crownoutput(**kwargs)
+    return key, _with_current_shift_names(dataset_from_crownoutput(**kwargs))
+
+
+def _with_current_shift_names(dataset):
+    """Shifts of older CROWN ntuples also under their datacard names (common.analysis.legacy_nuisance_name), as aliases."""
+    for old in list(dataset.quantities_per_vars or {}):
+        if (new := legacy_nuisance_name(old)) != old:
+            dataset.quantities_per_vars[new] = dataset.quantities_per_vars[old]
+            dataset.aliases.update({f"{q}__{new}": f"{q}__{old}" for q in dataset.quantities_per_vars[old]})
+    return dataset
 
 
 def add_process(
@@ -69,7 +78,11 @@ def combine_datasets(datasets):
     for dataset in datasets:
         for shift, quants in (dataset.quantities_per_vars or {}).items():
             quantities[shift] = sorted(set(quantities.get(shift, [])) | set(quants))
-    return Dataset("+".join(dataset.name for dataset in datasets), [n for dataset in datasets for n in dataset.ntuples], quantities)
+    # shifted weights of one sample only (e.g. ps_weight__ps_isr_qqHUp of VBF) are 1, i.e. unshifted, in the others
+    aliases = {alias: column for dataset in datasets for alias, column in dataset.aliases.items()}
+    columns = [{f"{q}__{s}" for s, quants in (d.quantities_per_vars or {}).items() for q in quants if q.endswith("weight")} - set(aliases) for d in datasets]
+    defaults = {c: 1.0 for c in set.union(*columns) - set.intersection(*columns)}
+    return Dataset("+".join(dataset.name for dataset in datasets), [n for dataset in datasets for n in dataset.ntuples], quantities, defaults, aliases)
 
 
 def add_control_process(
@@ -276,7 +289,7 @@ def get_nominal_datasets(
     datasets = dict()
     n_workers = min(_VALIDATION_WORKERS, len(jobs), os.cpu_count() or _VALIDATION_WORKERS) or 1
     if n_workers <= 1:
-        booked = [(key, dataset_from_crownoutput(**kwargs)) for key, kwargs in jobs]
+        booked = [_book_one_dataset(job) for job in jobs]
     else:
         with ProcessPoolExecutor(max_workers=n_workers) as pool:
             booked = list(pool.map(_book_one_dataset, jobs))

@@ -8,7 +8,7 @@ analyses/<analysis>/datacards/systematics.py, the embedding ones are kept separa
 """
 from typing import NamedTuple, Tuple, Union
 
-from common.analysis import ff_component_names
+from common.analysis import ANALYSIS_ID, LEGACY_NTUPLE_SHIFTS, ff_component_names
 
 ERA_TAG = {
     "2016preVFP": "2016preVFP", "2016postVFP": "2016postVFP", "2017": "2017", "2018": "2018",
@@ -58,42 +58,43 @@ def systematics(era: str, jetfakes: bool = True, qcd: bool = True, ff_ml: bool =
     else:
         # LUM POG decorrelation scheme for 2022-2024; TODO: 2025/2026 pinned to 2024 until LUM POG provides values
         year = "2024" if era in ("2025", "2026") else era[:4]
-        for i, values in enumerate(({"2022": 1.0138, "2023": 1.0017, "2024": 1.0020}, {"2023": 1.0127, "2024": 1.0068}, {"2024": 1.0144}), 1):
+        for name, values in (("222324", {"2022": 1.0138, "2023": 1.0017, "2024": 1.0020}), ("2324", {"2023": 1.0127, "2024": 1.0068}), ("2024", {"2024": 1.0144})):
             if year in values:
-                n.append(Systematic(f"CMS_lumi_{i}", MC, ALL, "lnN", values[year]))
+                n.append(Systematic(f"lumi_13p6TeV_{name}", MC, ALL, "lnN", values[year]))
 
     # ---- Triggers ----
     if run2:
         n.append(Systematic(f"CMS_eff_trigger_em_{tag}", MC, ("em",), "lnN", 1.02))
     else:
-        n += _shapes([f"CMS_eff_e_trigger_{tag}", f"CMS_trig_t_etau_Medium_eff_{tag}"], MC, ("et",))
-        n += _shapes([f"CMS_eff_m_trigger_{tag}"], MC, ("mt", "em"))
-        n += _shapes([f"CMS_trig_t_mutau_Medium_eff_{tag}"], MC, ("mt",))
-        n += _shapes([f"CMS_trig_t_ditau_Medium_eff_{tag}", f"CMS_trig_t_ditaujet_Medium_eff_{tag}", f"CMS_trig_j_ditaujet_{tag}"], MC, ("tt",))
+        tau_trigger = lambda *triggers: [f"CMS_trig_t_{t}_Medium_eff_{tag}" for t in triggers]
+        n += _shapes([f"CMS_eff_e_trigger_{tag}"] + tau_trigger("etau"), MC, ("et",))
+        n += _shapes([f"CMS_eff_m_trigger_{tag}"] if LEGACY_NTUPLE_SHIFTS else ["CMS_eff_m_trigger_syst", f"CMS_eff_m_trigger_stat_{tag}"], MC, ("mt", "em"))
+        n += _shapes(tau_trigger("mutau"), MC, ("mt",))
+        n += _shapes(tau_trigger("ditau", "ditaujet") + [f"CMS_{ANALYSIS_ID}_trig_j_ditaujet_{tag}"], MC, ("tt",))
 
     # ---- Electrons and muons: ID/isolation in the channels with the lepton, energy scale/resolution everywhere (vetoes) ----
-    n += _shapes(["CMS_eff_e_id"], MC, ("et", "em"))
+    n += _shapes(["CMS_eff_e_id_13TeV" if run2 else "CMS_eff_e_id_13p6TeV"], MC, ("et", "em"))
     n += _shapes(["CMS_eff_m_id_syst", f"CMS_eff_m_id_stat_{tag}", "CMS_eff_m_iso_syst", f"CMS_eff_m_iso_stat_{tag}"], MC, ("mt", "em"))
-    n += _shapes(["CMS_scale_e", "CMS_res_e"], MC, ALL)
+    n += _shapes(["CMS_scale_e", "CMS_res_e"] if run2 else ["CMS_scale_e_13p6TeV", "CMS_res_e_13p6TeV"], MC, ALL)
     n += _shapes([f"CMS_scale_m_stat_{tag}", "CMS_scale_m_syst", f"CMS_res_m_stat_{tag}", "CMS_res_m_syst"], MC, ALL)
 
     # ---- Tau ID (vsJet) ----
     if run2:
         tau_id = [f"CMS_eff_t_DeepTau2017v2p1_VSjet_DM{dm}_pT{pt}" for dm in DMS for pt in ("20to40", "40toInf")]
     elif era.startswith(("2022", "2023")):
-        tau_id = [f"CMS_eff_t_DeepTau2018v2p5_VSjet_{c}_DM{dm}_{tag}" for dm in DMS for c in ("stat1", "stat2", "syst_TES")]
-        tau_id += ["CMS_eff_t_DeepTau2018v2p5_VSjet_syst_alleras", f"CMS_eff_t_DeepTau2018v2p5_VSjet_syst_{tag}"]
+        tau_id = [f"CMS_eff_t_DeepTau2018v2p5_VSjet_dm_{c}_DM{dm}_{tag}" for dm in DMS for c in ("stat1", "stat2", "syst")]
+        tau_id += ["CMS_eff_t_DeepTau2018v2p5_VSjet_dm_syst_alleras", f"CMS_eff_t_DeepTau2018v2p5_VSjet_dm_syst_{tag}"]
     else:
-        tau_id = [f"CMS_eff_t_DeepTau2018v2p5_VSjet_DM{dm}_pT{pt}_{tag}" for dm in DMS for pt in ("20to40", "40to60", "60toInf")]
+        tau_id = [f"CMS_eff_t_DeepTau2018v2p5_VSjet_dm_DM{dm}_pt_bin{pt}_{tag}" for dm in DMS for pt in (1, 2, 3)]
     n += _shapes(tau_id, TAU_CORRECTED, LT_TT)
 
     # ---- Tau energy scale, also of the MC subtracted in the anti-isolated region ----
     if run2:
         tes = [f"CMS_scale_t_DM{dm}_genTau_pT{pt}" for dm in DMS for pt in ("20to40", "40toInf")]
     elif era == "2024":
-        tes = [f"CMS_scale_t_DM{dm}_genTau_pT{pt}_{tag}" for dm in DMS for pt in ("20to40", "40to60", "60toInf")]
+        tes = [f"CMS_scale_t_DeepTau2018v2p5_DM{dm}_genTau_pT{pt}_{tag}" for dm in DMS for pt in ("20to40", "40to60", "60toInf")]
     else:
-        tes = [f"CMS_scale_t_DM{dm}_genTau_{tag}" for dm in DMS]
+        tes = [f"CMS_scale_t_DeepTau2018v2p5_DM{dm}_genTau_{tag}" for dm in DMS]
     n += _shapes(tes, TAU_CORRECTED + (("jetFakes",) if jetfakes else ()), LT_TT)
 
     # ---- Light leptons reconstructed as taus: energy scale and vsEle/vsMu ID ----
@@ -103,33 +104,34 @@ def systematics(era: str, jetfakes: bool = True, qcd: bool = True, ff_ml: bool =
         n += _shapes([f"CMS_fake_t_DeepTau2017v2p1_VSe_{r}" for r in ("barrel", "endcap")], ("zl",), ("et",))
         n += _shapes([f"CMS_fake_t_DeepTau2017v2p1_VSmu_wheel{w}" for w in range(1, 6)], ("zl",), ("mt",))
     else:
-        n += _shapes([f"CMS_scale_t_DM{dm}_genElectron_{r}_{tag}" for dm in DMS for r in ("barrel", "endcap")], LEP_FAKE, LT_TT)
-        n += _shapes([f"CMS_scale_t_DM{dm}_genMuon_{tag}" for dm in DMS], LEP_FAKE, LT_TT)
-        n += _shapes([f"CMS_fake_t_DeepTau2018v2p5_VSe_DM{dm}_{r}_{tag}" for dm in DMS for r in ("barrel", "endcap")], LEP_FAKE, LT_TT)
-        n += _shapes([f"CMS_fake_t_DeepTau2018v2p5_VSmu_wheel{w}_{tag}" for w in range(1, 6)], LEP_FAKE, LT_TT)
+        regions = ("_barrel", "_endcap") if LEGACY_NTUPLE_SHIFTS else ("",)
+        n += _shapes([f"CMS_scale_t_DeepTau2018v2p5_DM{dm}_genElectron{r}_{tag}" for dm in DMS for r in regions], LEP_FAKE, LT_TT)
+        n += _shapes([f"CMS_scale_t_DeepTau2018v2p5_DM{dm}_genMuon" for dm in DMS], LEP_FAKE, LT_TT)
+        n += _shapes([f"CMS_fake_t_DeepTau2018v2p5_VSe_DM{dm}_eta_bin{r}_{tag}" for dm in DMS for r in (1, 2)], LEP_FAKE, LT_TT)
+        n += _shapes([f"CMS_fake_t_DeepTau2018v2p5_VSmu_eta_bin{w}_{tag}" for w in range(1, 6)], LEP_FAKE, LT_TT)
 
     # ---- Jets, b tagging, MET, pileup ----
-    n += _shapes([f"CMS_scale_j_{s}" for s in ("Total", "Absolute", "FlavorQCD", "BBEC1", "HF", "EC2", "RelativeBal")], MC, ALL)
+    n += _shapes([f"CMS_scale_j_{s}" for s in ("Absolute", "FlavorQCD", "BBEC1", "HF", "EC2", "RelativeBal")], MC, ALL)
     n += _shapes([f"CMS_scale_j_{s}_{tag}" for s in ("Absolute", "BBEC1", "HF", "EC2", "RelativeSample")] + [f"CMS_res_j_{tag}"], MC, ALL)
     if not run2:
         n += _shapes(["CMS_btag_fixedWP_bc_correlated", f"CMS_btag_fixedWP_bc_uncorrelated_{tag}", "CMS_btag_fixedWP_light_correlated", f"CMS_btag_fixedWP_light_uncorrelated_{tag}"], MC, ALL)
     n += _shapes([f"CMS_scale_met_unclustered_energy_{tag}"], MC, ALL)
-    recoil_tag = "" if run2 else f"_{tag}"
-    n += _shapes([f"CMS_res_met_recoil_resolution{recoil_tag}", f"CMS_scale_met_recoil_response{recoil_tag}"], ("z", "w", "signal"), ALL)
-    n += _shapes(["PileUp" if era in ("2025", "2026") else f"CMS_pileup_{tag}"], MC, ALL)
+    recoil = ("CMS_res_met_recoil_resolution", "CMS_scale_met_recoil_response") if run2 else (f"CMS_{ANALYSIS_ID}_res_met_recoil_resolution_{tag}", f"CMS_{ANALYSIS_ID}_scale_met_recoil_response_{tag}")
+    n += _shapes(recoil, ("z", "w", "signal"), ALL)
+    n += _shapes([f"CMS_pileup_{tag}"], MC, ALL)
 
     # ---- Reweightings and background normalizations ----
     if not run2:
-        n += _shapes([f"CMS_htt_zptReweight_{tag}"], ("z",), ALL)
+        n += _shapes([f"CMS_{ANALYSIS_ID}_zptReweight_{tag}"], ("z",), ALL)
     n += _shapes(["top_pt_reweighting"], ("ttbar",), ALL)
     # TODO: check the values for Run 3
-    for name, procs, value in (("vvXsec", "vv", 1.05), ("tjXsec", "ttbar", 1.06), ("wjXsec", "w", 1.04), ("zjXsec", "z", 1.02)):
-        n.append(Systematic(f"CMS_htt_{name}", (procs,), ALL, "lnN", value))
+    for name, procs, value in (("cross_section_VV", "vv", 1.05), ("cross_section_ttbar", "ttbar", 1.06), (f"CMS_{ANALYSIS_ID}_wjXsec", "w", 1.04), ("cross_section_V", "z", 1.02)):
+        n.append(Systematic(name, (procs,), ALL, "lnN", value))
 
     # ---- QCD and jet fakes ----
     if qcd and not jetfakes:
         n += [Systematic(f"CMS_ExtrapSSOS_{ch}_{tag}", ("qcd",), (ch,), "lnN", value) for ch, value in (("et", 1.05), ("mt", 1.03), ("tt", 1.05))]
-    n += _shapes([f"CMS_htt_qcd_{j}_{s}_{era}" for j in ("0jet", "1jet", "2jet") for s in ("rate", "shape", "shape2")] + ["CMS_htt_qcd_iso"], ("qcd",), ("em",), source="estimation")
+    n += _shapes([f"CMS_{ANALYSIS_ID}_qcd_{j}_{s}_{tag}" for j in ("0jet", "1jet", "2jet") for s in ("rate", "shape", "shape2")] + [f"CMS_{ANALYSIS_ID}_qcd_iso"], ("qcd",), ("em",), source="estimation")
     if jetfakes:
         for ch, ff_processes in (("et", (("QCD", True), ("Wjets", True), ("ttbar", False))), ("mt", (("QCD", True), ("Wjets", True), ("ttbar", False))), ("tt", (("QCD", True), ("QCD_subleading", True)))):
             n += _shapes([name for process, dr_sr in ff_processes for name in ff_component_names(process, era, ch, dr_sr=dr_sr, ml=ff_ml)], ("jetFakes",), (ch,), source="ff")

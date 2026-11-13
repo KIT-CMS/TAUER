@@ -1,5 +1,7 @@
+import importlib
 import logging
 import os
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import NamedTuple
@@ -20,6 +22,20 @@ _VARIABLES_YAML = _CFG_DIR / "variables.yaml"
 # weights, era/channel/mask machinery) is generic across tau analyses.
 ACTIVE_ANALYSIS = os.environ.get("TAUER_ANALYSIS", "smhtt")
 _ANALYSIS_SIGNALS_YAML = _CFG_DIR.parent / "analyses" / ACTIVE_ANALYSIS / "common" / "signals.yaml"
+try:
+    _combine_model = importlib.import_module(f"analyses.{ACTIVE_ANALYSIS}.datacards.combine_model")
+except ModuleNotFoundError:
+    _combine_model = None
+# CMS_<analysisID>_ prefix of the analysis-specific Run 3 nuisances (CAT naming conventions), as CROWN's ANALYSIS_ID
+ANALYSIS_ID = getattr(_combine_model, "CADI_LINE", "HIG26018")
+LEGACY_NUISANCE_RENAMING = getattr(_combine_model, "NUISANCE_RENAMING", [])
+LEGACY_NTUPLE_SHIFTS = getattr(_combine_model, "LEGACY_NTUPLE_SHIFTS", False)
+
+
+def legacy_nuisance_name(name: str) -> str:
+    """Datacard name of a shift named as in older CROWN ntuples or shapes (Up/Down kept), the name itself when current."""
+    base, direction = re.fullmatch(r"(.*?)(Up|Down)?", name).groups()
+    return next((re.sub(f"^{p}$", r, base) for p, r in LEGACY_NUISANCE_RENAMING if re.fullmatch(p, base)), base) + (direction or "")
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 RUN3_ERAS = (
@@ -73,7 +89,8 @@ FF_ML_COMPONENTS = ("", "Stat", "Normalization")
 # the CROWN fake factor shifts are named like the systematics: fake_factor_<leg>__<systematic>Up/Down
 def ff_component_names(process: str, era: str, channel: str, dr_sr: bool = True, ml: bool = False) -> list[str]:
     ff_era = ff_config_era(era)
-    name = lambda *parts: "_".join(["CMS_fake_t", process, *filter(None, parts), channel, ff_era])
+    prefix = f"CMS_{ANALYSIS_ID}_fake_t" if int(era[:4]) >= 2022 else "CMS_fake_t"
+    name = lambda *parts: "_".join([prefix, process, *filter(None, parts), channel, ff_era])
     if ml and (ff_era, channel) in FF_ML:
         names = [name(c) for c in FF_ML_COMPONENTS] + [name("fraction"), name("fraction", "Stat")]
         if dr_sr:
