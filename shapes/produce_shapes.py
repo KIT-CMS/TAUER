@@ -21,7 +21,7 @@ from common.analysis import ACTIVE_ANALYSIS
 
 analysis_selection = importlib.import_module(f"analyses.{ACTIVE_ANALYSIS}.shapes.selection.process_selection")
 analysis_selection_systematics = importlib.import_module(f"analyses.{ACTIVE_ANALYSIS}.shapes.selection.systematics")
-default_categorization = importlib.import_module(f"analyses.{ACTIVE_ANALYSIS}.shapes.selection.category_selection").categorization
+category_selection = importlib.import_module(f"analyses.{ACTIVE_ANALYSIS}.shapes.selection.category_selection")
 from tau_es.taues_categories import categorization as taues_categorization
 from shapes.special.ttbar_dy_weight_categories import categorization as ttbar_dy_weight_categorization
 from shapes.special.njets_control_categories import categorization as njets_control_categorization
@@ -29,7 +29,7 @@ from shapes.special.trigger_region_categories import categorization as trigger_r
 from shapes.special.njets_control_categories import _variables_for as control_variables
 import tau_es.energy_scales as tau_es_energy_scales
 from shapes.selection.channel_selection import channel_selection
-from common.binning import control_binning as default_control_binning
+from common.binning import HistogramBuildingDict, control_binning as default_control_binning
 from common.sample_paths import build_selection_friend_dir, parse_ntuple_directory
 from common.analysis import RUN3_ERAS, build_files_dict, get_mc_ntuple_era, mc_lumi_scale
 from common.systematics import systematics
@@ -77,7 +77,8 @@ def parse_arguments():
     )
     parser.add_argument(
         "--stxs-stage", default="stage0", choices=["stage0", "stage1p2"],
-        help="Signal split: per production mode (stage0) or per recommended <PROCESS>_<STXS_BIN> of STXS stage 1.2 (stage1p2).",
+        help="Signal split: per production mode (stage0) or per recommended <PROCESS>_<STXS_BIN> of STXS stage 1.2 (stage1p2); "
+             "with the NN categorization also the NN classes (the stage1p2 categories need the stage-1.2 NN friend).",
     )
     parser.add_argument("--control-plots", action="store_true", help="Produce shapes for control plots.")
     parser.add_argument(
@@ -86,6 +87,7 @@ def parse_arguments():
     )
     parser.add_argument("--gof-inputs", action="store_true", help="Produce shapes for goodness-of-fit tests.")
     parser.add_argument("--do-2d-gofs", action="store_true", help="Produce 2D GoF shapes.")
+    parser.add_argument("--gof-binning", default=None, type=str, help="Binning yaml of shapes/gof_binning.py for --gof-inputs, {era}/{channel} are filled in (default: common/binning.py).")
     parser.add_argument(
         "--control-plots-full-samples", action="store_true",
         help="Use all signal processes for control plots.",
@@ -145,13 +147,23 @@ def parse_arguments():
     return parser.parse_args()
 
 
-def load_variables_from_config(channel):
+def load_variables_from_config(channel, datasets):
+    import ROOT
     _yaml_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "common", "variables.yaml")
     with open(_yaml_path) as _f:
         _cfg = yaml.safe_load(_f)
     _output_features = _cfg.get("output_features", [])
     _available = set(default_control_binning.get(channel, {}).keys())
-    _filtered = [v for v in _output_features if v in _available]
+    _ntuple = next(iter(datasets.values())).ntuples[0]
+    _columns = set()
+    for _nt in [_ntuple, *(_ntuple.friends or [])]:
+        _file = ROOT.TFile.Open(_nt.path)
+        _columns |= {b.GetName() for b in _file.Get(_nt.directory).GetListOfBranches()}
+        _file.Close()
+    _absent = [v for v in _output_features if v in _available and v not in _columns]
+    if _absent:
+        logger.warning(f"Skipping variables not in the {channel} ntuples/friends: {_absent}")
+    _filtered = [v for v in _output_features if v in _available and v in _columns]
     if not _filtered:
         raise ValueError(f"No variables from common/variables.yaml are available in control_binning for channel {channel}. Available: {_available}. From YAML: {_output_features}")
     logger.info(f"Loaded {len(_filtered)} variables from common/variables.yaml for channel {channel}")
@@ -198,13 +210,13 @@ def add_processes(add_fn, datasets, select_fn, channel, stxs_stage="stage0"):
 def get_select_function(channel_selection_obj, selection_kwargs, selection_memo):
     def _function(*args):
         _sel = [channel_selection_obj]
+        # MC normalized to this run's data, e.g. 2026 alone with the 2025(+2026) MC; before the process selection, which names the process
+        if args and (scale := mc_lumi_scale(selection_kwargs["era"])) != 1:
+            _sel.append(Selection(name="mc_lumi_scale", weights=[(f"{scale:.9g}", "mc_lumi_scale")]))
         for _proc in args:
             if _proc.__name__ not in selection_memo:
                 selection_memo[_proc.__name__] = _proc(**selection_kwargs)
             _sel.append(selection_memo[_proc.__name__])
-        # MC normalized to this run's data, e.g. 2026 alone with the 2025(+2026) MC
-        if args and (scale := mc_lumi_scale(selection_kwargs["era"])) != 1:
-            _sel.append(Selection(name="mc_lumi_scale", weights=[(f"{scale:.9g}", "mc_lumi_scale")]))
         return _sel
     return _function
 
@@ -225,9 +237,9 @@ def get_analysis_units(channel, era, datasets, categorization, apply_tauid, spec
     return units
 
 
-def get_control_units(channel, era, datasets, variables, apply_tauid, do_gofs=False, do_2dGofs=False, stxs_stage="stage0"):
+def get_control_units(channel, era, datasets, variables, apply_tauid, do_gofs=False, do_2dGofs=False, stxs_stage="stage0", gof_binning=None):
     control_units = {}
-    control_binning = default_control_binning
+    control_binning = {channel: HistogramBuildingDict(gof_binning)} if gof_binning else default_control_binning
     if do_gofs:
         if do_2dGofs:
             variables_2d = []
@@ -278,7 +290,7 @@ def collect_config(graphs, era, channel, filename, processes):
     logger.info(f"Configuration written to {_path}")
 
 
-def main(args):
+def get_friend_directories(args):
     friend_directories = {
         "et": args.et_friend_directory,
         "mt": args.mt_friend_directory,
@@ -295,7 +307,12 @@ def main(args):
         selection_friend_dir = build_selection_friend_dir(_ntupletag, args.selection_friend, user=_user)
     for channel in ("et", "mt", "tt", "em"):
         friend_directories[channel] = [*friend_directories[channel], selection_friend_dir]
-    logger.info(f"Selection friend: {selection_friend_dir}")
+    logging.getLogger(__name__).info(f"Selection friend: {selection_friend_dir}")
+    return friend_directories
+
+
+def main(args):
+    friend_directories = get_friend_directories(args)
     output_file = args.output_file if ".root" in args.output_file else f"{args.output_file}.root"
 
     if args.ff_only and args.ff_type == "none":
@@ -344,12 +361,16 @@ def main(args):
                 **common_kwargs, variables=args.control_plot_set, do_gofs=False,
             )
         elif args.gof_inputs:
+            gof_binning = None
+            if args.gof_binning:
+                with open(args.gof_binning.format(era=args.era, channel=channel)) as f:
+                    gof_binning = yaml.safe_load(f)
             nominals[args.era]["units"][channel] = get_control_units(
                 **common_kwargs, variables=args.control_plot_set,
-                do_gofs=True, do_2dGofs=args.do_2d_gofs,
+                do_gofs=True, do_2dGofs=args.do_2d_gofs, gof_binning=gof_binning,
             )
         elif args.no_dnn_categorization and args.special_analysis is None:
-            _vars = load_variables_from_config(channel)
+            _vars = load_variables_from_config(channel, nominals[args.era]["datasets"][channel])
             if not _vars:
                 logger.warning(f"[no-dnn-categorization] No variables loaded for {channel}, using default set")
                 _vars = ["m_vis", "pt_1", "pt_2", "eta_1", "eta_2", "mt_1", "mt_2", "mjj", "puppimet", "mt_tot", "pt_tt", "pt_vis", "nbtag", "njets"]
@@ -404,7 +425,7 @@ def main(args):
                 raise ValueError(f"--special-analysis AntiIsoTauSF is only implemented for et/mt/tt in Run 3 and not with --ff-only; got {args.era} {channel}.")
             nominals[args.era]["units"][channel] = get_control_units(**common_kwargs, variables=control_variables(channel))
         else:
-            nominals[args.era]["units"][channel] = get_analysis_units(**common_kwargs, categorization=default_categorization)
+            nominals[args.era]["units"][channel] = get_analysis_units(**common_kwargs, categorization=category_selection.build_categorization(args.stxs_stage))
 
     dataS = {"data"} & procS
     embS = {"emb"} & procS

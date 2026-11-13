@@ -12,6 +12,10 @@ try:
     MASS = importlib.import_module(f"analyses.{ACTIVE_ANALYSIS}.datacards.combine_model").MASS
 except (ModuleNotFoundError, AttributeError):
     MASS = "125"
+try:
+    THEORY_NUISANCES = importlib.import_module(f"analyses.{ACTIVE_ANALYSIS}.datacards.combine_model").THEORY_NUISANCES
+except (ModuleNotFoundError, AttributeError):
+    THEORY_NUISANCES = ""
 
 
 def gof_card_dir(fitdir, era: str, channel: str, variable: str) -> Path:

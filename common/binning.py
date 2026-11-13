@@ -13,11 +13,12 @@ class HistogramBuildingDict(ObjBuildingDict):
     def __init__(self, *args: Any, **kwargs: Dict[str, Any]):
         super().__init__(*args, obj=Histogram, **kwargs)
 
-    def build_obj(self, key: str, value: Union[np.ndarray, list]) -> Histogram:
+    def build_obj(self, key: str, value: Union[np.ndarray, list, dict]) -> Histogram:
         if isinstance(value, (np.ndarray, list)):
             return self.obj(key, key, value)
-        else:
-            raise ValueError(f"Value for key {key} is not a list or numpy array")
+        if isinstance(value, dict):  # {"bins": ..., "expression": ...}, e.g. an unrolled 2D GoF binning of shapes/gof_binning.py
+            return self.obj(key, value.get("expression", key), value["bins"])
+        raise ValueError(f"Value for key {key} is not a list, numpy array or bins/expression dict")
 
 
 common_binning = HistogramBuildingDict(

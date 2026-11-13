@@ -42,7 +42,10 @@ def parse_args(argv=None):
     p.add_argument("--stxs-stage", default="stage0", choices=["stage0", "stage1p2"], help="Signal split, same as run.py/produce_shapes.py --stxs-stage.")
     p.add_argument("--skip-systematics", action="store_true")
     p.add_argument("--control-plots", action="store_true")
-    p.add_argument("--control-plot-set", type=csv, default=None, help="Comma-separated variables of --control-plots (default: produce_shapes.py's, m_vis).")
+    p.add_argument("--control-plot-set", type=csv, default=None, help="Comma-separated variables of --control-plots/--gof-inputs (default: produce_shapes.py's, m_vis).")
+    p.add_argument("--gof-inputs", action="store_true", help="GoF shapes of the --control-plot-set variables, see produce_shapes.py.")
+    p.add_argument("--gof-binning", default=None, help="Binning yaml of shapes/gof_binning.py with {era}/{channel} placeholders, for --gof-inputs.")
+    p.add_argument("--do-2d-gofs", action="store_true", help="Also the 2D GoF shapes of the variable pairs (needs --gof-binning).")
     p.add_argument("--special-analysis", default=None,
                     choices=[None, "TauES", "TTbarDYWeight", "NjetsControl", "TriggerRegions", "AntiIsoTauSF"],
                     help="Passed through to produce_shapes.py's own --special-analysis. "
@@ -125,10 +128,14 @@ def build_jobs(args, setups: list) -> list[JobSpec]:
             common.append(f"--stxs-stage {args.stxs_stage}")
             if args.skip_systematics:
                 common.append("--skip-systematics")
-            if args.control_plots:
-                common.append("--control-plots")
+            if args.control_plots or args.gof_inputs:
+                common.append("--control-plots" if args.control_plots else "--gof-inputs")
                 if args.control_plot_set:
                     common.append(f"--control-plot-set {' '.join(args.control_plot_set)}")
+                if args.gof_binning:
+                    common.append(f"--gof-binning {args.gof_binning}")
+                if args.do_2d_gofs:
+                    common.append("--do-2d-gofs")
             if not args.dnn_categorization and not args.special_analysis:
                 common.append("--no-dnn-categorization")
             if args.special_analysis:
