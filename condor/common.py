@@ -20,6 +20,8 @@ PACKED_ENV_DIR = Path(f"/ceph/{getpass.getuser()}/tauer_envs")
 # the TOpAS GPU containers have no /ceph: packed jobs get their /ceph inputs through this GridKa dCache mirror
 DCACHE_HOST = "cmsdcache-kit-disk.gridka.de"
 DCACHE_MIRROR = f"/store/user/{getpass.getuser()}/tauer_remote"
+# the workers' xrootd (5.9.8 in the gridjob image) fails the GSI handshake with this dCache: they read it over WebDAV
+DCACHE_DAVS = f"davs://{DCACHE_HOST}:2880/pnfs/gridka.de/cms/disk-only"
 CODE_EXCLUDES = ("./.git", "./condor/run", "./logs", "./fake_factors", "./btag_efficiencies", "./validation_database", "__pycache__")
 
 
@@ -101,8 +103,8 @@ def packed_env_path(conda_env: str) -> Path:
     return PACKED_ENV_DIR / f"{conda_env}.tar.gz"
 
 
-def dcache_url(path) -> str:
-    return f"root://{DCACHE_HOST}/{DCACHE_MIRROR}/{Path(path).relative_to(f'/ceph/{getpass.getuser()}')}"
+def dcache_url(path, davs=False) -> str:
+    return f"{DCACHE_DAVS if davs else f'root://{DCACHE_HOST}/'}{DCACHE_MIRROR}/{Path(path).relative_to(f'/ceph/{getpass.getuser()}')}"
 
 
 def mirror_to_dcache(path: Path) -> None:
@@ -136,9 +138,9 @@ def write_wrapper_script(plan: SubmissionPlan) -> Path:
     wrapper = plan.run_dir / "wrapper.sh"
     wrapper.parent.mkdir(parents=True, exist_ok=True)
     # remote workers (TOpAS GPUs) have neither /ceph nor /work: env and inputs come from dCache, the code with the job
-    stage_in = "".join(f"mkdir -p {Path(local).parent} && xrdcp -r -s {dcache_url(path)} {Path(local).parent}/\n" for local, path in plan.stage_in.items())
+    stage_in = "".join(f"mkdir -p {Path(local).parent} && gfal-copy -r {dcache_url(path, davs=True)} {local}\n" for local, path in plan.stage_in.items())
     setup = f"""mkdir -p env tauer {Path(plan.stage_out).name if plan.stage_out else ""}
-xrdcp -s {dcache_url(packed_env_path(plan.conda_env))} env.tar.gz
+gfal-copy {dcache_url(packed_env_path(plan.conda_env), davs=True)} env.tar.gz
 tar -xzf env.tar.gz -C env && rm env.tar.gz
 {stage_in}source env/bin/activate
 conda-unpack
