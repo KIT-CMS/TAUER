@@ -15,6 +15,7 @@ import yaml
 from XRootD.client import File
 from tqdm import tqdm
 
+from common.analysis import legacy_nuisance_name
 from CustomLogging import setup_logging
 
 logger = setup_logging(logger=logging.getLogger(__name__))
@@ -172,7 +173,7 @@ def thu_lnN(members: list) -> dict:
     for np_name in sorted({n for m in members for n in values[m]}):
         down, up = (sum(weight[m] * values[m].get(np_name, (1.0, 1.0))[i] for m in members) / sum(weight.values()) for i in (0, 1))
         if abs(down - 1.0) > 1e-9 or abs(up - 1.0) > 1e-9:
-            lnN[np_name] = (down, up)
+            lnN[legacy_nuisance_name(np_name)] = (down, up)
     return lnN
 
 
@@ -182,9 +183,14 @@ def lhe_scale_systematics(members: list) -> dict:
     return {np_name: hit for np_name, hit in result.items() if hit}
 
 
+def parton_shower_systematics(datasets) -> list:
+    """CROWN's parton shower shifts of the signal samples (ggH, qqH, VH, ttH datasets), one ISR and one FSR per sample."""
+    return [f"ps_{kind}_{dataset}" for dataset in datasets for kind in ("isr", "fsr")]
+
+
 def lhe_scale_scheme() -> dict:
-    """LHEScaleWeight systematic -> list of `<PROCESS>_<STXS_BIN>` it applies to."""
-    return _recommendations()["lhe_scale"]
+    """LHEScaleWeight systematic (datacard name) -> list of `<PROCESS>_<STXS_BIN>` it applies to."""
+    return {legacy_nuisance_name(np_name): names for np_name, names in _recommendations()["lhe_scale"].items()}
 
 
 def write_lhe_scale_table(output_path: str = str(LHE_SCALE_TABLE)) -> dict:
@@ -229,9 +235,9 @@ def _scan_file_once(args):
     path = next((uri for srv in XROOTD_SERVERS if m and (uri := f"{srv}///{m[1]}") and File().open(uri)[0].ok), path)
     df = (ROOT.RDataFrame("Events", path)
           .Define("sgn", "genWeight > 0 ? 1.0 : -1.0")
-          .Define("sc_nom", "LHEScaleWeight.size() == 9 ? (double)LHEScaleWeight[4] : 1.0")
-          .Define("sc_up", "LHEScaleWeight.size() >= 8 ? (double)LHEScaleWeight[LHEScaleWeight.size() - 1] : 1.0")
-          .Define("sc_down", "LHEScaleWeight.size() >= 8 ? (double)LHEScaleWeight[0] : 1.0"))
+          .Define("sc_nom", "LHEScaleWeight.size() == 9 && LHEScaleWeight[4] != 0 ? (double)LHEScaleWeight[4] : 1.0")  # not 1 in W+-H MiNNLO
+          .Define("sc_up", "LHEScaleWeight.size() >= 8 ? LHEScaleWeight[LHEScaleWeight.size() - 1] / sc_nom : 1.0")
+          .Define("sc_down", "LHEScaleWeight.size() >= 8 ? LHEScaleWeight[0] / sc_nom : 1.0"))
     arr = df.AsNumpy(["sgn", "sc_nom", "sc_up", "sc_down", "HTXS_stage1_2_cat_pTjet30GeV"] + (["HTXS_Higgs_pt", "HTXS_njets30"] if is_ggh else []))
     sign, cat = arr["sgn"], arr["HTXS_stage1_2_cat_pTjet30GeV"]
     corr = nnlops_weight(arr["HTXS_Higgs_pt"], arr["HTXS_njets30"].astype(int)) if is_ggh else np.ones(len(sign))
@@ -397,7 +403,7 @@ def calculate_stxs_nick_table(
                 target = xsec(process) * br * eps * f_rec
                 norm = target / ((f_mc or f_rec) * sigma_nick)
                 s = scan.get(htxs_bin)
-                r_up, r_down = (s[4] / s[3], s[5] / s[3]) if s is not None and s[3] > 0 else (1.0, 1.0)
+                r_up, r_down = (s[4] / s[1], s[5] / s[1]) if s is not None and s[1] > 0 else (1.0, 1.0)
                 bins[str(htxs_bin)] = [float(norm), float(r_up), float(r_down)]
         table[nick] = {"family": code, "xsec": float(sigma_nick), "bins": bins}
     os.makedirs(os.path.dirname(output_path), exist_ok=True)

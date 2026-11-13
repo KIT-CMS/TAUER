@@ -148,3 +148,7 @@ def add_signal_systematics(add_syst, processes, channels, stage: str = "stage0")
             add_syst(np_name, "lnN", procs, channels.all, up if down == up else (down, up))
         for np_name in stxs_tools.lhe_scale_systematics(members):
             add_syst(np_name, "shape", procs, channels.all)
+    for unit in stxs_tools.signal_units(stage).values():
+        procs = [datacard_signal(unit["group"] if stage == "stage0" else unit["members"][0], stage)]
+        for np_name in stxs_tools.parton_shower_systematics(unit["datasets"]):
+            add_syst(np_name, "shape", procs, channels.all)
