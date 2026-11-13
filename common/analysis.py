@@ -96,10 +96,12 @@ def ff_component_names(process: str, era: str, channel: str, dr_sr: bool = True,
         if dr_sr:
             names += [name("DR_SR_Corr", c) for c in FF_ML_COMPONENTS]
         return names + [name(f"non_closure_Corr{c}") for c in FF_ML[(ff_era, channel)][process]]
-    names = [name(c) for c in FF_BASE_COMPONENTS] + [name("fraction")]
+    # null by construction: no MC subtraction in the MC-only measurements (ttbar, Wjets DR_SR), tt has only QCD in its fractions
+    no_mc_shift = lambda components, mc_only: [c for c in components if not (mc_only and c == "SystMCShift")]
+    names = [name(c) for c in no_mc_shift(FF_BASE_COMPONENTS, process == "ttbar")] + ([name("fraction")] if channel != "tt" else [])
     if dr_sr:
-        names += [name(f"DR_SR_Corr{c}") for c in FF_CORR_COMPONENTS]
-    return names + [name(f"non_closure_Corr{c}") for c in FF_CORR_COMPONENTS]
+        names += [name(f"DR_SR_Corr{c}") for c in no_mc_shift(FF_CORR_COMPONENTS, process == "Wjets")]
+    return names + [name(f"non_closure_Corr{c}") for c in no_mc_shift(FF_CORR_COMPONENTS, process == "ttbar")]
 
 
 # TFF process name → ntuple_processor dataset key
