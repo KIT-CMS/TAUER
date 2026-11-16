@@ -8,7 +8,7 @@ MASS = "125"
 CADI_LINE = "HIG26018"  # CMS_<analysisID>_ prefix of bins and analysis-specific nuisances (CAT naming conventions)
 PHYSICS_MODEL = "HiggsAnalysis.CombinedLimit.PhysicsModel:multiSignalModel"
 # signal theory nuisances, frozen with the signal in b-only fits (GoF) so nothing signal-like is fitted to data
-THEORY_NUISANCES = f"rgx{{BR_.*}},rgx{{THU_.*}},rgx{{pdf_alphas_.*}},rgx{{pdf_Higgs_.*}},rgx{{ps_.*}},rgx{{CMS_{CADI_LINE}_QCDscale_.*}}"
+THEORY_NUISANCES = f"rgx{{BR_.*}},rgx{{THU_.*}},rgx{{alphaS_.*}},rgx{{pdf_Higgs_.*}},rgx{{ps_.*}},rgx{{CMS_{CADI_LINE}_QCDscale_.*}}"
 
 # POIs of the multiSignalModel per STXS stage: POI -> (regex of the `<PROCESS>_<STXS_BIN>` it scales, range). STXS bins are
 # merged here, never in the datacard (FittingProcedures.md). stage1p2: one POI per NN signal class of the training
@@ -101,7 +101,6 @@ NUISANCE_RENAMING = [
     (r"CMS_htt_zjXsec", "cross_section_V"),
     (r"CMS_htt_tjXsec", "cross_section_ttbar"),
     (r"CMS_htt_vvXsec", "cross_section_VV"),
-    (r"alphaS_(ggH|qqH|VH|ttH)", r"pdf_alphas_\1"),
     (r"CMS_(scale|res)_e", r"CMS_\1_e_13p6TeV"),
     (r"CMS_eff_e_id", r"CMS_eff_e_id_13p6TeV"),
     (rf"CMS_eff_t_{_TAU}_VSjet_(stat[12])_DM(\d+)_{_ERA}", rf"CMS_eff_t_{_TAU}_VSjet_dm_\1_DM\2_\3"),

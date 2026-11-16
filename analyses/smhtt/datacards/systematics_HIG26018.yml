@@ -67,3 +67,6 @@ CMS_eff_m_trigger_(2024|2025):
 CMS_scale_t_DeepTau2018v2p5_DM(0|1|10|11)_genElectron_(barrel|endcap)_(2022|2022EE|2023|2023BPix|2024|2025):
     description: 'energy scale uncertainty for electrons reconstructed as hadronic taus per decay mode, barrel and endcap, separated by year, htt_261012 ntuples only (LEGACY_NTUPLE_SHIFTS).'
     class: 'tau_energy_scale'
+alphaS_(ggH|qqH|VH|ggZH|ttH|tHW|tHq):
+    description: 'alpha_s uncertainty of the inclusive per-process cross section, named as in the STXS Run 3 recommendations (thu_norm_stxs1p2.json) for the combination.'
+    class: 'pdf'
