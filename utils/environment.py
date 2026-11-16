@@ -33,6 +33,13 @@ def pythonpath_with_tff(extra: str = "") -> str:
     return ":".join(parts)
 
 
+# same as KingMaker#126: idle xrootd connections are probed, a dead one errors instead of hanging
+XRD_KEEPALIVE = """export XRD_TCPKEEPALIVE=1
+export XRD_TCPKEEPALIVETIME=60
+export XRD_TCPKEEPALIVEINTERVAL=30
+export XRD_TCPKEEPALIVEPROBES=5"""
+
+
 def env_block(env_mode: str = "conda", conda_env: str = DEFAULT_CONDA_ENV) -> str:
     """Shell lines setting up a job environment: the condor wrapper and the local commands printed by `tauer`."""
     if env_mode == "cmssw":
@@ -44,10 +51,12 @@ export PYTHONPATH="{REPO_ROOT}:${{PYTHONPATH:-}}\""""
         # CROWN's LCG view: its ROOT/xrootd client authenticates to the GridKA dCache, the conda xrootd 6 one does not.
         return f"""source /cvmfs/sft.cern.ch/lcg/views/LCG_110/x86_64-el9-gcc16-opt/setup.sh
 export LD_PRELOAD=/cvmfs/sft.cern.ch/lcg/releases/gcc/16.1.0-43042/x86_64-el9/lib64/libstdc++.so.6
-export PYTHONPATH="{REPO_ROOT}:${{PYTHONPATH:-}}\""""
+export PYTHONPATH="{REPO_ROOT}:${{PYTHONPATH:-}}"
+{XRD_KEEPALIVE}"""
     return f"""source {DEFAULT_CONDA_BASE}/etc/profile.d/conda.sh
 conda activate {conda_env}
-export PYTHONPATH="{REPO_ROOT}:{REPO_ROOT}/fake_factors:${{PYTHONPATH:-}}\""""
+export PYTHONPATH="{REPO_ROOT}:{REPO_ROOT}/fake_factors:${{PYTHONPATH:-}}"
+{XRD_KEEPALIVE}"""
 
 
 def ensure_tauer_env() -> None:
